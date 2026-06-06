@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Run a CE node — in your browser</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Turn this device into a CE compute node, right in the browser. It joins the mesh and runs WASM tasks pushed from anywhere." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3Cpath d='M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.16),transparent 60%),radial-gradient(50% 40% at 90% 110%,rgba(47,107,255,.14),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:760px;margin:0 auto;padding:0 20px}
+nav{display:flex;align-items:center;gap:12px;height:60px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:19px}
+.brand svg{width:24px;height:24px}.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}nav a{color:var(--muted);font-size:14px;font-weight:500}nav a:hover{color:var(--text)}
+header{padding:38px 0 18px}
+.kick{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(30px,7vw,46px);letter-spacing:-.02em;line-height:1.05;margin:12px 0 0}
+h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);margin:14px 0 0;max-width:54ch}
+
+.statusbar{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:26px 0 0;padding:16px 18px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.dot{width:11px;height:11px;border-radius:50%;background:#324b63;flex:none;position:relative}
+.dot.on{background:var(--ok)}.dot.on::after{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px rgba(67,224,160,.5);animation:p 2s infinite}
+.dot.warn{background:#ffb454}.dot.off{background:var(--bad)}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 12px rgba(67,224,160,0)}}
+.statusbar .lbl{font-weight:600}.statusbar .nid{font-family:var(--mono);font-size:12px;color:var(--faint);margin-left:auto;word-break:break-all}
+.btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:15px;border-radius:11px;padding:12px 18px;cursor:pointer;border:1px solid var(--line);color:var(--text);background:rgba(116,176,255,.05);transition:.2s;font-family:var(--body)}
+.btn:hover{border-color:rgba(116,176,255,.3)}.btn.primary{border:0;color:#021018;font-weight:700;background:var(--grad)}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.toggle{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:22px}
+.cap{border:1px solid var(--line);border-radius:13px;background:var(--deep);padding:15px 14px;min-width:0}
+.cap .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.cap .v{font-family:var(--display);font-weight:600;font-size:23px;letter-spacing:-.01em;margin-top:3px}
+.cap .s{font-size:11.5px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:620px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.counters{display:flex;flex-wrap:wrap;gap:24px;margin:24px 0 0;padding-top:18px;border-top:1px solid var(--line-2)}
+.ct .v{font-family:var(--display);font-weight:600;font-size:26px}.ct .k{font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+
+h2{font-family:var(--display);font-weight:600;font-size:18px;margin:34px 0 10px}
+.log{border:1px solid var(--line);border-radius:13px;background:#060b14;font-family:var(--mono);font-size:12.5px;
+  padding:14px 16px;max-height:280px;overflow-y:auto;min-height:90px}
+.log .ln{padding:3px 0;border-bottom:1px solid rgba(255,255,255,.03);white-space:pre-wrap;word-break:break-word}
+.log .t{color:var(--faint)}.log .ok{color:var(--ok)}.log .er{color:var(--bad)}.log .jb{color:var(--cyan)}
+.hint{color:var(--faint);font-size:13px;margin:14px 0 60px}
+.hint code{font-family:var(--mono);background:var(--panel);border:1px solid var(--line-2);border-radius:5px;padding:1px 6px;color:#cfe9ff}
+footer{border-top:1px solid var(--line-2);padding:24px 0 50px;color:var(--faint);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="/"><svg viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg><span class="ce">ce</span></a>
+    <div class="sp"></div>
+    <a href="/network">Network →</a>
+  </nav>
+
+  <header>
+    <span class="kick">Browser node</span>
+    <h1>This device is now a <em>compute node.</em></h1>
+    <p class="lede">No install. The page joined the mesh, announced what this device can do, and will run WASM tasks
+      pushed to it from anywhere — executed right here, on-device, by the browser's own WebAssembly engine.</p>
+  </header>
+
+  <div class="statusbar">
+    <span class="dot" id="dot"></span>
+    <span class="lbl" id="status">starting…</span>
+    <button class="btn primary" id="toggle">Stop node</button>
+    <span class="nid" id="nid"></span>
+  </div>
+  <div class="row">
+    <label class="toggle"><input type="checkbox" id="wake" /> keep screen awake while contributing</label>
+  </div>
+
+  <div class="grid">
+    <div class="cap"><div class="k">CPU cores</div><div class="v" id="c-cores">—</div><div class="s" id="c-cores-s">logical</div></div>
+    <div class="cap"><div class="k">Memory</div><div class="v" id="c-ram">—</div><div class="s">approx</div></div>
+    <div class="cap"><div class="k">Storage</div><div class="v" id="c-store">—</div><div class="s">available quota</div></div>
+    <div class="cap"><div class="k">GPU</div><div class="v" id="c-gpu">—</div><div class="s" id="c-gpu-s">renderer</div></div>
+  </div>
+
+  <div class="counters">
+    <div class="ct"><div class="v" id="m-tasks">0</div><div class="k">tasks run here</div></div>
+    <div class="ct"><div class="v" id="m-ms">0</div><div class="k">compute ms</div></div>
+    <div class="ct"><div class="v" id="m-up">0s</div><div class="k">uptime</div></div>
+  </div>
+
+  <h2>Activity</h2>
+  <div class="log" id="log"><div class="ln t">waiting for the network…</div></div>
+
+  <p class="hint">Push a task to the mesh from anywhere — it lands on a live node like this one:<br>
+    <code>curl -X POST https://ce-net.com/hub/tasks -H 'content-type: application/json' -d '{"func":"count_primes","args":[200000]}'</code><br>
+    Or use the <a href="/network">live dashboard</a> to watch the mesh and push tasks with one click.</p>
+
+  <footer>CE — pronounced “Sea.” This is a browser node: a WASM compute provider + mesh peer. Runs on iOS &amp; Android.</footer>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const log=(html,cls='')=>{const d=$('log');const t=new Date().toLocaleTimeString();
+  const e=document.createElement('div');e.className='ln'+(cls?' '+cls:'');e.innerHTML='<span class="t">'+t+'</span>  '+html;
+  d.prepend(e);while(d.children.length>60)d.removeChild(d.lastChild);};
+
+// ---- identity ----
+function nodeId(){let id=localStorage.getItem('ce_node_id');
+  if(!id){const b=new Uint8Array(32);crypto.getRandomValues(b);id=[...b].map(x=>x.toString(16).padStart(2,'0')).join('');localStorage.setItem('ce_node_id',id);}
+  return id;}
+const ID=nodeId();
+$('nid').textContent=ID.slice(0,12)+'…';
+
+// ---- capability detection ----
+function gpuName(){try{const c=document.createElement('canvas');const gl=c.getContext('webgl')||c.getContext('experimental-webgl');
+  if(!gl)return'';const d=gl.getExtension('WEBGL_debug_renderer_info');
+  let s=d?gl.getParameter(d.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
+  return (s||'').replace(/\s*\(.*?\)\s*/g,' ').replace(/(ANGLE|OpenGL|Metal|Direct3D|Vulkan).*/i,'').trim();}catch(e){return'';}}
+async function detect(){
+  const cores=navigator.hardwareConcurrency||0;
+  const ram=navigator.deviceMemory||0;             // GB, Chromium only
+  let storage=0; try{const e=await navigator.storage?.estimate?.();if(e&&e.quota)storage=e.quota/1e9;}catch(e){}
+  const gpu=gpuName(); const webgpu=!!navigator.gpu;
+  const platform=navigator.platform||(navigator.userAgentData&&navigator.userAgentData.platform)||'';
+  return {cores,ram_gb:ram,storage_gb:Math.round(storage*10)/10,gpu,webgpu,platform};
+}
+function showCaps(c){
+  $('c-cores').textContent=c.cores||'—';
+  $('c-ram').textContent=c.ram_gb?c.ram_gb+'GB':'—';
+  $('c-store').textContent=c.storage_gb?Math.round(c.storage_gb)+'GB':'—';
+  $('c-gpu').textContent=c.webgpu?'WebGPU':(c.gpu?'✓':'—');
+  $('c-gpu-s').textContent=c.gpu||(c.webgpu?'WebGPU adapter':'unavailable');
+}
+
+// ---- wasm execution ----
+async function runJob(job){
+  const t0=performance.now();
+  try{
+    const bytes=Uint8Array.from(atob(job.module_b64),ch=>ch.charCodeAt(0));
+    const {instance}=await WebAssembly.instantiate(bytes,{});
+    const fn=instance.exports[job.func];
+    if(typeof fn!=='function')throw new Error('no export "'+job.func+'"');
+    let r=fn(...(job.args||[]));
+    if(typeof r==='bigint')r=r.toString();
+    return {ok:true,value:String(r),ms:Math.round((performance.now()-t0)*100)/100};
+  }catch(e){return {ok:false,value:'',ms:Math.round((performance.now()-t0)*100)/100,error:String(e&&e.message||e)};}
+}
+
+// ---- hub connection ----
+function wsBase(){
+  const p=new URLSearchParams(location.search).get('hub'); if(p)return p;
+  if(location.protocol==='file:'||['localhost','127.0.0.1'].includes(location.hostname))return 'ws://127.0.0.1:8970';
+  return (location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/hub';
+}
+let ws=null, hb=null, caps=null, running=false, tasks=0, totalMs=0, started=Date.now();
+
+function setStatus(cls,txt){$('dot').className='dot '+cls;$('status').textContent=txt;}
+function connect(){
+  if(!running)return;
+  setStatus('warn','connecting…');
+  ws=new WebSocket(wsBase()+'/node');
+  ws.onopen=()=>{setStatus('on','online — contributing');log('connected to the mesh','ok');
+    ws.send(JSON.stringify({t:'hello',id:ID,caps}));
+    clearInterval(hb);hb=setInterval(()=>{try{ws.send(JSON.stringify({t:'hb'}))}catch(e){}},10000);};
+  ws.onmessage=async ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
+    if(m.t==='job'){
+      log('job <span class="jb">'+m.func+'('+(m.args||[]).join(',')+')</span> received','jb');
+      const res=await runJob(m);
+      if(res.ok){tasks++;totalMs+=res.ms;$('m-tasks').textContent=tasks;$('m-ms').textContent=Math.round(totalMs);
+        log('→ '+m.func+' = <b>'+res.value+'</b> in '+res.ms+'ms','ok');}
+      else log('→ error: '+res.error,'er');
+      try{ws.send(JSON.stringify({t:'result',jid:m.jid,ok:res.ok,value:res.value,ms:res.ms,error:res.error}))}catch(e){}
+    }};
+  ws.onclose=()=>{clearInterval(hb);if(running){setStatus('warn','reconnecting…');setTimeout(connect,2000);}else setStatus('off','stopped');};
+  ws.onerror=()=>{try{ws.close()}catch(e){}};
+}
+async function start(){running=true;$('toggle').textContent='Stop node';caps=await detect();showCaps(caps);connect();}
+function stop(){running=false;$('toggle').textContent='Start node';clearInterval(hb);if(ws)try{ws.close()}catch(e){}setStatus('off','stopped');log('node stopped');}
+$('toggle').onclick=()=>running?stop():start();
+
+// keep-awake
+let lock=null;
+$('wake').onchange=async e=>{try{if(e.target.checked){lock=await navigator.wakeLock.request('screen');log('screen wake lock on');}else if(lock){await lock.release();lock=null;}}catch(err){log('wake lock unavailable','er');e.target.checked=false;}};
+document.addEventListener('visibilitychange',async()=>{if(lock&&document.visibilityState==='visible'&&$('wake').checked){try{lock=await navigator.wakeLock.request('screen')}catch(e){}}});
+
+setInterval(()=>{const s=Math.floor((Date.now()-started)/1000);$('m-up').textContent=s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s';},1000);
+start();
+</script>
+</body>
+</html>

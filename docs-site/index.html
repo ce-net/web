@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CE Docs — run a node, build on the mesh</title>
+<meta name="description" content="Documentation for CE: a trustless compute marketplace on a proof-of-work chain. Install, run a node, and build with the ce-rs and ce-coord SDKs." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2357f0c8'/%3E%3Cstop offset='1' stop-color='%234a7bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M22 9a9 9 0 1 0 0 14' fill='none' stroke='url(%23g)' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --ink:#06080d;--ink-2:#0a0e15;--ink-3:#0f141d;
+  --line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.05);
+  --text:#e8eef5;--muted:#9aa6b6;--faint:#6b7787;
+  --aqua:#57f0c8;--cyan:#34d6ff;--blue:#6a86ff;
+  --grad:linear-gradient(115deg,#57f0c8,#34d6ff 45%,#6a86ff);
+  --display:"Bricolage Grotesque",serif;--body:"Hanken Grotesk",-apple-system,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
+  --sidebar:248px;--toc:200px;
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:84px}
+body{margin:0;background:var(--ink);color:var(--text);font-family:var(--body);font-size:15.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.86em;background:var(--ink-3);border:1px solid var(--line-2);border-radius:5px;padding:1.5px 6px;color:#cfe9ff}
+pre{margin:18px 0;background:var(--ink-2);border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow-x:auto}
+pre code{background:none;border:0;padding:0;font-size:13.2px;line-height:1.7;color:var(--text)}
+.c-k{color:#6a86ff}.c-fn{color:var(--cyan)}.c-ty{color:var(--aqua)}.c-st{color:#c8b6ff}.c-cm{color:var(--faint)}.c-pn{color:#e8eef5}
+
+/* top bar */
+.top{position:sticky;top:0;z-index:60;height:60px;display:flex;align-items:center;gap:22px;padding:0 22px;
+  background:linear-gradient(var(--ink),rgba(6,8,13,.72));backdrop-filter:blur(12px);border-bottom:1px solid var(--line-2)}
+.logo{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:700;font-size:18px;color:var(--text);letter-spacing:-.02em}
+.logo .mark{width:20px;height:20px}
+.logo .tag{font-family:var(--mono);font-size:11px;color:var(--aqua);border:1px solid var(--line);border-radius:6px;padding:2px 7px;margin-left:2px}
+.top .sp{flex:1}
+.top a.tl{color:var(--muted);font-size:14px;font-weight:500}.top a.tl:hover{color:var(--text);text-decoration:none}
+.menu-btn{display:none;background:var(--ink-3);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer}
+
+/* layout */
+.layout{display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr) var(--toc);max-width:1320px;margin:0 auto;gap:0}
+aside{position:sticky;top:60px;align-self:start;height:calc(100vh - 60px);overflow-y:auto;padding:26px 18px 60px;border-right:1px solid var(--line-2)}
+aside .grp{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:22px 0 8px;padding-left:10px}
+aside .grp:first-child{margin-top:0}
+aside a{display:block;color:var(--muted);font-size:14px;padding:6px 10px;border-radius:7px;line-height:1.35}
+aside a:hover{color:var(--text);background:var(--ink-2);text-decoration:none}
+aside a.active{color:#06120f;background:var(--grad);font-weight:600}
+
+main{padding:40px 52px 120px;min-width:0}
+main h1{font-family:var(--display);font-weight:700;letter-spacing:-.03em;font-size:38px;margin:0 0 6px;line-height:1.08}
+main .kick{font-family:var(--mono);font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--aqua)}
+main h2{font-family:var(--display);font-weight:700;letter-spacing:-.02em;font-size:25px;margin:54px 0 14px;padding-top:14px;border-top:1px solid var(--line-2)}
+main h3{font-family:var(--display);font-weight:600;font-size:18px;margin:30px 0 8px;letter-spacing:-.01em}
+main p{color:#c4cdd9;margin:14px 0}
+main ul,main ol{color:#c4cdd9;padding-left:22px}main li{margin:7px 0}
+.lead{font-size:18px;color:var(--muted)!important;margin-top:14px}
+.note{border:1px solid var(--line);border-left:3px solid var(--aqua);background:rgba(87,240,200,.04);border-radius:10px;padding:14px 16px;margin:20px 0}
+.note b{color:var(--text)}
+.note.warn{border-left-color:#ffb454;background:rgba(255,180,84,.05)}
+.pill{display:inline-block;font-family:var(--mono);font-size:11px;color:var(--blue);border:1px solid var(--line);border-radius:999px;padding:3px 9px}
+table{width:100%;border-collapse:collapse;margin:18px 0;font-size:13.6px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-2);vertical-align:top}
+th{font-family:var(--mono);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:500}
+td code{white-space:nowrap}
+.next{display:flex;gap:14px;margin-top:60px;flex-wrap:wrap}
+.next a{flex:1;min-width:220px;border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--ink-2);color:var(--text)}
+.next a:hover{border-color:rgba(87,240,200,.4);text-decoration:none}
+.next .s{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.next .t{font-family:var(--display);font-weight:600;font-size:17px;margin-top:4px}
+
+/* on-this-page */
+.toc{position:sticky;top:60px;align-self:start;height:calc(100vh - 60px);overflow-y:auto;padding:40px 18px;border-left:1px solid var(--line-2)}
+.toc .h{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:12px}
+.toc a{display:block;color:var(--muted);font-size:12.8px;padding:4px 0;border-left:2px solid transparent;padding-left:12px;margin-left:-2px}
+.toc a:hover{color:var(--text);text-decoration:none}
+.toc a.active{color:var(--text);border-left-color:var(--aqua)}
+
+@media(max-width:1180px){.layout{grid-template-columns:var(--sidebar) minmax(0,1fr)}.toc{display:none}}
+@media(max-width:880px){
+  .layout{grid-template-columns:1fr}
+  aside{position:fixed;z-index:55;top:60px;left:0;width:280px;background:var(--ink);transform:translateX(-100%);transition:.25s;border-right:1px solid var(--line)}
+  aside.open{transform:none}
+  .menu-btn{display:inline-block}
+  main{padding:30px 22px 100px}
+}
+</style>
+</head>
+<body>
+<div class="top">
+  <button class="menu-btn" id="menu">☰</button>
+  <a class="logo" href="/"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57f0c8"/><stop offset="1" stop-color="#6a86ff"/></linearGradient></defs><path d="M22 9a9 9 0 1 0 0 14" fill="none" stroke="url(#lg)" stroke-width="3.2" stroke-linecap="round"/></svg>ce<span class="tag">docs</span></a>
+  <div class="sp"></div>
+  <a class="tl" href="https://ce-net.com">← ce-net.com</a>
+  <a class="tl" href="https://github.com/ce-net/ce">GitHub</a>
+</div>
+
+<div class="layout">
+  <aside id="side">
+    <div class="grp">Start here</div>
+    <a href="#introduction">Introduction</a>
+    <a href="#install">Install</a>
+    <a href="#quickstart">Quickstart: run a node</a>
+    <div class="grp">Concepts</div>
+    <a href="#identity">Identity</a>
+    <a href="#mesh">The mesh</a>
+    <a href="#ledger">Ledger &amp; credits</a>
+    <a href="#capabilities">Capabilities</a>
+    <a href="#compute">Compute</a>
+    <div class="grp">Build</div>
+    <a href="#sdk">The SDK (ce-rs)</a>
+    <a href="#coord">Coordination (ce-coord)</a>
+    <a href="#apps">Apps: swarm &amp; rdev</a>
+    <div class="grp">Reference</div>
+    <a href="#cli">CLI</a>
+    <a href="#http">HTTP API</a>
+    <a href="#faq">FAQ</a>
+  </aside>
+
+  <main id="content">
+    <span class="kick">Documentation</span>
+    <h1 id="introduction">Build on CE</h1>
+    <p class="lead">CE is a trustless, Byzantine-fault-tolerant compute marketplace on a proof-of-work
+      chain. Run a node, mine credits, and spend them to run containers on machines anywhere — no
+      accounts, no orchestrator, no middleman. <em>Bitcoin, but it runs Docker.</em></p>
+
+    <p>CE is three layers, and you only touch the ones you need:</p>
+    <ul>
+      <li><b>The node</b> — one binary (<code>ce</code>) that joins the mesh, mines, settles payments, and runs sandboxed jobs. It owns the <em>trustless mechanism</em>: identity, transport, ledger, capabilities.</li>
+      <li><b>The SDK</b> — typed crates that talk to your local node. <code>ce-rs</code> (core: economy, placement, messaging) and <code>ce-coord</code> (optional: streams + replicated state). Additive — add what you need.</li>
+      <li><b>Apps</b> — programs built on the SDK that own <em>policy and UX</em>: <code>swarm</code> (scheduler), <code>rdev</code> (remote dev). New device-to-device features are apps, not node changes.</li>
+    </ul>
+    <div class="note"><b>Mental model.</b> The node is the part that trusts no one. Everything that assumes cooperation — schedulers, replicated state, dashboards — lives above it in the SDK/app tiers. That boundary is the whole architecture.</div>
+
+    <h2 id="install">Install</h2>
+    <p>One static binary, every platform. Then <code>ce start</code> and you're on the network.</p>
+    <table>
+      <tr><th>Platform</th><th>Command</th></tr>
+      <tr><td>macOS · Linux</td><td><code>brew install ce-net/ce/ce</code></td></tr>
+      <tr><td>Shell</td><td><code>curl -sSL https://ce-net.com/install.sh | bash</code></td></tr>
+      <tr><td>Windows (Scoop)</td><td><code>scoop bucket add ce-net https://github.com/ce-net/scoop-ce &amp;&amp; scoop install ce</code></td></tr>
+      <tr><td>Windows (PowerShell)</td><td><code>irm https://ce-net.com/install.ps1 | iex</code></td></tr>
+      <tr><td>Arch (AUR)</td><td><code>yay -S ce-bin</code></td></tr>
+      <tr><td>From source</td><td><code>cargo build --release</code></td></tr>
+    </table>
+
+    <h2 id="quickstart">Quickstart: run a node</h2>
+    <p>Start a node. It auto-joins the public mesh via <code>ce-net.com/bootstrap</code>, begins mining, and exposes a local HTTP API on <code>:8844</code>.</p>
+<pre><code><span class="c-cm"># start the node (foreground; auto-bootstraps + mines)</span>
+ce start
+
+<span class="c-cm"># in another shell — node id, chain height, balance</span>
+ce status
+ce id</code></pre>
+    <p>Behind NAT? <code>ce start</code> reserves a relay circuit automatically — no flags needed. Once a few blocks land, your balance grows from the per-block uptime reward. That balance is what you spend to run jobs on other machines.</p>
+    <div class="note">Docker is optional. Without it, a node still mesh-routes, mines, and participates in the economy — it just can't <em>host</em> container jobs.</div>
+
+    <h2 id="identity">Identity</h2>
+    <p>A node's identity is an <b>Ed25519 keypair</b>. The 32-byte public key <em>is</em> the NodeId — the principal for everything: signing transactions, authoring messages, holding capabilities. There is no registration and no account system; you generate a key and you are a participant.</p>
+    <p>The secret key lives at <code>~/.local/share/ce/identity/node.key</code> (chmod 600). <b>Back it up</b> — it is your node, your balance, and your reputation.</p>
+
+    <h2 id="mesh">The mesh</h2>
+    <p>Nodes talk over a <b>libp2p</b> mesh — never stored IP:port. The stack:</p>
+    <ul>
+      <li><b>Transport:</b> TCP + QUIC, Noise-encrypted (the sender's NodeId is authenticated at the wire).</li>
+      <li><b>Discovery:</b> Kademlia DHT + mDNS, bootstrapped from <code>ce-net.com/bootstrap</code>.</li>
+      <li><b>NAT traversal:</b> AutoNAT + circuit relay + DCUtR hole-punching.</li>
+      <li><b>Pub/sub:</b> gossipsub topics for transactions, blocks, sync, CEP-1 cell signals, and app topics.</li>
+      <li><b>Directed:</b> a request/reply RPC protocol (<code>/ce/rpc/1</code>) and raw streams (<code>tunnel</code>).</li>
+    </ul>
+    <p>Because the sender of every message is cryptographically authenticated, apps get "who said this" for free — the foundation the SDK builds streams and replicated state on.</p>
+
+    <h2 id="ledger">Ledger &amp; credits</h2>
+    <p>A proof-of-work chain orders all economic activity. Nodes mine a block roughly every <b>10 seconds</b> and earn an <b>uptime reward</b> in credits.</p>
+    <ul>
+      <li><b>Emission:</b> starts at 1,000 credits/block, halves every 210,000 blocks, hard cap <b>21 billion</b> credits.</li>
+      <li><b>Money is integer base units</b> — never floats. <code>1 credit = 10^18 base units</code> (wei-style). On-chain amounts are <code>u128</code>; the HTTP API carries them as decimal strings.</li>
+      <li><b>Jobs:</b> a <code>JobBid</code> escrows credits from the payer; <code>JobSettle</code> moves the cost to the host once work is delivered. No balance → <code>402</code>.</li>
+      <li><b>Channels:</b> off-chain payment channels meter long-running and data-layer work with signed receipts.</li>
+    </ul>
+    <p>Every settlement burns 1% — a small, constant Sybil tax that makes wash-trading reputation expensive.</p>
+
+    <h2 id="capabilities">Capabilities</h2>
+    <p>Authorization is not an allowlist — it's a <b>signed, attenuating capability chain</b> (the <code>ce-cap</code> crate). A resource owner issues a capability to another node; that node may delegate a <em>narrower</em> one onward. Each link can only shrink authority.</p>
+<pre><code><span class="c-cm"># on the DESKTOP — issue a capability to the laptop</span>
+ce grant &lt;laptop-node-id&gt; --can exec,sync,tunnel --expires 90d
+<span class="c-cm"># → prints a capability token the laptop stores and presents</span></code></pre>
+    <p>Abilities are opaque strings (<code>exec</code>, <code>sync</code>, <code>tunnel</code>, <code>deploy</code>…). A node honors any chain rooted at its own key or a configured root. Revocation is on-chain (<code>RevokeCapability</code>) plus expiry — no network lookup on the hot path.</p>
+
+    <h2 id="compute">Compute</h2>
+    <p>CE runs two kinds of workload, both sandboxed and metered:</p>
+    <ul>
+      <li><b>Docker</b> (via bollard) — pulled images, CPU/memory limits, <code>network_mode: none</code> (all traffic routes through the mesh), and <b>gVisor</b> (<code>runsc</code>) isolation when available.</li>
+      <li><b>WASM</b> (via wasmtime) — content-addressed modules, fuel-metered, memory-capped, deterministic. Ideal for verifiable redundant execution.</li>
+    </ul>
+    <p>Hosts meter usage and bill in 30-second intervals via heartbeats; you're charged for exactly what you use.</p>
+
+    <h2 id="sdk">The SDK — <span class="pill">ce-rs</span></h2>
+    <p>A typed, async client for your local node. Point it at <code>127.0.0.1:8844</code> and go.</p>
+<pre><code><span class="c-k">use</span> ce_rs::{<span class="c-ty">CeClient</span>, <span class="c-ty">BidSpec</span>, <span class="c-ty">Amount</span>};
+
+<span class="c-k">let</span> ce = <span class="c-ty">CeClient</span>::<span class="c-fn">local</span>();
+<span class="c-k">let</span> me = ce.<span class="c-fn">status</span>().<span class="c-k">await</span>?;
+<span class="c-fn">println!</span>(<span class="c-st">"height {} · balance {}"</span>, me.height, me.balance);
+
+<span class="c-cm">// find a GPU host and deploy a container on it, paid in credits</span>
+<span class="c-k">let</span> host = ce.<span class="c-fn">atlas</span>().<span class="c-k">await</span>?.<span class="c-fn">into_iter</span>().<span class="c-fn">find</span>(|h| h.<span class="c-fn">has_tag</span>(<span class="c-st">"gpu"</span>))?;
+<span class="c-k">let</span> spec = <span class="c-ty">BidSpec</span>{ image:<span class="c-st">"alpine"</span>.<span class="c-fn">into</span>(), cmd:<span class="c-fn">vec!</span>[<span class="c-st">"echo"</span>.<span class="c-fn">into</span>(),<span class="c-st">"hi"</span>.<span class="c-fn">into</span>()],
+                     cpu_cores:<span class="c-pn">1</span>, mem_mb:<span class="c-pn">128</span>, duration_secs:<span class="c-pn">60</span>, bid:<span class="c-ty">Amount</span>::<span class="c-fn">from_credits</span>(<span class="c-pn">10</span>) };
+<span class="c-k">let</span> job = ce.<span class="c-fn">mesh_deploy</span>(&host.node_id, &spec, <span class="c-ty">None</span>).<span class="c-k">await</span>?;</code></pre>
+    <p>What <code>ce-rs</code> covers: <code>status</code> · <code>atlas</code> · <code>transfer</code> · <code>bid</code>/<code>mesh_deploy</code> · jobs · blobs &amp; objects · payment channels · <code>publish</code>/<code>subscribe</code>/<code>request</code>/<code>reply</code> · naming &amp; discovery. Amounts use an <code>Amount</code> type that serializes as a decimal string (JSON can't hold 10^18-scale integers).</p>
+    <div class="note"><b>Add it:</b> <code>ce-rs = { git = "https://github.com/ce-net/ce-rs" }</code></div>
+
+    <h2 id="coord">Coordination — <span class="pill">ce-coord</span></h2>
+    <p>The coordination layer CE deliberately keeps <em>out</em> of the node: typed pub/sub streams and replicated collections, built as a library over <code>ce-rs</code>. It's fully decoupled — same client, additive crate.</p>
+<pre><code><span class="c-k">use</span> ce_coord::<span class="c-ty">Coord</span>;
+
+<span class="c-k">let</span> coord = <span class="c-ty">Coord</span>::<span class="c-fn">with_client</span>(ce.<span class="c-fn">clone</span>()).<span class="c-k">await</span>?;  <span class="c-cm">// shares the ce-rs client</span>
+
+<span class="c-cm">// typed pub/sub: publish on one node, receive on others</span>
+<span class="c-k">let</span> mut s = coord.<span class="c-fn">stream</span>::&lt;<span class="c-ty">Reading</span>&gt;(<span class="c-st">"sensors"</span>).<span class="c-k">await</span>?;
+s.<span class="c-fn">publish</span>(&reading).<span class="c-k">await</span>?;
+
+<span class="c-cm">// replicated map: one writer, many readers, versioned convergence</span>
+<span class="c-k">let</span> map = coord.<span class="c-fn">map_writer</span>::&lt;<span class="c-ty">String</span>,<span class="c-ty">i64</span>&gt;(<span class="c-st">"balances"</span>).<span class="c-k">await</span>?;
+<span class="c-k">let</span> v = map.<span class="c-fn">insert</span>(<span class="c-st">"alice"</span>.<span class="c-fn">into</span>(), <span class="c-pn">100</span>).<span class="c-k">await</span>?;
+
+<span class="c-cm">// on a reader node (knows the writer's NodeId):</span>
+<span class="c-k">let</span> map = coord.<span class="c-fn">map_reader</span>::&lt;<span class="c-ty">String</span>,<span class="c-ty">i64</span>&gt;(<span class="c-st">"balances"</span>, writer_id).<span class="c-k">await</span>?;
+map.<span class="c-fn">await_version</span>(v).<span class="c-k">await</span>;            <span class="c-cm">// converged</span>
+<span class="c-fn">assert_eq!</span>(map.<span class="c-fn">get</span>(&<span class="c-st">"alice"</span>.<span class="c-fn">into</span>()), <span class="c-ty">Some</span>(<span class="c-pn">100</span>));</code></pre>
+    <h3>What's in the box</h3>
+    <table>
+      <tr><th>Primitive</th><th>What it is</th></tr>
+      <tr><td><code>Stream&lt;T&gt;</code></td><td>Typed pub/sub channel. At-most-once; for events &amp; telemetry.</td></tr>
+      <tr><td><code>RMap&lt;K,V&gt;</code> · <code>RSet&lt;T&gt;</code> · <code>RVec&lt;T&gt;</code> · <code>RCell&lt;V&gt;</code> · <code>RCounter</code></td><td>Single-writer replicated collections. Versioned; gaps self-repair.</td></tr>
+      <tr><td><code>Replicated&lt;S&gt;</code></td><td>The engine — replicate any <code>StateMachine</code> you define.</td></tr>
+    </table>
+    <h3>How it works &amp; scales</h3>
+    <p>A writer broadcasts versioned operations on a gossip topic; readers apply them in order and repair any gaps with a directed catch-up request to the writer. Integrity is free — a reader only applies entries whose authenticated sender is the writer it follows.</p>
+    <ul>
+      <li><b>Reads scale flat</b> — every reader answers from its own local replica, zero writer load.</li>
+      <li><b>A write is one broadcast</b> — cost independent of reader count.</li>
+      <li><b>Catch-up is O(missed)</b>, not O(log) — steady-state readers never ask.</li>
+    </ul>
+    <div class="note">v0 is single-writer (a fixed leader). Multi-writer <b>Raft</b> leader election, blob-store snapshots, SSE push, and <code>ce-cap</code>-gated membership are the roadmap — and the <code>Replicated</code> engine already isolates the writer role, so collection call sites won't change.</div>
+    <div class="note"><b>Add it:</b> <code>ce-coord = { git = "https://github.com/ce-net/ce-coord" }</code> — depends on <code>ce-rs</code>, never the reverse.</div>
+
+    <h2 id="apps">Apps: swarm &amp; rdev</h2>
+    <p>Apps are ordinary programs on the SDK — they own policy, CE owns mechanism.</p>
+<pre><code><span class="c-cm"># swarm — fan a command across hosts, gather results</span>
+swarm run alpine -n 8 --select gpu -- nvidia-smi
+swarm verify alpine -k 3 -- sha256sum /etc/os-release   <span class="c-cm"># redundant, compared</span>
+
+<span class="c-cm"># rdev — remote dev over the mesh, gated by capabilities</span>
+rdev exec desktop --image alpine -- uname -a
+rdev watch ~/ce-net desktop:ce-net                       <span class="c-cm"># continuous mirror</span></code></pre>
+
+    <h2 id="cli">CLI reference</h2>
+    <table>
+      <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td><code>ce start</code></td><td>Start the node: join mesh, mine, serve the API.</td></tr>
+      <tr><td><code>ce status</code></td><td>Node id, chain height, difficulty, balance.</td></tr>
+      <tr><td><code>ce id</code></td><td>Print this node's NodeId.</td></tr>
+      <tr><td><code>ce grant &lt;node&gt; --can … --expires …</code></td><td>Issue a capability token to another node.</td></tr>
+      <tr><td><code>ce tunnel &lt;node&gt; 2222:22</code></td><td>Tunnel a remote port over the mesh.</td></tr>
+      <tr><td><code>ce fund</code> · <code>ce run</code> · <code>ce ps</code> · <code>ce kill</code></td><td>Funding and job lifecycle helpers.</td></tr>
+      <tr><td><code>coord map-writer / map-reader / stream-pub / stream-sub</code></td><td>The <code>ce-coord</code> demo CLI.</td></tr>
+    </table>
+
+    <h2 id="http">HTTP API</h2>
+    <p>Base: <code>http://localhost:8844</code>. A selection — see the full reference in the repo.</p>
+    <table>
+      <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+      <tr><td>GET</td><td><code>/status</code></td><td>Node id, height, balance.</td></tr>
+      <tr><td>GET</td><td><code>/atlas</code></td><td>Peer capacity atlas (with capability tags).</td></tr>
+      <tr><td>POST</td><td><code>/jobs/bid</code></td><td>Broadcast a container job bid.</td></tr>
+      <tr><td>POST</td><td><code>/mesh-deploy</code></td><td>Deploy a cell on a specific host.</td></tr>
+      <tr><td>POST</td><td><code>/transfer</code></td><td>Transfer credits.</td></tr>
+      <tr><td>POST</td><td><code>/mesh/publish</code> · <code>/mesh/subscribe</code></td><td>App pub/sub.</td></tr>
+      <tr><td>POST</td><td><code>/mesh/request</code> · <code>/mesh/reply</code></td><td>Directed app request/reply.</td></tr>
+      <tr><td>GET</td><td><code>/blocks/stream</code> · <code>/signals/stream</code></td><td>SSE push streams.</td></tr>
+      <tr><td>GET</td><td><code>/beacon</code></td><td>Verifiable public randomness from the PoW tip.</td></tr>
+      <tr><td>GET</td><td><code>/health</code> · <code>/bootstrap</code></td><td>Liveness · advertised multiaddrs.</td></tr>
+    </table>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Is CE Byzantine-fault-tolerant?</h3>
+    <p>Yes — that's the point. The node assumes adversaries and uses proof-of-work, economic escrow, settlement burns, and on-chain reputation for Sybil resistance. (This is the key difference from honest-fleet runtimes like Flashbots' Mosaik, which assume cooperating members and aren't BFT.)</p>
+    <h3>How is this different from Kubernetes or Ray?</h3>
+    <p>Those orchestrate machines <em>you own</em>. CE is a marketplace between parties who <em>don't trust each other</em>, settled in credits, with no central control plane. <code>swarm</code> gives you Ray-like scatter/gather on top.</p>
+    <h3>Do I need credits to start?</h3>
+    <p>No — run a node and mine them. You only need a balance to <em>spend</em> on others' compute.</p>
+    <h3>Where do new device-to-device features go?</h3>
+    <p>In apps/SDK crates over the mesh primitives (pub/sub + request/reply + <code>ce-cap</code>), not as new node RPCs. The node stays small and trustless.</p>
+
+    <div class="next">
+      <a href="#quickstart"><div class="s">Get going</div><div class="t">Run a node →</div></a>
+      <a href="#coord"><div class="s">Build</div><div class="t">Coordinate state →</div></a>
+      <a href="https://github.com/ce-net/ce"><div class="s">Source</div><div class="t">Read the code →</div></a>
+    </div>
+  </main>
+
+  <nav class="toc" id="toc" aria-label="On this page">
+    <div class="h">On this page</div>
+    <div id="toclinks"></div>
+  </nav>
+</div>
+
+<script>
+// build "on this page" from h2s, scrollspy both rails
+const heads=[...document.querySelectorAll('main h2[id], main h1[id]')];
+const toc=document.getElementById('toclinks');
+heads.filter(h=>h.tagName==='H2').forEach(h=>{
+  const a=document.createElement('a');a.href='#'+h.id;a.textContent=h.textContent.replace(/—.*/,'').trim();
+  toc.appendChild(a);
+});
+const sideLinks=[...document.querySelectorAll('aside a')];
+const tocLinks=[...toc.querySelectorAll('a')];
+const byId=id=>({side:sideLinks.find(a=>a.getAttribute('href')==='#'+id),toc:tocLinks.find(a=>a.getAttribute('href')==='#'+id)});
+const obs=new IntersectionObserver((es)=>{
+  es.forEach(e=>{if(e.isIntersecting){
+    const {side,toc}=byId(e.target.id);
+    sideLinks.forEach(a=>a.classList.remove('active'));tocLinks.forEach(a=>a.classList.remove('active'));
+    if(side)side.classList.add('active');if(toc)toc.classList.add('active');
+  }});
+},{rootMargin:'-70px 0px -75% 0px'});
+[...document.querySelectorAll('main [id]')].forEach(el=>obs.observe(el));
+// mobile sidebar
+document.getElementById('menu').onclick=()=>document.getElementById('side').classList.toggle('open');
+sideLinks.forEach(a=>a.onclick=()=>document.getElementById('side').classList.remove('open'));
+</script>
+</body>
+</html>

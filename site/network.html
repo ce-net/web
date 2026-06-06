@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>CE Network — live mesh & compute</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Live view of the CE mesh: node count and aggregate compute power — CPU, GPU, memory, storage — updating in real time." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3Cpath d='M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.16),transparent 60%),radial-gradient(60% 45% at 100% 100%,rgba(47,107,255,.12),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:1040px;margin:0 auto;padding:0 20px}
+nav{display:flex;align-items:center;gap:14px;height:60px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:19px}
+.brand svg{width:24px;height:24px}.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}nav a{color:var(--muted);font-size:14px;font-weight:500}nav a:hover{color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:14px;border-radius:10px;padding:9px 15px;cursor:pointer;border:1px solid var(--line);color:var(--text);background:rgba(116,176,255,.05);text-decoration:none}
+.btn.primary{border:0;color:#021018;font-weight:700;background:var(--grad)}
+header{padding:34px 0 6px}
+.kick{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);display:inline-flex;align-items:center;gap:9px}
+.live{width:9px;height:9px;border-radius:50%;background:#324b63}.live.on{background:var(--ok);animation:pp 2s infinite}
+@keyframes pp{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(30px,6vw,48px);letter-spacing:-.02em;margin:12px 0 0;line-height:1.04}
+h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);margin:12px 0 0;max-width:60ch}
+
+.hero-stat{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:14px;margin:30px 0 0}
+.big{border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:24px 22px;min-width:0}
+.big .v{font-family:var(--display);font-weight:600;font-size:clamp(40px,9vw,68px);line-height:1;letter-spacing:-.03em;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.big .k{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-top:8px}
+@media(max-width:680px){.hero-stat{grid-template-columns:1fr 1fr}.big:first-child{grid-column:1/-1}}
+
+.stat{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:14px 0 0}
+.card{border:1px solid var(--line);border-radius:14px;background:var(--deep);padding:18px 16px;min-width:0}
+.card .v{font-family:var(--display);font-weight:600;font-size:28px;letter-spacing:-.01em}
+.card .k{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-top:4px}
+.card .s{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:680px){.stat{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+h2{font-family:var(--display);font-weight:600;font-size:20px;margin:42px 0 12px}
+.push{border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:20px 20px}
+.push .ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+select,input{font-family:var(--mono);font-size:14px;background:var(--deep);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+input{width:140px}
+.result{font-family:var(--mono);font-size:13.5px;margin-top:14px;color:var(--muted);min-height:20px}
+.result b{color:var(--surf)}.result .er{color:var(--bad)}
+.curl{font-family:var(--mono);font-size:12px;color:var(--faint);margin-top:14px;word-break:break-all}
+.curl code{background:var(--deep);border:1px solid var(--line-2);border-radius:5px;padding:2px 7px;color:#cfe9ff}
+
+.nodes{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-top:12px}
+.node{border:1px solid var(--line);border-radius:13px;background:var(--deep);padding:15px 16px;min-width:0}
+.node .id{font-family:var(--mono);font-size:12px;color:var(--cyan)}
+.node .meta{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.5}
+.node .gpu{font-size:12px;color:var(--faint);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.empty{color:var(--faint);font-size:14px;padding:18px 2px}
+footer{border-top:1px solid var(--line-2);padding:26px 0 60px;color:var(--faint);font-size:13px;margin-top:40px}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="/"><svg viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg><span class="ce">ce</span></a>
+    <div class="sp"></div>
+    <a class="btn primary" href="/node">Run a node →</a>
+  </nav>
+
+  <header>
+    <span class="kick"><span class="live" id="live"></span><span id="livetxt">connecting…</span></span>
+    <h1>The mesh, <em>right now.</em></h1>
+    <p class="lede">Every node — phones in browsers, laptops, servers — pooling compute. Live node count and aggregate
+      capacity, updating in real time. Open <a href="/node">a browser node</a> on your phone and watch it appear.</p>
+  </header>
+
+  <div class="hero-stat">
+    <div class="big"><div class="v" id="s-nodes">0</div><div class="k">nodes online</div></div>
+    <div class="big"><div class="v" id="s-cores">0</div><div class="k">CPU cores</div></div>
+    <div class="big"><div class="v" id="s-tasks">0</div><div class="k">tasks computed</div></div>
+  </div>
+
+  <div class="stat">
+    <div class="card"><div class="v" id="s-ram">0</div><div class="k">memory (GB)</div><div class="s">aggregate</div></div>
+    <div class="card"><div class="v" id="s-store">0</div><div class="k">storage (GB)</div><div class="s">available</div></div>
+    <div class="card"><div class="v" id="s-gpu">0</div><div class="k">GPUs</div><div class="s" id="s-gpu-s">—</div></div>
+    <div class="card"><div class="v" id="s-webgpu">0</div><div class="k">WebGPU</div><div class="s">capable nodes</div></div>
+  </div>
+
+  <h2>Push a compute task</h2>
+  <div class="push">
+    <div class="ctl">
+      <select id="func">
+        <option value="count_primes">count_primes — CPU burn</option>
+        <option value="fib">fib — fibonacci (i64)</option>
+        <option value="sum_squares">sum_squares — arithmetic (i64)</option>
+      </select>
+      <input id="arg" type="number" value="200000" />
+      <button class="btn primary" id="run">Push to the mesh →</button>
+    </div>
+    <div class="result" id="result">Pushes a WASM module to a live node; it runs on that device and returns the answer.</div>
+    <div class="curl">From anywhere: <code id="curl">curl -X POST .../hub/tasks -d '{"func":"count_primes","args":[200000]}'</code></div>
+  </div>
+
+  <h2>Nodes online</h2>
+  <div class="nodes" id="nodes"><div class="empty">No nodes yet — open <a href="/node">/node</a> to add this device.</div></div>
+
+  <footer>CE — pronounced “Sea.” Live data from the relay hub. <a href="/">Home</a> · <a href="/node">Run a node</a> · <a href="https://github.com/ce-net/ce">GitHub</a></footer>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+function apiBase(){const p=new URLSearchParams(location.search).get('hub');if(p)return p;
+  if(location.protocol==='file:'||['localhost','127.0.0.1'].includes(location.hostname))return 'http://127.0.0.1:8970';
+  return location.origin+'/hub';}
+const API=apiBase();
+$('curl').textContent="curl -X POST "+(API.startsWith('http')?API:location.origin+'/hub')+"/tasks -H 'content-type: application/json' -d '{\"func\":\"count_primes\",\"args\":[200000]}'";
+
+// animated counters
+const disp={};
+function setNum(id,val,dec=0){const el=$(id);const from=disp[id]||0;disp[id]=val;const t0=performance.now();
+  (function step(t){const k=Math.min(1,(t-t0)/450);const v=from+(val-from)*(1-Math.pow(1-k,3));
+    el.textContent=dec?(Math.round(v*10)/10).toFixed(dec):Math.round(v).toLocaleString();
+    if(k<1)requestAnimationFrame(step);})(t0);}
+
+function applyStats(s){
+  setNum('s-nodes',s.nodes||0);setNum('s-cores',s.cores||0);setNum('s-tasks',s.tasks_run||0);
+  setNum('s-ram',s.ram_gb||0,1);setNum('s-store',s.storage_gb||0,1);
+  setNum('s-gpu',(s.gpus||[]).reduce((a,g)=>a+g.count,0));setNum('s-webgpu',s.webgpu_nodes||0);
+  $('s-gpu-s').textContent=(s.gpus&&s.gpus[0])?s.gpus[0].name.slice(0,22):'—';
+}
+// SSE live stats
+function connectSSE(){
+  const es=new EventSource(API+'/stats/stream');
+  es.onopen=()=>{$('live').className='live on';$('livetxt').textContent='live';};
+  es.onmessage=e=>{try{applyStats(JSON.parse(e.data))}catch(x){}};
+  es.onerror=()=>{$('live').className='live';$('livetxt').textContent='reconnecting…';};
+}
+connectSSE();
+// polling fallback (in case SSE is buffered by a CDN) — keeps the numbers live regardless
+async function pollStats(){try{const r=await fetch(API+'/stats',{cache:'no-store'});if(r.ok)applyStats(await r.json());}catch(e){}}
+pollStats();setInterval(pollStats,3000);
+
+// node list
+async function refreshNodes(){
+  try{const r=await fetch(API+'/nodes',{cache:'no-store'});const {nodes}=await r.json();
+    const el=$('nodes');
+    if(!nodes||!nodes.length){el.innerHTML='<div class="empty">No nodes yet — open <a href="/node">/node</a> to add this device.</div>';return;}
+    el.innerHTML=nodes.map(n=>`<div class="node"><div class="id">${n.short}…</div>
+      <div class="meta">${n.cores||'?'} cores · ${n.ram_gb?n.ram_gb+'GB':'? '}RAM · ${n.storage_gb?Math.round(n.storage_gb)+'GB':'?'} disk</div>
+      <div class="gpu">${n.gpu||(n.webgpu?'WebGPU':'—')} · ${n.platform||''} · ${n.tasks_run} tasks</div></div>`).join('');
+  }catch(e){}
+}
+refreshNodes();setInterval(refreshNodes,2500);
+
+// push a task
+$('run').onclick=async()=>{
+  const func=$('func').value, arg=parseInt($('arg').value||'0',10);
+  $('result').innerHTML='dispatching <b>'+func+'('+arg+')</b> to the mesh…';
+  try{
+    const r=await fetch(API+'/tasks',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({func,args:[arg]})});
+    const d=await r.json();
+    if(!r.ok||d.error){$('result').innerHTML='<span class="er">'+(d.error||'failed')+'</span>';return;}
+    $('result').innerHTML=`node <b>${(d.node||'').slice(0,10)}…</b> computed <b>${func}(${arg}) = ${d.value}</b> in <b>${d.ms}ms</b>`;
+  }catch(e){$('result').innerHTML='<span class="er">'+e+'</span>';}
+};
+</script>
+</body>
+</html>

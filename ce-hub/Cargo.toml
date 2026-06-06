@@ -1,0 +1,22 @@
+[package]
+name = "ce-hub"
+version = "0.1.0"
+edition = "2021"
+description = "Browser-node rendezvous for CE: WebSocket registry for in-browser compute nodes, task dispatch, and live mesh/capacity stats. Runs beside the relay node."
+
+[[bin]]
+name = "ce-hub"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
+tower-http = { version = "0.5", features = ["cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = "0.3"
+base64 = "0.22"
+
+[profile.release]
+opt-level = 2
+strip = true

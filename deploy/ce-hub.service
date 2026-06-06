@@ -1,0 +1,20 @@
+[Unit]
+Description=CE browser-node hub (WebSocket rendezvous + task dispatch + live stats)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ce-hub
+ExecStart=/opt/ce-hub/ce-hub
+Environment=CE_HUB_PORT=8970
+Environment=CE_HUB_MODULES=/opt/ce-hub/modules
+Restart=always
+RestartSec=2
+# hardening: the hub holds no secrets, writes nothing, binds localhost only
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
