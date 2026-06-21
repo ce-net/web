@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>CE Playground — run the SDK live</title>
+<meta name="description" content="Run @ce-net/sdk live against a CE node, right in your browser. No install. Status, blocks, blobs, transfers, mesh request/reply, jobs — real code, real responses." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --abyss:#03060e; --deep:#060c18; --panel:#0a1422; --panel-2:#0c1828;
+  --line:rgba(116,176,255,.12); --line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb; --muted:#92a8c6; --faint:#5e768f;
+  --blue:#3b82ff; --cyan:#37c6ff; --surf:#7af0ff;
+  --ok:#46d39a; --warn:#f5c451; --err:#ff5d72;
+  --grad:linear-gradient(118deg,#2f6bff 0%,#37c6ff 56%,#7af0e6 100%);
+  --display:"Fraunces",Georgia,serif;
+  --body:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+html,body{margin:0;padding:0;width:100%;max-width:100%;min-height:100%}
+body{
+  background:var(--abyss);color:var(--text);font-family:var(--body);
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+a{color:inherit;text-decoration:none}
+::selection{background:rgba(55,198,255,.28)}
+
+/* decorative depth field, fixed + clipped */
+.sea{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.surface{position:absolute;top:-34vh;left:50%;transform:translateX(-50%);width:140vw;height:70vh;
+  background:radial-gradient(60% 60% at 50% 50%,rgba(55,198,255,.16),rgba(47,107,255,.06) 45%,transparent 70%);filter:blur(12px)}
+.deepglow{position:absolute;bottom:-30vh;left:-12vw;width:80vw;height:60vh;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(47,107,255,.16),transparent);filter:blur(90px)}
+.grain{position:absolute;inset:0;opacity:.03;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+.shell{position:relative;z-index:1;display:flex;flex-direction:column;min-height:100vh}
+
+/* nav */
+nav{position:sticky;top:0;z-index:50;border-bottom:1px solid var(--line-2);
+  background:linear-gradient(var(--abyss),rgba(3,6,14,.6));backdrop-filter:blur(14px) saturate(1.2)}
+nav .row{display:flex;align-items:center;gap:16px;height:58px;padding-inline:clamp(16px,4vw,28px);max-width:1500px;margin-inline:auto}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.01em;font-optical-sizing:auto}
+.brand svg{width:24px;height:24px}
+.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand .tag{font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;margin-left:2px}
+.links{display:flex;gap:20px;margin-left:8px}
+.links a{color:var(--muted);font-size:14px;font-weight:500;transition:color .2s}
+.links a:hover{color:var(--text)}
+.spacer{flex:1}
+
+/* connection strip */
+.conn{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dot{position:relative;width:9px;height:9px;border-radius:50%;background:#324b63;flex:none}
+.dot.on{background:var(--surf)}
+.dot.on::after{content:"";position:absolute;inset:0;border-radius:50%;animation:sonar 2.2s ease-out infinite}
+.dot.warn{background:var(--warn)}
+.dot.off{background:var(--err)}
+@keyframes sonar{0%{box-shadow:0 0 0 0 rgba(122,240,255,.5);opacity:1}100%{box-shadow:0 0 0 12px rgba(122,240,255,0);opacity:0}}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:rgba(116,176,255,.03)}
+.seg button{border:0;background:transparent;color:var(--muted);font-family:var(--body);font-weight:600;font-size:12.5px;
+  padding:7px 12px;cursor:pointer;transition:.18s;white-space:nowrap}
+.seg button.active{background:var(--grad);color:#021018}
+.seg button:not(.active):hover{color:var(--text)}
+.field{display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:4px 4px 4px 11px}
+.field label{font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+.field input{background:transparent;border:0;color:var(--text);font-family:var(--mono);font-size:12.5px;width:170px;outline:none}
+.btn{display:inline-flex;align-items:center;gap:7px;font-family:var(--body);font-weight:600;font-size:13px;
+  border-radius:9px;padding:8px 13px;cursor:pointer;border:1px solid var(--line);color:var(--text);
+  background:rgba(116,176,255,.04);transition:.18s;white-space:nowrap}
+.btn:hover{border-color:rgba(116,176,255,.32);transform:translateY(-1px)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn.primary{border:0;color:#021018;font-weight:700;background:var(--grad)}
+.btn.primary:hover{filter:brightness(1.05);box-shadow:0 10px 30px -14px rgba(55,198,255,.7)}
+.btn.sm{padding:6px 10px;font-size:12px}
+
+/* layout */
+.main{flex:1;display:grid;grid-template-columns:248px 1fr;gap:0;max-width:1500px;width:100%;margin-inline:auto;min-height:0}
+aside{border-right:1px solid var(--line-2);padding:18px clamp(12px,2vw,18px) 40px;overflow-y:auto}
+.aside-h{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);margin:6px 4px 12px}
+.recipe{display:block;width:100%;text-align:left;border:1px solid transparent;border-radius:11px;padding:11px 12px;margin-bottom:6px;
+  cursor:pointer;background:transparent;color:var(--text);transition:.16s;font-family:var(--body)}
+.recipe:hover{background:rgba(116,176,255,.05);border-color:var(--line-2)}
+.recipe.active{background:linear-gradient(180deg,var(--panel),var(--deep));border-color:var(--line)}
+.recipe .t{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
+.recipe .t .num{font-family:var(--mono);font-size:11px;color:var(--cyan);flex:none}
+.recipe .d{color:var(--muted);font-size:12px;margin-top:3px;line-height:1.4}
+.recipe .badge{font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);
+  border:1px solid var(--line-2);border-radius:5px;padding:1px 5px;margin-top:7px;display:inline-block}
+.recipe .badge.write{color:var(--warn);border-color:rgba(245,196,81,.3)}
+
+.work{display:grid;grid-template-rows:auto 1fr;min-width:0;min-height:0}
+.head{padding:20px clamp(16px,3vw,30px) 14px;border-bottom:1px solid var(--line-2)}
+.head .kick{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}
+.head h1{font-family:var(--display);font-optical-sizing:auto;font-weight:600;letter-spacing:-.02em;
+  font-size:clamp(24px,3.4vw,34px);margin:8px 0 0;line-height:1.05}
+.head p{color:var(--muted);font-size:14.5px;margin:9px 0 0;max-width:64ch}
+.head .teaches{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.chip{font-family:var(--mono);font-size:11px;color:var(--surf);background:rgba(122,240,255,.07);
+  border:1px solid var(--line-2);border-radius:6px;padding:3px 8px}
+
+.panes{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line-2);min-height:0;overflow:hidden}
+.pane{background:var(--abyss);display:flex;flex-direction:column;min-width:0;min-height:0}
+.pane-h{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line-2)}
+.pane-h .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.pane-h .sp{flex:1}
+.code{flex:1;overflow:auto;margin:0;padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:1.7;
+  white-space:pre;color:#cde0f5;tab-size:2}
+.code .k{color:#7aa2ff}.code .s{color:#7af0c0}.code .c{color:var(--faint);font-style:italic}
+.code .f{color:var(--surf)}.code .n{color:#f5c451}
+
+.console{flex:1;overflow:auto;padding:14px 16px;font-family:var(--mono);font-size:12.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.log{display:block;padding:1px 0;border-bottom:1px solid rgba(116,176,255,.04)}
+.log .ts{color:var(--faint);margin-right:9px}
+.log.in{color:#bcd2ec}
+.log.ok{color:var(--ok)}
+.log.er{color:var(--err)}
+.log.ev{color:var(--surf)}
+.log.dim{color:var(--muted)}
+.empty{color:var(--faint);font-style:italic}
+
+.statusbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:9px 16px;border-top:1px solid var(--line-2);
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--deep)}
+.statusbar b{color:var(--text);font-weight:600}
+.statusbar .it{display:flex;align-items:center;gap:6px}
+.mono{font-family:var(--mono)}
+.note{margin:0 clamp(16px,3vw,30px);padding:10px 14px;border:1px solid rgba(245,196,81,.22);background:rgba(245,196,81,.05);
+  border-radius:10px;color:#f0d99a;font-size:12.5px;display:none}
+.note.show{display:block}
+
+@media (max-width:1080px){
+  .main{grid-template-columns:1fr}
+  aside{border-right:0;border-bottom:1px solid var(--line-2);max-height:none;
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;align-items:start}
+  .aside-h{grid-column:1/-1}
+  .panes{grid-template-columns:1fr}
+  .field input{width:130px}
+}
+</style>
+</head>
+<body>
+<div class="sea"><div class="surface"></div><div class="deepglow"></div><div class="grain"></div></div>
+<div class="shell">
+  <nav><div class="row">
+    <a class="brand" href="https://ce-net.com">
+      <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="13" stroke="url(#g)" stroke-width="2"/><path d="M21 11a7 7 0 1 0 0 10" stroke="url(#g)" stroke-width="2" stroke-linecap="round"/><defs><linearGradient id="g" x1="3" y1="3" x2="29" y2="29"><stop stop-color="#2f6bff"/><stop offset="1" stop-color="#7af0e6"/></linearGradient></defs></svg>
+      <span class="ce">CE</span><span class="tag">Playground</span>
+    </a>
+    <div class="links">
+      <a href="https://ce-net.com/network.html">Network</a>
+      <a href="https://ce-net.com/node.html">Browser node</a>
+      <a href="https://docs.ce-net.com">Docs</a>
+    </div>
+    <div class="spacer"></div>
+    <div class="conn" id="conn">
+      <span class="dot" id="conn-dot"></span>
+      <span id="conn-txt" class="mono" style="font-size:12px;color:var(--muted)">connecting…</span>
+      <div class="seg" id="target-seg">
+        <button data-target="browser" class="active">in-browser node</button>
+        <button data-target="local">my local node</button>
+      </div>
+      <div class="field" id="local-field" style="display:none">
+        <label>:8844 token</label>
+        <input id="token-in" type="password" placeholder="api.token (optional)" spellcheck="false" autocomplete="off" />
+      </div>
+    </div>
+  </div></nav>
+
+  <div class="main">
+    <aside id="picker"><div class="aside-h">Recipes</div></aside>
+
+    <div class="work">
+      <div class="head">
+        <div class="kick" id="r-kick">Recipe</div>
+        <h1 id="r-title">—</h1>
+        <p id="r-desc"></p>
+        <div class="teaches" id="r-teaches"></div>
+      </div>
+      <div class="note" id="r-note"></div>
+
+      <div class="panes">
+        <div class="pane">
+          <div class="pane-h"><span class="lbl">@ce-net/sdk</span><span class="sp"></span>
+            <button class="btn sm" id="copy-btn">Copy</button>
+          </div>
+          <pre class="code" id="code"></pre>
+        </div>
+        <div class="pane">
+          <div class="pane-h"><span class="lbl">Live output</span><span class="sp"></span>
+            <button class="btn sm" id="clear-btn">Clear</button>
+            <button class="btn primary sm" id="run-btn">Run ▸</button>
+          </div>
+          <div class="console" id="console"><span class="empty">Click Run to execute this recipe against the connected node.</span></div>
+        </div>
+      </div>
+
+      <div class="statusbar" id="statusbar">
+        <span class="it"><span class="dot" id="sb-dot"></span><span id="sb-target">in-browser node</span></span>
+        <span class="it">node <b id="sb-nid">—</b></span>
+        <span class="it">height <b id="sb-height">—</b></span>
+        <span class="it">balance <b id="sb-bal">—</b></span>
+        <span class="it">peers <b id="sb-peers">—</b></span>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
