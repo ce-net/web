@@ -1,0 +1,18 @@
+[Unit]
+Description=CE storage S3 gateway — serves ce-net.com content from CE blobs
+After=network-online.target ce-relay.service
+Wants=ce-relay.service
+
+[Service]
+# The gateway is `ce-storage gateway` — the exact same app any user runs to host a site on CE.
+# It talks to the local CE node (127.0.0.1:8844) via ce-rs (HOME points it at the data dir + token),
+# resolves bucket/key -> content-addressed blob, and serves the bytes. nginx fronts it (TLS via
+# Cloudflare) with a static fallback, so the site has zero special-casing beyond the TLS edge.
+ExecStart=/usr/local/bin/ce-storage gateway --bind 127.0.0.1:9000
+Environment=HOME=/root
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

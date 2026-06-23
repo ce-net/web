@@ -21,6 +21,20 @@ scp -o BatchMode=yes "$HERE"/site/*.html           "$RELAY:/var/www/ce-net/"
 scp -o BatchMode=yes "$HERE"/site/*.js             "$RELAY:/var/www/ce-net/"
 scp -o BatchMode=yes "$HERE/docs-site/index.html"  "$RELAY:/var/www/ce-docs/index.html"
 
+# Dogfood: also publish the site into CE content-addressed blobs so the ce-storage gateway
+# serves ce-net.com like any other CE-hosted site. Skipped automatically on hosts without the
+# gateway installed (the static files above remain the zero-downtime fallback). One-time setup
+# of the gateway is documented in deploy/gateway-setup.md + deploy/ce-storage-gw.service.
+echo "==> syncing site into CE blobs (ce-storage gateway), if installed"
+"${SSH[@]}" "$RELAY" 'command -v ce-storage >/dev/null || { echo "  (ce-storage not installed — serving from static fallback)"; exit 0; }
+  export HOME=/root; cd /var/www/ce-net
+  ce-storage mb ce-net-site 2>/dev/null || true
+  for f in *.html *.js; do [ -f "$f" ] || continue
+    case "$f" in *.html) ct="text/html; charset=utf-8";; *.js) ct="text/javascript; charset=utf-8";; *) ct="application/octet-stream";; esac
+    ce-storage put "ce-net-site/$f" "$f" --content-type "$ct" >/dev/null && echo "  blob: $f"
+  done
+  systemctl restart ce-storage-gw 2>/dev/null || true'
+
 echo "==> installing nginx config (backing up the current one first)"
 "${SSH[@]}" "$RELAY" 'test -f /etc/nginx/sites-available/ce && cp /etc/nginx/sites-available/ce /etc/nginx/sites-available/ce.bak.$(date +%s) || true'
 scp -o BatchMode=yes "$HERE/deploy/nginx.conf" "$RELAY:/etc/nginx/sites-available/ce"
