@@ -18,6 +18,7 @@ echo "==> web roots"
 
 echo "==> uploading landing + browser-node + dashboard + docs"
 scp -o BatchMode=yes "$HERE"/site/*.html           "$RELAY:/var/www/ce-net/"
+scp -o BatchMode=yes "$HERE"/site/*.js             "$RELAY:/var/www/ce-net/"
 scp -o BatchMode=yes "$HERE/docs-site/index.html"  "$RELAY:/var/www/ce-docs/index.html"
 
 echo "==> installing nginx config (backing up the current one first)"
