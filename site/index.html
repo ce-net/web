@@ -157,6 +157,17 @@ h2{font-family:var(--display);font-optical-sizing:auto;font-weight:600;letter-sp
   border-radius:8px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--body)}
 .inst button:hover{color:var(--text)}
 
+/* built-on grid */
+.builtgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:44px}
+.bcard{display:block;border:1px solid var(--line);border-radius:15px;padding:20px;background:linear-gradient(180deg,var(--panel),var(--deep));min-width:0;transition:.22s}
+.bcard:hover{transform:translateY(-3px);border-color:rgba(55,198,255,.4)}
+.bcard h3{font-family:var(--display);font-optical-sizing:auto;font-weight:600;font-size:18px;margin:0 0 7px;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+.bcard h3 .dt{width:8px;height:8px;border-radius:50%;flex:none;box-shadow:0 0 9px currentColor}
+.bcard p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.5}
+.bcard .r{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:9px}
+@media(max-width:920px){.builtgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.builtgrid{grid-template-columns:minmax(0,1fr)}}
+
 /* closer */
 .closer{text-align:center;padding:clamp(72px,11vw,120px) 0}
 .closer h2{margin-inline:auto;max-width:18ch}
@@ -233,6 +244,7 @@ footer .row{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
       <a href="/network">Network</a>
       <a href="#loop">How it works</a>
       <a href="#sdk">Build</a>
+      <a href="#built">Apps</a>
       <a href="https://docs.ce-net.com">Docs</a>
     </div>
     <div class="spacer"></div>
@@ -309,11 +321,14 @@ footer .row{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
   <div class="wrap">
     <span class="kicker">For builders</span>
     <h2>An SDK that’s layers, not a monolith.</h2>
-    <p class="sub">Point a typed client at your local node and build. <b>ce-rs</b> is the core — economy, placement,
-      messaging. <b>ce-coord</b> adds coordination on top: typed streams and replicated state. Same client,
-      fully decoupled — add only what you need.</p>
+    <p class="sub">Point a typed client at your local node and build — in <b>Rust</b> or <b>TypeScript</b>.
+      <b>@ce-net/sdk</b> is live on npm; <b>ce-rs</b> is the Rust core; <b>ce-coord</b> adds coordination on top:
+      typed streams and replicated state. Same surface, fully decoupled — add only what you need.</p>
     <div class="sdk">
       <div class="copy">
+        <span class="badge">@ce-net/sdk · typescript · on npm</span>
+        <h3>In your browser, too</h3>
+        <p><code style="font-family:var(--mono);color:var(--cyan)">npm i @ce-net/sdk</code> — a typed, runtime-agnostic client for Node, Deno, Bun, browsers, and edge Workers. Money is bigint base units; streams are typed async iterables.</p>
         <span class="badge">ce-rs · core</span>
         <h3>Talk to the network</h3>
         <p>Find a host, deploy a container, move credits — all over the mesh, all typed.</p>
@@ -344,12 +359,33 @@ map.<span class="c-fn">insert</span>(<span class="c-st">"alice"</span>.<span cla
   </div>
 </section>
 
+<section id="built">
+  <div class="wrap">
+    <span class="kicker">Built on the substrate</span>
+    <h2>A cloud, a workspace, and apps people use.</h2>
+    <p class="sub">Every one is a real, tested repo composing the same primitives — no node forks.
+      45 repositories, green on Linux, macOS and Windows. <a href="/ce-map.html" style="color:var(--cyan)">Open the interactive map →</a></p>
+    <div class="builtgrid">
+      <a class="bcard" href="https://github.com/ce-net/ce-drive"><h3><span class="dt" style="color:var(--surf)"></span>CE Drive</h3><p>Distributed FS + open-source Google Drive — multi-writer CRDT, capability-shared, mountable.</p><div class="r">ce-net/ce-drive</div></a>
+      <a class="bcard" href="https://github.com/ce-net/ce-notes"><h3><span class="dt" style="color:var(--surf)"></span>CE Notes</h3><p>Local-first, end-to-end-encrypted CRDT notes across all your devices.</p><div class="r">ce-net/ce-notes</div></a>
+      <a class="bcard" href="https://github.com/ce-net/ce-board"><h3><span class="dt" style="color:var(--cyan)"></span>CE Board</h3><p>Real-time kanban that converges across tabs over the mesh.</p><div class="r">ce-net/ce-board</div></a>
+      <a class="bcard" href="https://github.com/ce-net/ce-chat"><h3><span class="dt" style="color:var(--cyan)"></span>CE Chat</h3><p>Team chat over mesh pub/sub — channels, presence, private rooms.</p><div class="r">ce-net/ce-chat</div></a>
+      <a class="bcard" href="https://github.com/ce-net/ce-explorer"><h3><span class="dt" style="color:#7af0e6"></span>CE Explorer</h3><p>Watch the network breathe — live blocks, jobs, the share-ratio board.</p><div class="r">ce-net/ce-explorer</div></a>
+      <a class="bcard" href="https://github.com/ce-net/ce-storage"><h3><span class="dt" style="color:var(--blue)"></span>CE Cloud</h3><p>S3-style storage, a realtime DB, pub/sub, serverless, IAM, CDN — all over the mesh.</p><div class="r">ce-storage · ce-db · ce-fn · …</div></a>
+      <a class="bcard" href="https://github.com/ce-net/ce-infer"><h3><span class="dt" style="color:var(--surf)"></span>CE Infer</h3><p>On-prem distributed LLM inference — PHI never leaves the LAN.</p><div class="r">ce-net/ce-infer</div></a>
+      <a class="bcard" href="https://github.com/ce-net/ce-paste"><h3><span class="dt" style="color:#7af0e6"></span>CE Paste</h3><p>A content-addressed pastebin where the CID is the URL.</p><div class="r">ce-net/ce-paste</div></a>
+      <a class="bcard" href="https://github.com/ce-net"><h3><span class="dt" style="color:var(--muted)"></span>…and more</h3><p>Mail, Meet, Query, Vault, Host, Fleet, render, CI, cache. Browse them all.</p><div class="r">github.com/ce-net</div></a>
+    </div>
+  </div>
+</section>
+
 <section id="install">
   <div class="wrap">
     <span class="kicker">Get started</span>
     <h2>One binary. Every platform.</h2>
-    <p class="sub">No daemon zoo, no Kubernetes. Install, run <code style="font-family:var(--mono);color:var(--cyan)">ce&nbsp;start</code>, and you’re on the network.</p>
+    <p class="sub">No daemon zoo, no Kubernetes. Install the node and run <code style="font-family:var(--mono);color:var(--cyan)">ce&nbsp;start</code> — or <code style="font-family:var(--mono);color:var(--cyan)">npm&nbsp;i&nbsp;@ce-net/sdk</code> to build on it.</p>
     <div class="installs">
+      <div class="inst"><span class="p">sdk · npm</span><code>npm i @ce-net/sdk</code><button data-copy="npm i @ce-net/sdk">Copy</button></div>
       <div class="inst"><span class="p">mac · linux</span><code>brew install ce-net/ce/ce</code><button data-copy="brew install ce-net/ce/ce">Copy</button></div>
       <div class="inst"><span class="p">shell</span><code>curl -sSL https://ce-net.com/install.sh | bash</code><button data-copy="curl -sSL https://ce-net.com/install.sh | bash">Copy</button></div>
       <div class="inst"><span class="p">windows</span><code>scoop install ce</code><button data-copy="scoop bucket add ce-net https://github.com/ce-net/scoop-ce; scoop install ce">Copy</button></div>
@@ -381,6 +417,8 @@ map.<span class="c-fn">insert</span>(<span class="c-st">"alice"</span>.<span cla
       <a href="https://github.com/ce-net/ce">ce</a>
       <a href="https://github.com/ce-net/ce-rs">ce-rs</a>
       <a href="https://github.com/ce-net/ce-coord">ce-coord</a>
+      <a href="https://www.npmjs.com/package/@ce-net/sdk">npm</a>
+      <a href="/ce-map.html">map</a>
       <a href="https://docs.ce-net.com">docs</a>
       <a href="/bootstrap">bootstrap</a>
       <a href="/health">health</a>
