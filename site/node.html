@@ -125,13 +125,28 @@ function gpuName(){try{const c=document.createElement('canvas');const gl=c.getCo
   if(!gl)return'';const d=gl.getExtension('WEBGL_debug_renderer_info');
   let s=d?gl.getParameter(d.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);
   return (s||'').replace(/\s*\(.*?\)\s*/g,' ').replace(/(ANGLE|OpenGL|Metal|Direct3D|Vulkan).*/i,'').trim();}catch(e){return'';}}
+// Quick CPU micro-benchmark → a measured perf number (~Mops/s), not a self-reported guess.
+function cpuBench(){
+  const t0=performance.now(); let x=1, iters=0;
+  while(performance.now()-t0<25){ for(let i=0;i<50000;i++){ x+=Math.sqrt(i+x*1e-9); } iters+=50000; }
+  const ms=performance.now()-t0; if(x===Infinity)return 0;
+  return Math.round(iters/ms/1000*10)/10;
+}
+// Best-effort GPU memory from the WebGPU adapter limits (a lower-bound proxy; native nodes report real VRAM).
+async function vramMb(){
+  try{ if(!navigator.gpu)return 0; const a=await navigator.gpu.requestAdapter(); if(!a)return 0;
+    const lim=a.limits||{}; const max=Math.max(lim.maxBufferSize||0, lim.maxStorageBufferBindingSize||0);
+    return max?Math.round(max/1048576):0;
+  }catch(e){return 0;}
+}
 async function detect(){
   const cores=navigator.hardwareConcurrency||0;
   const ram=navigator.deviceMemory||0;             // GB, Chromium only
   let storage=0; try{const e=await navigator.storage?.estimate?.();if(e&&e.quota)storage=e.quota/1e9;}catch(e){}
   const gpu=gpuName(); const webgpu=!!navigator.gpu;
   const platform=navigator.platform||(navigator.userAgentData&&navigator.userAgentData.platform)||'';
-  return {cores,ram_gb:ram,storage_gb:Math.round(storage*10)/10,gpu,webgpu,platform};
+  const vram_mb=await vramMb(); const cpu_mark=cpuBench();
+  return {cores,ram_gb:ram,storage_gb:Math.round(storage*10)/10,gpu,webgpu,platform,vram_mb,cpu_mark};
 }
 function showCaps(c){
   $('c-cores').textContent=c.cores||'—';

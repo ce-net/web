@@ -270,9 +270,14 @@ footer .row{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
 
     <div class="gauges rv d5">
       <span class="sonar"><span class="ping" id="ping"></span><span id="netlabel">sounding network…</span></span>
+      <div class="gauge"><div class="v" id="g-cores">—</div><div class="k">cpu cores</div></div>
+      <div class="gauge"><div class="v" id="g-ram">—</div><div class="k">memory</div></div>
+      <div class="gauge"><div class="v" id="g-gpu">—</div><div class="k">gpus</div></div>
+      <div class="gauge"><div class="v" id="g-vram">—</div><div class="k">gpu memory</div></div>
+      <div class="gauge"><div class="v" id="g-store">—</div><div class="k">storage</div></div>
+      <div class="gauge"><div class="v" id="g-perf">—</div><div class="k">perf score</div></div>
       <div class="gauge"><div class="v">~10s</div><div class="k">block time</div></div>
       <div class="gauge"><div class="v">21B</div><div class="k">credit cap</div></div>
-      <div class="gauge"><div class="v">libp2p</div><div class="k">mesh transport</div></div>
     </div>
   </div>
 </header>
@@ -469,15 +474,28 @@ document.querySelectorAll('[data-copy]').forEach(b=>{
 });
 (function liveStats(){
   const ping=document.getElementById('ping'),label=document.getElementById('netlabel');
+  const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v;};
+  const fmtInt=n=>(+n||0).toLocaleString();
+  const fmtGB=g=>{g=+g||0;return g>=1024?(g/1024).toFixed(1)+'TB':(g>=1?Math.round(g):g.toFixed(1))+'GB';};
+  const fmtScore=n=>{n=+n||0;return n>=1000?(n/1000).toFixed(1)+'k':Math.round(n);};
+  const blank=()=>['g-cores','g-ram','g-gpu','g-vram','g-store','g-perf'].forEach(id=>set(id,'—'));
   async function tick(){
     try{
       const r=await fetch('/hub/stats',{cache:'no-store'});
       if(r.ok){const s=await r.json();ping.className='ping on';
-        label.innerHTML='<a href="/network" style="color:inherit;text-decoration:none">'+s.nodes+' node'+(s.nodes===1?'':'s')+' · '+s.cores+' cores live →</a>';return;}
+        const n=s.nodes||0;
+        label.innerHTML='<a href="/network" style="color:inherit;text-decoration:none">'+n+' node'+(n===1?'':'s')+' live →</a>';
+        set('g-cores',fmtInt(s.cores));
+        set('g-ram',fmtGB(s.ram_gb));
+        set('g-gpu',fmtInt(s.gpu_count!=null?s.gpu_count:(s.gpus?s.gpus.reduce((a,g)=>a+(g.count||0),0):0)));
+        set('g-vram',s.gpu_vram_gb?fmtGB(s.gpu_vram_gb):'—');
+        set('g-store',fmtGB(s.storage_gb));
+        set('g-perf',s.perf_score?fmtScore(s.perf_score):'—');
+        return;}
       throw 0;
     }catch(e){
-      try{const h=await fetch('/health',{cache:'no-store'});if(h.ok){ping.className='ping on';label.textContent='network online';return;}}catch(_){}
-      ping.className='ping off';label.textContent='network unreachable';
+      try{const h=await fetch('/health',{cache:'no-store'});if(h.ok){ping.className='ping on';label.textContent='network online';blank();return;}}catch(_){}
+      ping.className='ping off';label.textContent='network unreachable';blank();
     }
   }
   tick();setInterval(tick,4000);

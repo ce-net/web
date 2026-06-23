@@ -40,6 +40,12 @@ struct Caps {
     webgpu: bool,
     #[serde(default)]
     platform: String,
+    /// Approximate GPU memory in MB (from the WebGPU adapter, or a native node's measured VRAM).
+    #[serde(default)]
+    vram_mb: u64,
+    /// Measured CPU throughput score (~Mops/s) from a quick on-node benchmark.
+    #[serde(default)]
+    cpu_mark: f64,
 }
 
 struct NodeEntry {
@@ -292,13 +298,21 @@ fn snapshot(st: &Shared) -> Value {
         v.sort_by(|a, b| b.1.cmp(&a.1));
         v.into_iter().map(|(name, count)| json!({"name": name, "count": count})).collect()
     };
+    let gpu_count = live.iter().filter(|n| !n.caps.gpu.is_empty() || n.caps.webgpu).count();
+    let vram_mb: u64 = live.iter().map(|n| n.caps.vram_mb).sum();
+    let cpu_mark: f64 = live.iter().map(|n| n.caps.cpu_mark).sum();
+    // Blended display perf score: measured CPU throughput (Mops/s) + a GPU-memory weight.
+    let perf_score = cpu_mark + (vram_mb as f64) / 64.0;
     json!({
         "nodes": live.len(),
         "cores": cores,
         "ram_gb": (ram * 10.0).round() / 10.0,
         "storage_gb": (storage * 10.0).round() / 10.0,
         "gpus": gpu_list,
+        "gpu_count": gpu_count,
+        "gpu_vram_gb": (vram_mb as f64 / 1024.0 * 10.0).round() / 10.0,
         "webgpu_nodes": live.iter().filter(|n| n.caps.webgpu).count(),
+        "perf_score": (perf_score * 10.0).round() / 10.0,
         "tasks_run": st.total_tasks.load(Ordering::Relaxed),
     })
 }
