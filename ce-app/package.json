@@ -1,0 +1,39 @@
+{
+  "name": "ce-app",
+  "version": "0.1.0",
+  "description": "One command to a live, globally reachable, hot-reloading app on ce-net.com",
+  "type": "module",
+  "license": "MIT",
+  "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
+  "bin": {
+    "ce-app": "bin/ce-app.mjs",
+    "create-ce-app": "bin/create-ce-app.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./client/index.d.ts",
+      "import": "./client/index.js",
+      "default": "./client/index.js"
+    },
+    "./client": {
+      "types": "./client/index.d.ts",
+      "import": "./client/index.js",
+      "default": "./client/index.js"
+    }
+  },
+  "files": [
+    "bin",
+    "client",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "smoke": "node bin/ce-app.mjs smoke"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "esbuild": "^0.21.0"
+  }
+}

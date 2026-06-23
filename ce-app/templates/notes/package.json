@@ -1,0 +1,16 @@
+{
+  "name": "ce-notes",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Collaborative notes / guestbook persisted in the CE database, live across tabs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0"
+  }
+}

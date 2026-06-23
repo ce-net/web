@@ -1,0 +1,23 @@
+{
+  "name": "ce-vite-react",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Stock Vite + React + TypeScript counter that persists to ce.db — bring your own project",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0"
+  }
+}

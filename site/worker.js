@@ -16,6 +16,7 @@
 import os from 'node:os'
 import fs from 'node:fs'
 import path from 'node:path'
+import vm from 'node:vm'
 import crypto from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 
@@ -106,6 +107,27 @@ async function runJob(job) {
   }
 }
 
+// ---- JS job execution (mirrors node.html `runJsJob`) ----
+// Runs the pushed function in a fresh vm context (no access to this process's scope) with a 6s
+// wall-clock cap. `crypto.subtle` is exposed so tasks can hash; nothing else from the host leaks.
+async function runJsJob(job) {
+  const t0 = performance.now()
+  const done = (r) => ({ ...r, ms: Math.round((performance.now() - t0) * 100) / 100 })
+  try {
+    const sandbox = { crypto: globalThis.crypto, TextEncoder, TextDecoder, Math, JSON, Date }
+    const fn = vm.runInNewContext('(' + job.code + '\n)', sandbox, { timeout: 6000 })
+    if (typeof fn !== 'function') throw new Error('task is not a function')
+    const r = await Promise.race([
+      Promise.resolve().then(() => fn(job.input)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timed out (6s)')), 6000)),
+    ])
+    const value = typeof r === 'string' ? r : JSON.stringify(r)
+    return done({ ok: true, value })
+  } catch (e) {
+    return done({ ok: false, value: '', error: String(e?.message || e) })
+  }
+}
+
 // ---- connection loop ----
 let caps = detectCaps()
 let ws = null, hb = null, tasks = 0, backoff = 2000
@@ -130,11 +152,13 @@ function connect() {
     let m
     try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString()) } catch { return }
     if (m.t === 'welcome') { log('registered with hub'); return }
+    if (m.t === 'ping') { try { ws.send(JSON.stringify({ t: 'pong', ts: m.ts })) } catch { /* ignore */ } return }
     if (m.t === 'job') {
-      const res = await runJob(m)
+      const res = m.lang === 'js' ? await runJsJob(m) : await runJob(m)
       try { ws.send(JSON.stringify({ t: 'result', jid: m.jid, ...res })) } catch { /* dropped */ }
       tasks++
-      log(`task ${m.func}(${(m.args || []).join(',')}) -> ${res.ok ? res.value : 'ERR ' + res.error} (${res.ms}ms, total ${tasks})`)
+      const label = m.lang === 'js' ? `${m.func || 'task'}(js)` : `${m.func}(${(m.args || []).join(',')})`
+      log(`task ${label} -> ${res.ok ? res.value : 'ERR ' + res.error} (${res.ms}ms, total ${tasks})`)
     }
   }
 

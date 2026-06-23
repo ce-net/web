@@ -6,12 +6,18 @@ set -euo pipefail
 RELAY="root@178.105.145.170"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSH=(ssh -o BatchMode=yes)
-BIN="$HERE/ce-hub/target/x86_64-unknown-linux-musl/release/ce-hub"
+# This workspace uses a shared cargo target dir (ce-net/.cargo/config.toml -> target-dir =
+# ce-net/.cargo-shared), so cross-compiled artifacts land there, not under ce-hub/target.
+# Prefer the shared path; fall back to the per-crate target for older checkouts.
+BIN="$HERE/../.cargo-shared/x86_64-unknown-linux-musl/release/ce-hub"
+[ -f "$BIN" ] || BIN="$HERE/ce-hub/target/x86_64-unknown-linux-musl/release/ce-hub"
 
 test -f "$BIN" || { echo "!! build first:  (cd ce-hub && cargo zigbuild --release --target x86_64-unknown-linux-musl)"; exit 1; }
 
 echo "==> staging binary + wasm modules"
-"${SSH[@]}" "$RELAY" 'mkdir -p /opt/ce-hub/modules'
+# /opt/ce-hub/data holds persistent app files, the KV database, and node uptime records
+# (CE_HUB_DATA). Created here so the first start has a writable dir under ProtectSystem=strict.
+"${SSH[@]}" "$RELAY" 'mkdir -p /opt/ce-hub/modules /opt/ce-hub/data'
 scp -o BatchMode=yes "$BIN" "$RELAY:/opt/ce-hub/ce-hub.new"
 scp -o BatchMode=yes "$HERE"/ce-hub/modules/*.wasm "$RELAY:/opt/ce-hub/modules/"
 "${SSH[@]}" "$RELAY" 'mv -f /opt/ce-hub/ce-hub.new /opt/ce-hub/ce-hub && chmod +x /opt/ce-hub/ce-hub'

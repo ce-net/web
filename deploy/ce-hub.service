@@ -8,11 +8,15 @@ WorkingDirectory=/opt/ce-hub
 ExecStart=/opt/ce-hub/ce-hub
 Environment=CE_HUB_PORT=8970
 Environment=CE_HUB_MODULES=/opt/ce-hub/modules
+Environment=CE_HUB_DATA=/opt/ce-hub/data
 Restart=always
 RestartSec=2
-# hardening: the hub holds no secrets, writes nothing, binds localhost only
+# hardening: the hub holds no secrets and binds localhost only. It now persists app
+# files, the KV database, and per-node uptime records under CE_HUB_DATA, so that path
+# is explicitly made writable while the rest of the filesystem stays read-only.
 NoNewPrivileges=true
 ProtectSystem=strict
+ReadWritePaths=/opt/ce-hub/data
 ProtectHome=true
 PrivateTmp=true
 

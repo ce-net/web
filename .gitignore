@@ -1,3 +1,8 @@
 **/target/
 *.log
 .DS_Store
+**/node_modules/
+**/dist/
+**/.ce/
+ce-hub/data/
+deploy/data/
