@@ -307,7 +307,7 @@ function showError(msg){
 
 async function load(){
   try{
-    const res=await fetch('https://ce-net.com/registry',{headers:{'accept':'application/json'}});
+    const res=await fetch('https://ce-net.com/hub/registry',{headers:{'accept':'application/json'}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data=await res.json();
     const list=Array.isArray(data)?data:(data&&Array.isArray(data.projects)?data.projects:[]);

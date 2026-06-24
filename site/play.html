@@ -205,7 +205,7 @@ render();
 async function loadRegistry(){
   let data;
   try{
-    const res=await fetch('https://ce-net.com/registry',{headers:{'accept':'application/json'}});
+    const res=await fetch('https://ce-net.com/hub/registry',{headers:{'accept':'application/json'}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     data=await res.json();
   }catch(e){ return; } // keep the static fallback exactly as-is

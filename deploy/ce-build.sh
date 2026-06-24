@@ -37,7 +37,10 @@ case "$cmd" in
     # refresh builtin wasm modules from the repo too
     "${SSH[@]}" "$RELAY" "mkdir -p /opt/ce-hub/modules /opt/ce-hub/data"
     rsync -az -e "$RSH" "$HERE"/ce-hub/modules/ "$RELAY:/opt/ce-hub/modules/" 2>/dev/null || true
+    # keep the systemd unit (env: limits, rate-limit, admin-owner) in sync with the repo
+    rsync -az -e "$RSH" "$HERE"/deploy/ce-hub.service "$RELAY:/etc/systemd/system/ce-hub.service" 2>/dev/null || true
     "${SSH[@]}" "$RELAY" '
+      systemctl daemon-reload &&
       install -m755 '"$REMOTE"'/ce-hub/target/release/ce-hub /opt/ce-hub/ce-hub.new &&
       mv -f /opt/ce-hub/ce-hub.new /opt/ce-hub/ce-hub &&
       systemctl restart ce-hub && sleep 1 &&
@@ -77,15 +80,20 @@ case "$cmd" in
   drift) # full multi-crate drift build + deploy on the relay
     echo "==> sync drift + netgame to relay"
     sync "$HERE/projects/drift" drift
-    "${SSH[@]}" "$RELAY" "mkdir -p $REMOTE/ce-app/client"
-    rsync -az -e "$RSH" "$HERE"/ce-app/client/ "$RELAY:$REMOTE/ce-app/client/"
+    # stage.mjs resolves netgame at ../../ce-app/client/netgame.js relative to /opt/ce-build/drift,
+    # i.e. /opt/ce-app/client/netgame.js — put it exactly there.
+    "${SSH[@]}" "$RELAY" "mkdir -p /opt/ce-app/client"
+    rsync -az -e "$RSH" "$HERE"/ce-app/client/ "$RELAY:/opt/ce-app/client/"
     echo "==> build wgpu client + sim wasm + stage + deploy (on the relay)"
     "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; set -e
       cd '"$REMOTE"'/drift
       echo "-- wgpu client (wasm-pack -> ./pkg)"
-      if (cd client && wasm-pack build --release --target web --out-dir ../pkg 2>&1 | tail -10); then
-        echo "   client OK"
-      else echo "   CLIENT BUILD FAILED -> deploying transport-only (renderer probes ./pkg and degrades)"; rm -rf pkg; fi
+      if ( cd client && wasm-pack build --release --target web --out-dir ../pkg ) >/tmp/drift-client.log 2>&1; then
+        echo "   client OK (wgpu renderer included)"
+      else tail -12 /tmp/drift-client.log
+        echo "   CLIENT BUILD FAILED -> transport-only (index.html probes ./pkg/drift_client.js and degrades)"
+        rm -f pkg/drift_client*.js pkg/drift_client*.wasm pkg/package.json 2>/dev/null || true
+      fi
       echo "-- sim wasm (for the wasm host)"
       (cd sim && cargo build --release --target wasm32-unknown-unknown 2>&1 | tail -4)
       mkdir -p pkg && cp -f sim/target/wasm32-unknown-unknown/release/drift_sim.wasm pkg/ 2>/dev/null || true

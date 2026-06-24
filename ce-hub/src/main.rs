@@ -242,8 +242,10 @@ struct AppState {
     slug_rate: Mutex<HashMap<String, RateBucket>>,
     // identity-scoped per-owner storage budgets (generous), derived from /nodes trust.
     owner_limits: OwnerLimits,
-    // admin override token (CE_HUB_ADMIN_TOKEN) for project takedown; empty = disabled.
-    admin_token: String,
+    // operator identities (CE_HUB_ADMIN_OWNER, comma-separated owner ids = sha256(pubkey)[..16]) that
+    // are admin. No shared secret: admin is authorized by a signed request from one of these
+    // identities. An owner id is public, so it is safe in config; the authority is the signature.
+    admin_owners: Vec<String>,
     // realtime room sizing (env CE_HUB_ROOM_CAP / CE_HUB_ROOM_HISTORY).
     room_cap: usize,
     room_history: usize,
@@ -546,7 +548,12 @@ async fn main() {
         rate: Mutex::new(HashMap::new()),
         slug_rate: Mutex::new(HashMap::new()),
         owner_limits: OwnerLimits::from_env(),
-        admin_token: env_string("CE_HUB_ADMIN_TOKEN").unwrap_or_default(),
+        admin_owners: env_string("CE_HUB_ADMIN_OWNER")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect(),
         room_cap: env_usize("CE_HUB_ROOM_CAP", ROOM_CAP_DEFAULT).max(8),
         room_history: env_usize("CE_HUB_ROOM_HISTORY", ROOM_HISTORY_DEFAULT),
         ratelimit_ns: env_string("CE_HUB_RATELIMIT_NS")
@@ -2591,18 +2598,15 @@ async fn project_publish(headers: HeaderMap, State(st): State<Shared>, body: Byt
 
 async fn project_delete(Path(id): Path<String>, headers: HeaderMap, State(st): State<Shared>, body: Bytes) -> impl IntoResponse {
     let id = id.to_ascii_lowercase();
-    // Admin override: X-CE-Admin matching CE_HUB_ADMIN_TOKEN takes down any project.
-    let is_admin = !st.admin_token.is_empty()
-        && headers.get("x-ce-admin").and_then(|v| v.to_str().ok()).map(|t| t == st.admin_token).unwrap_or(false);
-    let owner = if is_admin {
-        None
-    } else {
-        match verify_signed(&st, "DELETE", &format!("/projects/{id}"), &headers, &body) {
-            Ok(Some(s)) => Some(s.owner),
-            Ok(None) => return (StatusCode::UNAUTHORIZED, Json(json!({"error":"signature required"}))).into_response(),
-            Err(e) => return (StatusCode::UNAUTHORIZED, Json(json!({ "error": e }))).into_response(),
-        }
+    // Always verify the signature; the signed identity authorizes the action — no shared token.
+    let signed_owner = match verify_signed(&st, "DELETE", &format!("/projects/{id}"), &headers, &body) {
+        Ok(Some(s)) => s.owner,
+        Ok(None) => return (StatusCode::UNAUTHORIZED, Json(json!({"error":"signature required"}))).into_response(),
+        Err(e) => return (StatusCode::UNAUTHORIZED, Json(json!({ "error": e }))).into_response(),
     };
+    // Admin = the request is signed by a configured operator identity (CE_HUB_ADMIN_OWNER).
+    let is_admin = st.admin_owners.iter().any(|o| o == &signed_owner);
+    let owner = Some(signed_owner);
     let removed = {
         let mut projects = st.projects.lock().unwrap();
         match projects.get(&id) {
@@ -3321,7 +3325,7 @@ mod tests {
             rate: Mutex::new(HashMap::new()),
             slug_rate: Mutex::new(HashMap::new()),
             owner_limits: OwnerLimits::from_env(),
-            admin_token: String::new(),
+            admin_owners: Vec::new(),
             room_cap: 256,
             room_history: 50,
             ratelimit_ns: std::collections::HashSet::new(),

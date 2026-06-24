@@ -16,6 +16,12 @@ Environment=CE_HUB_MAX_DATA_BYTES=1073741824
 Environment=CE_HUB_MAX_APPS=500
 Environment=CE_HUB_MAX_DOMAINS=200
 Environment=CE_HUB_MAX_DB_NAMESPACES=1000
+# Per-namespace IP rate limit (anti-spam) for the feedback app.
+Environment=CE_HUB_RATELIMIT_NS=feedback
+# Admin/moderation is IDENTITY-based, not a shared token: a request signed by one of these operator
+# identities (owner id = sha256(pubkey)[..16]) is admin. An owner id is public, so it is safe here;
+# the authority is the signature. This is the laptop's CE node identity (the operator).
+Environment=CE_HUB_ADMIN_OWNER=52aa664acd1bde0a1da5224a037aea1a
 Restart=always
 RestartSec=2
 # hardening: the hub holds no secrets and binds localhost only. It now persists app

@@ -45,7 +45,17 @@ function ceHomeDir() {
   return path.join(os.homedir(), ".ce");
 }
 function ceNodeKeyPath() {
-  return path.join(os.homedir(), ".local", "share", "ce", "identity", "node.key");
+  // The CE data dir is platform-specific (macOS: ~/Library/Application Support/ce; Linux:
+  // ~/.local/share/ce; Windows: %APPDATA%\ce) and CE_DATA_DIR can override it. Return the first
+  // existing candidate, else the per-platform default. (Mirrors ce-app.mjs.)
+  const home = os.homedir();
+  const cands = [];
+  if (process.env.CE_DATA_DIR) cands.push(path.join(process.env.CE_DATA_DIR, "identity", "node.key"));
+  cands.push(path.join(home, "Library", "Application Support", "ce", "identity", "node.key"));
+  cands.push(path.join(home, ".local", "share", "ce", "identity", "node.key"));
+  if (process.env.APPDATA) cands.push(path.join(process.env.APPDATA, "ce", "identity", "node.key"));
+  for (const c of cands) { try { if (fssync.existsSync(c)) return c; } catch (_) {} }
+  return process.platform === "darwin" ? cands[process.env.CE_DATA_DIR ? 1 : 0] : cands[cands.length - 1];
 }
 function ceIdentityDir() {
   return path.join(ceHomeDir(), "identity");
