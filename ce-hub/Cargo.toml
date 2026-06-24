@@ -23,6 +23,9 @@ rand = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+# ce-rs SDK: drives the co-located ce node over http://127.0.0.1:8844 to push abuse flags to
+# ce-watch as a directed mesh `send_message` on topic `ce-watch/flag` — no HTTP, no shared token.
+ce-rs = { path = "../../ce-rs" }
 # gix (gitoxide): pure-Rust git object/tree/commit reads for the hub git layer (SHA-1 objects).
 # CONSERVATIVE CHOICE: we use gix DEFAULT features (no default-features=false). A narrow feature set
 # (e.g. just "revision") risks failing to compile the read path we depend on — rev_parse_single,

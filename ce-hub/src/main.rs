@@ -17,6 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand::RngCore;
 
+mod flag_sink;
 mod git_http;
 mod instances;
 mod mirror;
@@ -269,9 +270,9 @@ pub(crate) struct AppState {
     flag_throttle: Mutex<HashMap<(String, String), Instant>>,
     // total flags ever raised (durable-ish lifetime counter; resets on restart, that is fine).
     flagged_total: AtomicU64,
-    // ce-watch push target + ingest token (env CE_WATCH_URL / CE_WATCH_INGEST_TOKEN).
-    watch_url: String,
-    watch_token: String,
+    // where raised flags are delivered: a directed mesh `send_message` to ce-watch's NodeId on topic
+    // `ce-watch/flag` (no HTTP, no shared token). Injectable so the detector is unit-testable.
+    flag_sink: Arc<dyn flag_sink::FlagSink>,
     // --- hub git layer (hub.ce-net.com) ---
     // repo registry: "<owner>/<repo>" -> RepoEntry, persisted to repos.json (atomic write + lock).
     pub(crate) repos: Mutex<HashMap<String, repos::RepoEntry>>,
@@ -334,7 +335,8 @@ const FLAG_THROTTLE: Duration = Duration::from_secs(60);
 const DETECT_IP_CAP: usize = 4096;
 
 /// A machine-readable abuse signal raised by a detector heuristic. Pushed to the in-memory ring,
-/// logged, and best-effort forwarded to ce-watch /ingest. Shape is fixed by the shared contract.
+/// logged, and best-effort forwarded to ce-watch over the mesh (topic `ce-watch/flag`). Shape is
+/// fixed by the shared contract.
 #[derive(Clone, Serialize)]
 struct FlagEvent {
     ts: u64,
@@ -596,8 +598,22 @@ async fn main() {
         flags: Mutex::new(VecDeque::new()),
         flag_throttle: Mutex::new(HashMap::new()),
         flagged_total: AtomicU64::new(0),
-        watch_url: env_string("CE_WATCH_URL").unwrap_or_else(|| "http://127.0.0.1:8971".into()),
-        watch_token: env_string("CE_WATCH_INGEST_TOKEN").unwrap_or_default(),
+        flag_sink: {
+            // Resolve ce-watch's NodeId (CE_HUB_WATCH_NODE, else find_service("ce-watch")) and build
+            // the mesh sink that pushes flags as directed send_message over the co-located ce node.
+            let node_url = flag_sink::ce_node_url();
+            let resolver = ce_rs::CeClient::new(node_url.clone());
+            let watch_node = flag_sink::resolve_watch_node(&resolver).await;
+            if watch_node.is_empty() {
+                eprintln!(
+                    "ce-hub: no ce-watch NodeId (set CE_HUB_WATCH_NODE or advertise ce-watch) — flags will not be pushed"
+                );
+            } else {
+                eprintln!("ce-hub: pushing abuse flags to ce-watch node {watch_node} over the mesh");
+            }
+            Arc::new(flag_sink::MeshFlagSink::new(node_url, watch_node))
+                as Arc<dyn flag_sink::FlagSink>
+        },
         repos: Mutex::new(repos),
         git_root,
         max_git_bytes: env_u64("CE_HUB_MAX_GIT_BYTES", 2 * 1024 * 1024 * 1024),
@@ -2378,8 +2394,8 @@ fn gauge_dec(st: &Shared, node_id: &str) {
 }
 
 /// Raise a FlagEvent: dedup-throttle per (ip, heuristic), push to the ring (cap FLAG_RING_CAP),
-/// log via tracing::warn!, and fire-and-forget POST it to ce-watch /ingest. Returns true if the
-/// flag was emitted (not throttled) — used by tests.
+/// log via tracing::warn!, and fire-and-forget push it to ce-watch over the mesh (topic
+/// `ce-watch/flag`). Returns true if the flag was emitted (not throttled) — used by tests.
 fn raise_flag(st: &Shared, node_id: &str, ip: &str, heuristic: &str, reason: &str, severity: &str, sample: Value) -> bool {
     // Dedup throttle: collapse repeats of the same (ip, heuristic) within FLAG_THROTTLE.
     {
@@ -2425,45 +2441,18 @@ fn raise_flag(st: &Shared, node_id: &str, ip: &str, heuristic: &str, reason: &st
     true
 }
 
-/// Fire-and-forget POST of a FlagEvent to ce-watch /ingest. Non-blocking, best-effort: any error is
-/// ignored and never bubbles up to the task dispatch path. A raw HTTP/1.1 write over a tokio socket
-/// keeps the hub light (no extra HTTP client dependency).
+/// Push a FlagEvent to ce-watch over the CE mesh: serialize it and hand it to the [`FlagSink`], which
+/// sends a directed `send_message` to ce-watch's NodeId on topic `ce-watch/flag`. Non-blocking and
+/// best-effort — the sink spawns the send and swallows any transport error, so the detector never
+/// blocks task dispatch and never crashes on a delivery failure.
+///
+/// [`FlagSink`]: flag_sink::FlagSink
 fn push_flag_to_watch(st: &Shared, ev: FlagEvent) {
-    let url = st.watch_url.clone();
-    let token = st.watch_token.clone();
     let body = match serde_json::to_vec(&ev) {
         Ok(b) => b,
         Err(_) => return,
     };
-    tokio::spawn(async move {
-        let _ = post_json_best_effort(&url, "/ingest", &token, &body).await;
-    });
-}
-
-/// Minimal best-effort HTTP/1.1 JSON POST. Parses `base` as http://host:port, connects, writes one
-/// request with the x-ce-watch-token header, and drops the response. Errors are swallowed.
-async fn post_json_best_effort(base: &str, path: &str, token: &str, body: &[u8]) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    let rest = base.strip_prefix("http://").unwrap_or(base);
-    let authority = rest.split('/').next().unwrap_or(rest);
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((h, p)) => (h, p.parse::<u16>().unwrap_or(80)),
-        None => (authority, 80u16),
-    };
-    let mut stream = tokio::time::timeout(
-        Duration::from_secs(2),
-        tokio::net::TcpStream::connect((host, port)),
-    )
-    .await
-    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timeout"))??;
-    let req = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nx-ce-watch-token: {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(req.as_bytes()).await?;
-    stream.write_all(body).await?;
-    stream.flush().await?;
-    Ok(())
+    st.flag_sink.send(body);
 }
 
 /// GET /flags — recent FlagEvents (newest last) for the ce-watch console / dashboards.
@@ -3552,15 +3541,74 @@ mod tests {
             flags: Mutex::new(VecDeque::new()),
             flag_throttle: Mutex::new(HashMap::new()),
             flagged_total: AtomicU64::new(0),
-            // Point ce-watch at a closed port: the fire-and-forget push fails silently (best-effort).
-            watch_url: "http://127.0.0.1:1".into(),
-            watch_token: String::new(),
+            // Default detector tests don't inspect flag delivery: drop pushed flags. The
+            // raise_flag-specific test below builds its own state with a recording sink.
+            flag_sink: Arc::new(flag_sink::NullSink),
             repos: Mutex::new(HashMap::new()),
             git_root: std::env::temp_dir().join("ce-hub-test-git"),
             max_git_bytes: 2 * 1024 * 1024 * 1024,
             max_repo_bytes: 1024 * 1024 * 1024,
             git_sem: Arc::new(tokio::sync::Semaphore::new(GIT_CGI_CONCURRENCY)),
         })
+    }
+
+    /// Build a test state whose flag sink RECORDS every pushed flag, plus return the sink handle so
+    /// the test can read exactly what `raise_flag` emitted.
+    fn test_state_with_recording_sink() -> (Shared, Arc<flag_sink::RecordingSink>) {
+        let sink = Arc::new(flag_sink::RecordingSink::new());
+        let mut st = test_state();
+        // test_state() built an Arc<AppState>; swap in the recording sink before any handles exist.
+        Arc::get_mut(&mut st).unwrap().flag_sink = sink.clone();
+        (st, sink)
+    }
+
+    /// `raise_flag` must emit a single directed mesh send to ce-watch carrying the FlagEvent JSON
+    /// with the exact fields it was raised with. (Transport is mocked by the recording sink; no live
+    /// node, no two-node mesh.)
+    #[test]
+    fn raise_flag_emits_mesh_send_with_flag_payload() {
+        let (st, sink) = test_state_with_recording_sink();
+
+        let emitted = raise_flag(
+            &st,
+            "node-xyz",
+            "203.0.113.7",
+            "H2",
+            "repeat-signature: count_primes x47 in 5m — mining shape",
+            "high",
+            json!({ "func": "count_primes", "endpoint": "/tasks" }),
+        );
+        assert!(emitted, "first flag for this (ip,heuristic) must not be throttled");
+
+        // Exactly one payload was pushed to the sink (topic `ce-watch/flag` is fixed by MeshFlagSink).
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1, "raise_flag must push exactly one flag to the sink");
+
+        // The payload is the FlagEvent JSON, with the fields we raised it with.
+        let v: Value = serde_json::from_slice(&sent[0]).expect("flag payload is valid JSON");
+        assert_eq!(v["node_id"], "node-xyz");
+        assert_eq!(v["ip"], "203.0.113.7");
+        assert_eq!(v["heuristic"], "H2");
+        assert_eq!(v["severity"], "high");
+        assert_eq!(v["sample"]["func"], "count_primes");
+        assert!(v["reason"].as_str().unwrap().contains("count_primes"));
+        assert!(v["ts"].as_u64().is_some(), "flag carries a unix timestamp");
+
+        // The topic the sink uses is the shared contract topic ce-watch filters on.
+        assert_eq!(flag_sink::FLAG_TOPIC, "ce-watch/flag");
+    }
+
+    /// A repeated (ip, heuristic) flag is throttled, so it does NOT emit a second mesh send within
+    /// the throttle window.
+    #[test]
+    fn raise_flag_throttles_duplicate_within_window() {
+        let (st, sink) = test_state_with_recording_sink();
+        let args = ("node-a", "10.9.9.9", "H1", "burst", "medium");
+        let first = raise_flag(&st, args.0, args.1, args.2, args.3, args.4, json!({}));
+        let second = raise_flag(&st, args.0, args.1, args.2, args.3, args.4, json!({}));
+        assert!(first);
+        assert!(!second, "the duplicate within FLAG_THROTTLE must be suppressed");
+        assert_eq!(sink.sent.lock().unwrap().len(), 1, "only the un-throttled flag is pushed");
     }
 
     /// 16 identical tasks from one ip trip H2 with a human-readable reason; a sub-threshold (15)
