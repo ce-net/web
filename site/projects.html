@@ -93,7 +93,7 @@ footer a{color:var(--muted)}
   <nav>
     <a class="brand" href="/"><svg viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg><span class="ce">ce</span></a>
     <div class="sp"></div>
-    <a class="lnk" href="/play">Play</a>
+    <a class="lnk" href="/apps">Apps</a>
     <a class="lnk" href="/network">Network</a>
     <a class="lnk" href="/deploy">Deploy</a>
   </nav>
@@ -125,12 +125,12 @@ footer a{color:var(--muted)}
     </div>
     <div class="acts">
       <a class="btn primary" href="/deploy">Deploy an app &rarr;</a>
-      <a class="btn" href="/play">See live demos</a>
+      <a class="btn" href="/apps">See live demos</a>
     </div>
   </div>
 
   <footer>CE &mdash; pronounced &ldquo;Sea.&rdquo; The registry is served live from the hub; hosting badges and room counts are sampled from the mesh.
-    <a href="/">Home</a> &middot; <a href="/play">Play</a> &middot; <a href="/network">Network</a> &middot; <a href="https://github.com/ce-net/ce">GitHub</a></footer>
+    <a href="/">Home</a> &middot; <a href="/apps">Apps</a> &middot; <a href="/network">Network</a> &middot; <a href="https://github.com/ce-net/ce">GitHub</a></footer>
 </div>
 
 <script>
@@ -151,7 +151,7 @@ function projectUrl(p){
   if(app) return 'https://ce-net.com/apps/'+encodeURIComponent(app)+'/';
   const slug = (p.slug||'').trim();
   if(slug) return 'https://ce-net.com/apps/'+encodeURIComponent(slug)+'/';
-  return '/play';
+  return '/apps';
 }
 
 let ALL=[];          // all fetched projects

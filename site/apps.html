@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Play — live mesh apps on CE</title>
+<title>Apps — live mesh apps on CE</title>
 <meta name="theme-color" content="#03060e" />
 <meta name="description" content="Jump into a live mesh app: shared multiplayer demos running on the CE network — arenas, pixel canvases, cursor parties, polls and walls, all in your browser." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3Cpath d='M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3C/g%3E%3C/svg%3E" />
@@ -243,61 +243,46 @@ loadRegistry();
 // ---- live participant count via a brief websocket sample ----
 function wsURL(app,room){return (location.protocol==='https:'?'wss':'ws')+'://ce-net.com/rt/'+app+'/'+room;}
 
-// Open a room, listen ~2.2s, count distinct ids heard (presence/pos/join frames), then close.
-// Degrades to nothing visible on any failure.
+// Count LIVE players in an app's room by sampling its websocket briefly. The room replays up to 50
+// historical frames on connect (one per past id), so counting every id seen would report ~50 ghosts
+// (that was the bogus "51 playing now"). A genuinely-live player broadcasts continuously, so we count
+// only ids heard MORE THAN ONCE in the window; replayed-history ids appear exactly once and drop out.
 function sampleCount(app,onResult){
   let ws,done=false;
-  const ids=new Set();
+  const seen=new Map(); // id -> frames heard during the window
   const finish=ok=>{
     if(done)return;done=true;
     try{ws&&ws.close()}catch(e){}
-    onResult(ok?ids.size:null);
+    let live=0; for(const c of seen.values()) if(c>=2) live++;
+    onResult(ok?live:null);
   };
-  let timer=setTimeout(()=>finish(true),2200);
+  let timer=setTimeout(()=>finish(true),2600);
   try{
     ws=new WebSocket(wsURL(app,'main'));
   }catch(e){clearTimeout(timer);finish(false);return;}
-  ws.onopen=()=>{
-    // announce a transient spectator id so peers that only emit on demand may reply,
-    // but our own frames are never echoed back, so they cannot inflate the count.
-    try{ws.send(JSON.stringify({t:'join',id:'spectator-'+Math.random().toString(36).slice(2,8),name:'spectator'}));}catch(e){}
-  };
   ws.onmessage=ev=>{
     let m;try{m=JSON.parse(ev.data)}catch(e){return}
     if(!m||typeof m!=='object')return;
-    // accept any frame that names another participant
     const id=m.id||m.from||m.uid||(m.peer&&m.peer.id);
-    if(id)ids.add(String(id));
-    // some apps send a presence/roster snapshot
-    const roster=m.peers||m.presence||m.players||m.users;
-    if(Array.isArray(roster)){roster.forEach(p=>{const pid=(p&&(p.id||p.uid))||p;if(pid)ids.add(String(pid));});}
-    else if(m.count!=null&&!isNaN(+m.count)){for(let i=ids.size;i<+m.count;i++)ids.add('roster-'+i);}
+    if(id){ const k=String(id); seen.set(k,(seen.get(k)||0)+1); }
   };
   ws.onerror=()=>{clearTimeout(timer);finish(false);};
-  ws.onclose=()=>{clearTimeout(timer);finish(ids.size?true:(done?true:false));};
+  ws.onclose=()=>{clearTimeout(timer);finish(done);};
 }
 
 function showCount(slug,n){
   const el=$('now-'+slug);if(!el)return;
-  const demo=GALLERY.find(d=>d.slug===slug);
-  if(n==null){
-    // could not connect — degrade gracefully
-    el.className='now';
-    el.innerHTML='<span class="dot"></span>'+(demo&&demo.live?'open to join':'open to join');
-    return;
-  }
-  const total=n+1; // distinct peers heard, plus you when you join
+  if(!n || n<=0){ el.className='now'; el.innerHTML='<span class="dot"></span>open to join'; return; }
   el.className='now live';
-  el.innerHTML='<span class="dot"></span><b>'+total+'</b>&nbsp;playing now';
+  el.innerHTML='<span class="dot"></span><b>'+n+'</b>&nbsp;playing now';
 }
 
 // hero count tracks the flagship
 function showHero(n){
   const el=$('hero-count');if(!el)return;
-  if(n==null){el.innerHTML='<span class="pulse"></span><span>join the room &mdash; be the first</span>';return;}
-  const total=n+1;
+  if(!n || n<=0){el.innerHTML='<span class="pulse"></span><span>open one and you are instantly in a live room</span>';return;}
   $('live').className='live on';
-  el.innerHTML='<span class="pulse"></span><span><b>'+total+'</b> playing in Arena right now</span>';
+  el.innerHTML='<span class="pulse"></span><span><b>'+n+'</b> playing in Arena right now</span>';
 }
 
 // sample the rooms that expose live presence

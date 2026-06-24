@@ -220,7 +220,7 @@ const REPOS = [
   {id:'drift',band:'platform',status:'verified',kind:'game · wasm+wgpu',tasks:[],
    blurb:'Flagship open-world game at drift.ce-net.com: a wgpu wasm renderer + a deterministic wasm sim host. Region-sharded (r:<gx>:<gy> grid + /db world directory + cross-shard handoff), authoritative state as binary StateFrames over an ephemeral /rt room, area-of-interest per viewer, CAS-guarded (If-Match) /db snapshot failover, hybrid pinned-node-preferred + browser-fallback hosting.',deps:['netgame','ce-realtime','app-db']},
   {id:'slugs-registry',band:'platform',status:'verified',kind:'service',tasks:[],
-   blurb:'Human slugs (ce-app slug claim → /apps/<slug>/ via the not-found fallback) + the public projects registry (ce-app publish → /projects, pinned content-addressed screenshot blobs, GET /registry). Writes are signed/owner-scoped; ce-net.com/projects and /play render the registry dynamically. Reports and owner/admin delete included.',deps:['ce-hub','ce-identity']},
+   blurb:'Human slugs (ce-app slug claim → /apps/<slug>/ via the not-found fallback) + the public projects registry (ce-app publish → /projects, pinned content-addressed screenshot blobs, GET /registry). Writes are signed/owner-scoped; ce-net.com/projects and /apps render the registry dynamically. Reports and owner/admin delete included.',deps:['ce-hub','ce-identity']},
   {id:'feedback',band:'platform',status:'verified',kind:'app',tasks:[],
    blurb:'Realtime feedback board at feedback.ce-net.com — one board per project, durable in /db/feedback, live over a /rt room, with a shadow-DOM embed.js widget and soft community moderation. Paired with the hub per-namespace IP rate limiter (CE_HUB_RATELIMIT_NS=feedback).',deps:['ce-realtime','app-db','ce-hub']},
   // node
