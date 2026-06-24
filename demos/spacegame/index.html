@@ -117,6 +117,11 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 .foot{margin-top:16px;font-size:11.5px;color:var(--faint);text-align:center}
 .foot a{color:var(--cyan)}
 
+/* in-game rename chip */
+.nameedit{font-family:var(--mono);font-weight:600;font-size:13px;color:var(--text);background:rgba(116,176,255,.08);border:1px solid var(--line);border-radius:7px;padding:2px 9px;cursor:pointer;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.5}
+.nameedit:hover{border-color:var(--cyan);color:#fff}
+.nameedit .nameinp{width:130px;background:transparent;border:0;outline:none;color:#fff;font-family:var(--mono);font-weight:600;font-size:13px;padding:0}
+
 /* respawn banner */
 .respawn{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);text-align:center;display:none}
 .respawn.show{display:block;animation:tin .3s ease}
@@ -137,6 +142,7 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
     </div>
     <div class="stat"><span class="k">Minerals</span><span class="v gold" id="hud-min">0</span></div>
     <div class="stat"><span class="k">Level</span><span class="v cyan" id="hud-lvl">1</span><span class="k" style="margin-left:6px">Kills</span><span class="v" id="hud-kills">0</span></div>
+    <div class="stat"><span class="k">Pilot</span><button class="nameedit" id="hud-name" title="Click to rename">pilot</button></div>
   </div>
 
   <div class="pane topright">
@@ -282,6 +288,8 @@ function resize(){
 window.addEventListener("resize", resize);
 resize();
 const cam = {x:me.x, y:me.y};
+// World zoom: <1 zooms the camera OUT so more of the arena (and more players) fit on screen.
+const VIEW = 0.6;
 
 /* starfield (parallax layers) */
 const stars=[];
@@ -295,6 +303,7 @@ const pointer={x:W/2,y:H/2,down:false,active:false};
 let firing=false;
 
 addEventListener("keydown",e=>{
+  if(e.target && (e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")) return; // typing a name, not flying
   if(!playing) return;
   keys[e.key.toLowerCase()]=true;
   if(e.key===" "){ firing=true; e.preventDefault(); }
@@ -439,6 +448,35 @@ function renderBoard(rows){
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 /* ============================================================
+   persistent progress — your minerals, upgrades and kills survive a reload
+   ============================================================ */
+function saveProgress(){
+  try{ localStorage.setItem("spa_progress", JSON.stringify({
+    minerals:me.minerals|0, kills:me.kills|0, maxhp:me.maxhp, speed:me.speed,
+    speed_lv:me.speed_lv||0, guns:me.guns, drones:drones.length
+  })); }catch(e){}
+}
+function loadProgress(){
+  try{
+    const p=JSON.parse(localStorage.getItem("spa_progress")||"null"); if(!p) return;
+    me.minerals=p.minerals|0; me.kills=p.kills|0;
+    me.maxhp=p.maxhp||100; me.hp=me.maxhp;
+    me.speed=p.speed||1; me.speed_lv=p.speed_lv||0; me.guns=p.guns||1;
+    const dn=Math.min(p.drones||0,5);
+    for(let i=0;i<dn;i++) drones.push({x:me.x,y:me.y,a:0,vx:0,vy:0,cool:0,orbit:rand(0,TAU),rad:rand(46,72)});
+    me.lvl = 1 + (me.guns-1) + Math.round((me.maxhp-100)/40) + (me.speed_lv||0) + drones.length;
+  }catch(e){}
+}
+// if the saved leaderboard has more kills than local (e.g. played on another device), take the higher.
+async function reconcileKills(){
+  try{
+    const r=await fetch(dbURL(APP,"kills:"+ID)); if(!r.ok) return;
+    let v=await r.json(); if(typeof v==="string"){ try{v=JSON.parse(v);}catch(_){v={};} }
+    const k=(v&&v.kills)|0; if(k>me.kills){ me.kills=k; saveProgress(); if(playing) refreshHud(); }
+  }catch(e){}
+}
+
+/* ============================================================
    online count + HUD
    ============================================================ */
 function onlineCount(){
@@ -516,7 +554,8 @@ function rockAlive(rk,now){
 
 function eachVisibleRock(cb){
   const now=performance.now();
-  const left=cam.x-W/2-MINE_GRID, right=cam.x+W/2+MINE_GRID, top=cam.y-H/2-MINE_GRID, bot=cam.y+H/2+MINE_GRID;
+  const hw=(W/2)/VIEW, hh=(H/2)/VIEW; // wider visible area because the camera is zoomed out
+  const left=cam.x-hw-MINE_GRID, right=cam.x+hw+MINE_GRID, top=cam.y-hh-MINE_GRID, bot=cam.y+hh+MINE_GRID;
   const gx0=Math.max(0,Math.floor(left/MINE_GRID)), gx1=Math.floor(right/MINE_GRID);
   const gy0=Math.max(0,Math.floor(top/MINE_GRID)), gy1=Math.floor(bot/MINE_GRID);
   for(let gx=gx0;gx<=gx1;gx++)for(let gy=gy0;gy<=gy1;gy++){
@@ -587,6 +626,7 @@ function die(){
   // clear our minerals on death (dropped)
   me.minerals = Math.max(0, me.minerals - drop);
   updateBuildUI();
+  saveProgress();
 }
 function respawn(){
   me.alive=true;
@@ -671,6 +711,7 @@ function buy(b){
   updateBuildUI();
   refreshHud();
   pushState(true);
+  saveProgress();
 }
 
 /* ============================================================
@@ -870,7 +911,9 @@ function render(){
   ctx.restore();
 
   ctx.save();
-  ctx.translate(W/2-cam.x, H/2-cam.y);
+  ctx.translate(W/2, H/2);
+  ctx.scale(VIEW, VIEW);
+  ctx.translate(-cam.x, -cam.y);
 
   // world border
   ctx.strokeStyle="rgba(116,176,255,.16)"; ctx.lineWidth=2;
@@ -1024,7 +1067,7 @@ function drawMinimap(){
   const sc=S/WORLD;
   // viewport box
   ctx.strokeStyle="rgba(116,176,255,.18)";
-  ctx.strokeRect(ox+(cam.x-W/2)*sc, oy+(cam.y-H/2)*sc, W*sc, H*sc);
+  ctx.strokeRect(ox+(cam.x-(W/2)/VIEW)*sc, oy+(cam.y-(H/2)/VIEW)*sc, (W/VIEW)*sc, (H/VIEW)*sc);
   // peers
   for(const p of peers.values()){ if(p.x===undefined||!p.alive)continue;
     ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(ox+p.x*sc,oy+p.y*sc,2,0,TAU); ctx.fill(); }
@@ -1064,6 +1107,7 @@ handleMsg = function(m){
       myDamageTo.delete(m.id);
       refreshHud();
       writeKills();
+      saveProgress();
       // override feed killer to us
       const p=peers.get(m.id);
       pushFeed(me.name, (m.name||(p?p.name:"a ship")));
@@ -1119,6 +1163,7 @@ function startGame(){
   me.color=selColor;
   localStorage.setItem("spa_name",me.name);
   localStorage.setItem("spa_color",me.color);
+  setHudName();
   playing=true;
   overlay.classList.add("hidden");
   hud.style.display="block";
@@ -1132,11 +1177,43 @@ function startGame(){
 document.getElementById("playBtn").addEventListener("click",startGame);
 nameInput.addEventListener("keydown",e=>{ if(e.key==="Enter") startGame(); });
 
+/* ---- change your username mid-game (HUD name chip) ---- */
+const hudName=document.getElementById("hud-name");
+function setHudName(){ hudName.textContent=me.name; }
+function applyName(nv){
+  nv=(nv||"").trim().slice(0,18);
+  if(!nv || nv===me.name) return;
+  me.name=nv;
+  localStorage.setItem("spa_name",me.name);
+  if(nameInput) nameInput.value=me.name;
+  setHudName();
+  send({t:"join",id:ID,name:me.name}); pushState(true);
+  writeKills(); loadBoard();
+}
+let renaming=false;
+hudName.addEventListener("click",()=>{
+  if(renaming) return; renaming=true;
+  const inp=document.createElement("input");
+  inp.className="nameinp"; inp.value=me.name; inp.maxLength=18; inp.spellcheck=false; inp.autocomplete="off";
+  hudName.textContent=""; hudName.appendChild(inp); inp.focus(); inp.select();
+  const finish=(commit)=>{ if(!renaming) return; renaming=false; if(commit) applyName(inp.value); setHudName(); };
+  inp.addEventListener("keydown",e=>{
+    e.stopPropagation();
+    if(e.key==="Enter"){ e.preventDefault(); finish(true); }
+    else if(e.key==="Escape"){ finish(false); }
+  });
+  inp.addEventListener("blur",()=>finish(true));
+});
+setHudName();
+
 /* ============================================================
    boot
    ============================================================ */
+loadProgress();           // restore your minerals, upgrades and kills from a previous session
 connect(false);
 loadBoard();
+reconcileKills();         // pull your saved kill count from the mesh database
+setInterval(()=>{ if(playing) saveProgress(); }, 3000);
 setInterval(()=>{ if(!playing) refreshOnline(); }, 2500);
 
 // keep online count in join screen fresh
