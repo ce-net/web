@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Message Wall — a realtime guestbook on the CE mesh</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Leave a note. It appears instantly for everyone and is kept on the CE mesh — a realtime guestbook, newest first." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='7' width='22' height='15' rx='3' fill='none' stroke='%2337c6ff' stroke-width='2.4'/%3E%3Cpath d='M11 22l-2 4 6-4' fill='%2337c6ff'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.15),transparent 60%),radial-gradient(50% 40% at 90% 110%,rgba(47,107,255,.13),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:640px;margin:0 auto;padding:0 16px 60px}
+nav{display:flex;align-items:center;gap:10px;height:56px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:18px}
+.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}
+.live{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);position:relative}
+.dot::after{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px rgba(67,224,160,.5);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
+.live b{color:var(--text);font-weight:600}
+header{padding:28px 0 4px}
+.kick{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(26px,7vw,40px);letter-spacing:-.02em;line-height:1.08;margin:11px 0 0}
+h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);margin:11px 0 0;font-size:15px}
+.composer{margin-top:20px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:14px}
+.crow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.crow .nm{flex:0 0 130px}
+input.fld,textarea.fld{width:100%;background:#060b14;color:var(--text);border:1px solid var(--line);border-radius:11px;font-family:var(--body);font-size:15px;padding:12px 13px;outline:none;resize:none}
+input.fld:focus,textarea.fld:focus{border-color:rgba(55,198,255,.45)}
+.msgbox{margin-top:10px}
+.crow2{display:flex;align-items:center;gap:12px;margin-top:10px}
+.count{font-family:var(--mono);font-size:12px;color:var(--faint)}
+.crow2 .sp{flex:1}
+.btn{font-family:var(--body);font-weight:700;font-size:15px;border:0;border-radius:11px;padding:11px 20px;cursor:pointer;color:#021018;background:var(--grad);transition:.16s}
+.btn:hover{transform:translateY(-1px)}.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.swatch{width:26px;height:26px;border-radius:8px;flex:none}
+.feed{margin-top:24px;display:flex;flex-direction:column;gap:11px}
+.card{border:1px solid var(--line-2);border-radius:14px;background:var(--deep);padding:13px 15px;animation:in .35s cubic-bezier(.2,.8,.2,1)}
+@keyframes in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.card .top{display:flex;align-items:center;gap:9px;margin-bottom:5px}
+.card .who{font-weight:600;font-size:14px}
+.card .av{width:18px;height:18px;border-radius:6px;flex:none}
+.card .when{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:auto}
+.card .body{font-size:15.5px;color:var(--text);word-break:break-word;white-space:pre-wrap}
+.empty{color:var(--faint);font-size:14px;text-align:center;padding:30px 0;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <div class="brand"><span class="ce">CE</span> Message Wall</div>
+    <div class="sp"></div>
+    <div class="live"><span class="dot"></span><b id="liveN">1</b>&nbsp;here now</div>
+  </nav>
+  <header>
+    <div class="kick">realtime guestbook / mesh</div>
+    <h1>Leave a <em>note</em></h1>
+    <p class="lede">Post a short message. It appears instantly for everyone and is kept on the CE mesh, newest first.</p>
+  </header>
+
+  <div class="composer">
+    <div class="crow">
+      <div class="swatch" id="mySw"></div>
+      <input class="fld nm" id="name" maxlength="16" placeholder="your name" />
+    </div>
+    <div class="msgbox"><textarea class="fld" id="msg" rows="2" maxlength="200" placeholder="say something nice"></textarea></div>
+    <div class="crow2">
+      <span class="count" id="count">0 / 200</span>
+      <div class="sp"></div>
+      <span class="count" id="cool"></span>
+      <button class="btn" id="post">Post</button>
+    </div>
+  </div>
+
+  <div class="feed" id="feed"><div class="empty" id="empty">Loading the wall...</div></div>
+</div>
+
+<script>
+const APP="wall", LIMIT=80, RATE_MS=6000, MAXLEN=200;
+const id=(localStorage.ce_id ||= Math.random().toString(36).slice(2,10));
+const COLORS=["#37c6ff","#43e0a0","#ffd166","#ff5d72","#7af0e6","#3b82ff","#ff9d4d","#a78bfa","#7ef0bd","#ff8fa3"];
+const myColor=COLORS[[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%COLORS.length];
+function wsURL(app,room){return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room;}
+function dbURL(app,key){return location.origin+"/db/"+app+(key?"/"+encodeURIComponent(key):"");}
+
+document.getElementById("mySw").style.background=myColor;
+const nameEl=document.getElementById("name"), msgEl=document.getElementById("msg"), countEl=document.getElementById("count"), postBtn=document.getElementById("post"), coolEl=document.getElementById("cool"), feedEl=document.getElementById("feed");
+nameEl.value=localStorage.ce_name||("guest-"+id.slice(0,3));
+nameEl.oninput=()=>localStorage.ce_name=nameEl.value;
+msgEl.oninput=()=>{ countEl.textContent=msgEl.value.length+" / "+MAXLEN; };
+
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function ago(t){ const s=Math.max(0,(Date.now()-t)/1000);
+  if(s<60)return Math.floor(s)+"s ago"; if(s<3600)return Math.floor(s/60)+"m ago";
+  if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; }
+
+const seen=new Set();
+function card(m){
+  if(!m||!m.id||seen.has(m.id))return null;
+  seen.add(m.id);
+  const el=document.createElement("div"); el.className="card"; el.dataset.t=m.t;
+  el.innerHTML="<div class='top'><span class='av' style='background:"+(m.col||"#37c6ff")+"'></span>"+
+    "<span class='who'>"+esc(m.name||"anon")+"</span>"+
+    "<span class='when' data-t='"+m.t+"'>"+ago(m.t)+"</span></div>"+
+    "<div class='body'>"+esc(m.body)+"</div>";
+  return el;
+}
+function insert(m){
+  const el=card(m); if(!el)return;
+  const emp=document.getElementById("empty"); if(emp)emp.remove();
+  // newest-first ordered insert
+  let placed=false;
+  for(const child of feedEl.children){ if((+child.dataset.t||0) < (m.t||0)){ feedEl.insertBefore(el,child); placed=true; break; } }
+  if(!placed) feedEl.appendChild(el);
+  // trim
+  while(feedEl.children.length>LIMIT) feedEl.removeChild(feedEl.lastChild);
+}
+setInterval(()=>{ feedEl.querySelectorAll(".when").forEach(w=>w.textContent=ago(+w.dataset.t)); },20000);
+
+async function hydrate(){
+  let res; try{ res=await (await fetch(dbURL(APP)+"?prefix=msg:&limit="+LIMIT)).json(); }catch(_){ res={items:[]}; }
+  const items=(res.items||[]).map(it=>it.value).filter(Boolean);
+  items.sort((a,b)=>(a.t||0)-(b.t||0)); // oldest first so newest ends up on top after insert
+  if(items.length===0){ document.getElementById("empty").textContent="Be the first to sign the wall."; }
+  for(const m of items) insert(m);
+}
+hydrate();
+
+// rate limit
+let last=parseInt(localStorage.ce_wall_last||"0",10);
+function refreshCool(){
+  const left=RATE_MS-(Date.now()-last);
+  if(left>0){ postBtn.disabled=true; coolEl.textContent="wait "+Math.ceil(left/1000)+"s"; }
+  else{ postBtn.disabled=false; coolEl.textContent=""; }
+}
+setInterval(refreshCool,300); refreshCool();
+
+async function post(){
+  const body=msgEl.value.trim().slice(0,MAXLEN);
+  const name=(nameEl.value.trim()||("guest-"+id.slice(0,3))).slice(0,16);
+  if(!body) return;
+  if(Date.now()-last<RATE_MS) return;
+  last=Date.now(); localStorage.ce_wall_last=String(last); localStorage.ce_name=name; refreshCool();
+  const mid=id+":"+last.toString(36);
+  const m={id:mid,by:id,name,col:myColor,body,t:last};
+  insert(m);
+  msgEl.value=""; countEl.textContent="0 / "+MAXLEN;
+  // newest-first list: key sorts descending by using inverse timestamp
+  const inv=(9999999999999-last).toString().padStart(13,"0");
+  try{ await fetch(dbURL(APP,"msg:"+inv+":"+id),{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(m)}); }catch(_){}
+  if(ws&&ws.readyState===1) ws.send(JSON.stringify({t:"msg",...m}));
+}
+postBtn.onclick=post;
+msgEl.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") post(); });
+
+// realtime
+let ws; const peers=new Map();
+function liveCount(){ const now=Date.now(); for(const[k,v] of peers) if(now-v>3500) peers.delete(k); document.getElementById("liveN").textContent=peers.size+1; }
+setInterval(liveCount,1000);
+function connect(){
+  ws=new WebSocket(wsURL(APP,"main"));
+  ws.onopen=()=>ws.send(JSON.stringify({t:"join",id}));
+  ws.onmessage=e=>{
+    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    if(!m)return;
+    const from = typeof m.by==="string" ? m.by : m.id;
+    if(from && from!==id){ peers.set(from,Date.now()); liveCount(); }
+    if(from===id) return; // skip our own echoed posts
+    if(m.t==="msg"||m.body) insert(m);
+  };
+  ws.onclose=()=>setTimeout(connect,1500);
+  ws.onerror=()=>{ try{ws.close();}catch(_){} };
+}
+connect();
+setInterval(()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({t:"ping",id})); },2000);
+</script>
+</body>
+</html>

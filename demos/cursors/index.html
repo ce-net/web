@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>Cursor Party — live presence on the CE mesh</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Everyone's cursor, flying around one shared space, live. Move, click to ripple. Pure realtime presence on the CE mesh." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M7 5l16 9-7 2-2 7z' fill='%2337c6ff'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;height:100%;overflow:hidden;overscroll-behavior:none}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);-webkit-font-smoothing:antialiased;touch-action:none;cursor:none}
+#field{position:fixed;inset:0;z-index:0;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.12),transparent 60%),radial-gradient(50% 40% at 90% 110%,rgba(47,107,255,.12),transparent 60%)}
+#grid{position:fixed;inset:0;z-index:0;opacity:.5;background-image:linear-gradient(rgba(116,176,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(116,176,255,.05) 1px,transparent 1px);background-size:40px 40px}
+.hud{position:fixed;z-index:5;top:14px;left:14px;display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;background:rgba(10,20,34,.7);backdrop-filter:blur(8px);padding:9px 13px}
+.brand{font-family:var(--display);font-weight:600;font-size:16px}.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.cnt{position:fixed;z-index:5;top:14px;right:14px;display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:12px;background:rgba(10,20,34,.7);backdrop-filter:blur(8px);padding:9px 14px;font-family:var(--mono);font-size:14px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);position:relative}
+.dot::after{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px rgba(67,224,160,.5);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
+.cnt b{color:var(--text);font-weight:600;font-size:18px}
+.tip{position:fixed;z-index:5;bottom:18px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:12.5px;color:var(--faint);text-align:center;pointer-events:none;width:90%}
+.tip span{color:var(--cyan)}
+#cv{position:fixed;inset:0;z-index:1}
+.cursor{position:fixed;z-index:3;left:0;top:0;pointer-events:none;will-change:transform;transition:transform .09s linear}
+.cursor svg{display:block;filter:drop-shadow(0 1px 4px rgba(0,0,0,.5))}
+.cursor .name{position:absolute;left:16px;top:14px;font-family:var(--mono);font-size:11.5px;font-weight:500;padding:2px 8px;border-radius:7px;white-space:nowrap;color:#02101a}
+.namebox{position:fixed;z-index:6;bottom:18px;right:18px;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:11px;background:rgba(10,20,34,.8);backdrop-filter:blur(8px);padding:7px 10px}
+.namebox span{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.namebox input{background:#060b14;border:1px solid var(--line);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:13px;padding:6px 9px;width:120px;outline:none}
+.namebox input:focus{border-color:rgba(55,198,255,.45)}
+.namebox .me{width:16px;height:16px;border-radius:5px}
+</style>
+</head>
+<body>
+<div id="field"></div><div id="grid"></div>
+<canvas id="cv"></canvas>
+<div class="hud"><div class="brand"><span class="ce">CE</span> Cursor Party</div></div>
+<div class="cnt"><span class="dot"></span><b id="liveN">1</b>&nbsp;here now</div>
+<div class="tip">Move your cursor. <span>Click anywhere</span> to send a ripple. Everyone in the room sees you in real time.</div>
+<div class="namebox"><div class="me" id="meSw"></div><span>you</span><input id="nameIn" maxlength="12" placeholder="name" /></div>
+
+<script>
+const APP="cursors";
+const id=(localStorage.ce_id ||= Math.random().toString(36).slice(2,10));
+const COLORS=["#37c6ff","#43e0a0","#ffd166","#ff5d72","#7af0e6","#3b82ff","#ff9d4d","#a78bfa","#7ef0bd","#ff8fa3"];
+const myColor=COLORS[[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%COLORS.length];
+let myName=(localStorage.ce_name||("guest-"+id.slice(0,3)));
+function wsURL(app,room){return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room;}
+
+document.getElementById("meSw").style.background=myColor;
+const nameIn=document.getElementById("nameIn"); nameIn.value=myName;
+nameIn.oninput=()=>{ myName=nameIn.value.slice(0,12)||("guest-"+id.slice(0,3)); localStorage.ce_name=myName; };
+
+// canvas ripples
+const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
+function size(){ cv.width=innerWidth*devicePixelRatio; cv.height=innerHeight*devicePixelRatio; ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
+size(); addEventListener("resize",size);
+const ripples=[];
+function ripple(x,y,c){ ripples.push({x,y,c,r:2,a:1}); }
+function frame(){
+  ctx.clearRect(0,0,innerWidth,innerHeight);
+  for(let i=ripples.length-1;i>=0;i--){
+    const r=ripples[i]; r.r+=3.2; r.a-=0.018;
+    if(r.a<=0){ ripples.splice(i,1); continue; }
+    ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,7); ctx.strokeStyle=r.c; ctx.globalAlpha=r.a; ctx.lineWidth=2.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(r.x,r.y,r.r*.55,0,7); ctx.globalAlpha=r.a*.5; ctx.lineWidth=1.4; ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  // draw own cursor on canvas-less layer handled by DOM; place self ripple origin marker
+  requestAnimationFrame(frame);
+}
+frame();
+
+// my cursor DOM
+function cursorSVG(c){ return "<svg width='26' height='26' viewBox='0 0 26 26'><path d='M5 3l16 9-7 1.6-2.4 7z' fill='"+c+"' stroke='#02101a' stroke-width='1.2' stroke-linejoin='round'/></svg>"; }
+const meEl=document.createElement("div"); meEl.className="cursor"; meEl.style.transition="none";
+meEl.innerHTML=cursorSVG(myColor)+"<div class='name' style='background:"+myColor+"'></div>";
+document.body.appendChild(meEl);
+function paintMyName(){ meEl.querySelector(".name").textContent=myName; }
+paintMyName(); nameIn.addEventListener("input",paintMyName);
+
+let mx=innerWidth/2, my=innerHeight/2, moved=false;
+function moveSelf(x,y){ mx=x; my=y; moved=true; meEl.style.transform="translate("+x+"px,"+y+"px)"; }
+addEventListener("pointermove",e=>moveSelf(e.clientX,e.clientY));
+addEventListener("pointerdown",e=>{ moveSelf(e.clientX,e.clientY); ripple(e.clientX,e.clientY,myColor); send(true); });
+moveSelf(mx,my);
+
+// peers
+const peers=new Map(); // id -> {el,x,y,tx,ty,name,color,last}
+function ensurePeer(pid,name,color){
+  let p=peers.get(pid);
+  if(!p){
+    const el=document.createElement("div"); el.className="cursor";
+    el.innerHTML=cursorSVG(color)+"<div class='name' style='background:"+color+"'></div>";
+    document.body.appendChild(el);
+    p={el,x:innerWidth/2,y:innerHeight/2,tx:innerWidth/2,ty:innerHeight/2,name,color,last:Date.now()};
+    peers.set(pid,p);
+  }
+  if(name){ p.name=name; p.el.querySelector(".name").textContent=name; }
+  p.last=Date.now();
+  return p;
+}
+function lerpPeers(){
+  const now=Date.now();
+  for(const[pid,p] of peers){
+    if(now-p.last>3000){ p.el.remove(); peers.delete(pid); continue; }
+    p.x+=(p.tx-p.x)*0.28; p.y+=(p.ty-p.y)*0.28;
+    p.el.style.transform="translate("+p.x+"px,"+p.y+"px)";
+  }
+  document.getElementById("liveN").textContent=peers.size+1;
+  requestAnimationFrame(lerpPeers);
+}
+lerpPeers();
+
+// realtime
+let ws;
+function send(click){
+  if(!ws||ws.readyState!==1||!moved) return;
+  ws.send(JSON.stringify({t:"c",id,x:Math.round(mx),y:Math.round(my),w:innerWidth,h:innerHeight,n:myName,col:myColor,r:click?1:0}));
+}
+setInterval(()=>send(false),66); // ~15/s
+function connect(){
+  ws=new WebSocket(wsURL(APP,"main"));
+  ws.onopen=()=>ws.send(JSON.stringify({t:"join",id,n:myName,col:myColor}));
+  ws.onmessage=e=>{
+    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    if(!m||m.id===id||m.t!=="c") return;
+    const sx=m.w?innerWidth/m.w:1, sy=m.h?innerHeight/m.h:1;
+    const p=ensurePeer(m.id,m.n,m.col||"#37c6ff");
+    p.tx=m.x*sx; p.ty=m.y*sy;
+    if(m.r) ripple(p.tx,p.ty,p.color);
+  };
+  ws.onclose=()=>setTimeout(connect,1500);
+  ws.onerror=()=>{ try{ws.close();}catch(_){} };
+}
+connect();
+</script>
+</body>
+</html>

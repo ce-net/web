@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Live Poll — vote together on the CE mesh</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Cast a vote and watch the bars move in real time. Votes are tallied on the CE mesh — live for everyone, one per browser, changeable." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='17' width='6' height='10' fill='%2337c6ff'/%3E%3Crect x='13' y='9' width='6' height='18' fill='%2343e0a0'/%3E%3Crect x='21' y='13' width='6' height='14' fill='%23ffd166'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.15),transparent 60%),radial-gradient(50% 40% at 90% 110%,rgba(47,107,255,.13),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:600px;margin:0 auto;padding:0 16px 40px}
+nav{display:flex;align-items:center;gap:10px;height:56px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:18px}
+.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}
+.live{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);position:relative}
+.dot::after{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px rgba(67,224,160,.5);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
+.live b{color:var(--text);font-weight:600}
+header{padding:30px 0 6px}
+.kick{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(26px,7vw,40px);letter-spacing:-.02em;line-height:1.08;margin:11px 0 0}
+.lede{color:var(--muted);margin:12px 0 0;font-size:15px}
+.opts{margin-top:24px;display:flex;flex-direction:column;gap:12px}
+.opt{position:relative;border:1px solid var(--line);border-radius:14px;background:var(--deep);padding:0;overflow:hidden;cursor:pointer;transition:.16s;min-height:64px}
+.opt:hover{border-color:rgba(55,198,255,.4);transform:translateY(-1px)}
+.opt .fill{position:absolute;inset:0;width:0;background:linear-gradient(90deg,rgba(55,198,255,.22),rgba(67,224,160,.16));transition:width .6s cubic-bezier(.2,.8,.2,1);z-index:0}
+.opt.mine{border-color:var(--cyan);box-shadow:0 0 0 1px rgba(55,198,255,.4)}
+.opt.mine .fill{background:linear-gradient(90deg,rgba(55,198,255,.34),rgba(67,224,160,.22))}
+.opt .inner{position:relative;z-index:1;display:flex;align-items:center;gap:12px;padding:16px 18px;height:100%}
+.opt .label{font-weight:600;font-size:17px;flex:1}
+.opt .pct{font-family:var(--display);font-weight:600;font-size:22px;min-width:62px;text-align:right;letter-spacing:-.01em}
+.opt .cnt{font-family:var(--mono);font-size:11.5px;color:var(--muted);min-width:64px;text-align:right}
+.opt .tick{width:22px;height:22px;border-radius:7px;border:1.5px solid var(--faint);display:grid;place-items:center;flex:none}
+.opt.mine .tick{border-color:var(--cyan);background:var(--cyan)}
+.opt.mine .tick::after{content:"";width:7px;height:11px;border:solid #02101a;border-width:0 2.5px 2.5px 0;transform:rotate(45deg);margin-top:-2px}
+.totalbar{display:flex;align-items:center;gap:14px;margin-top:22px;padding-top:16px;border-top:1px solid var(--line-2);font-family:var(--mono);font-size:13px;color:var(--muted)}
+.totalbar b{font-family:var(--display);font-size:24px;color:var(--text);font-weight:600}
+.totalbar .sp{flex:1}
+.note{font-size:12.5px;color:var(--faint);margin-top:8px}
+.pulse{animation:pl .5s ease}@keyframes pl{0%{transform:scale(1)}40%{transform:scale(1.04)}100%{transform:scale(1)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <div class="brand"><span class="ce">CE</span> Live Poll</div>
+    <div class="sp"></div>
+    <div class="live"><span class="dot"></span><b id="liveN">1</b>&nbsp;here now</div>
+  </nav>
+  <header>
+    <div class="kick">live tally / mesh</div>
+    <h1 id="q">Best way to run compute?</h1>
+    <p class="lede">Tap to vote. Bars update live for everyone on the CE mesh. One vote per browser — change it anytime.</p>
+  </header>
+
+  <div class="opts" id="opts"></div>
+
+  <div class="totalbar">
+    <span>total votes</span><b id="total">0</b>
+    <div class="sp"></div>
+    <span id="status">tap an option</span>
+  </div>
+  <div class="note">Your vote is tallied durably in the CE database; switching options moves your single vote.</div>
+</div>
+
+<script>
+const APP="poll";
+const QUESTION="Best way to run compute?";
+const OPTIONS=[
+  {k:"mesh", label:"A peer-to-peer mesh"},
+  {k:"cloud", label:"The big cloud"},
+  {k:"ownbox", label:"My own box under the desk"},
+  {k:"someoneelse", label:"Whoever has spare GPUs"}
+];
+const id=(localStorage.ce_id ||= Math.random().toString(36).slice(2,10));
+function wsURL(app,room){return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room;}
+function dbURL(app,key){return location.origin+"/db/"+app+(key?"/"+encodeURIComponent(key):"");}
+
+document.getElementById("q").textContent=QUESTION;
+let myVote=localStorage.ce_poll_vote||null;
+const counts={}; OPTIONS.forEach(o=>counts[o.k]=0);
+const els={};
+
+const optsEl=document.getElementById("opts");
+OPTIONS.forEach(o=>{
+  const el=document.createElement("div"); el.className="opt"; el.dataset.k=o.k;
+  el.innerHTML="<div class='fill'></div><div class='inner'>"+
+    "<div class='tick'></div>"+
+    "<div class='label'>"+o.label+"</div>"+
+    "<div class='cnt'>0 votes</div>"+
+    "<div class='pct'>0%</div></div>";
+  el.onclick=()=>vote(o.k);
+  optsEl.appendChild(el);
+  els[o.k]=el;
+});
+
+function render(animateKey){
+  const total=OPTIONS.reduce((a,o)=>a+counts[o.k],0);
+  document.getElementById("total").textContent=total;
+  let max=Math.max(1,...OPTIONS.map(o=>counts[o.k]));
+  OPTIONS.forEach(o=>{
+    const c=counts[o.k], pct=total?Math.round(c/total*100):0;
+    const el=els[o.k];
+    el.querySelector(".fill").style.width=(total?(c/max*100):0)+"%";
+    el.querySelector(".pct").textContent=pct+"%";
+    el.querySelector(".cnt").textContent=c+(c===1?" vote":" votes");
+    el.classList.toggle("mine",myVote===o.k);
+    if(o.k===animateKey){ const p=el.querySelector(".pct"); p.classList.remove("pulse"); void p.offsetWidth; p.classList.add("pulse"); }
+  });
+}
+
+async function vote(k){
+  if(myVote===k) return;
+  const prev=myVote;
+  myVote=k; localStorage.ce_poll_vote=k;
+  // optimistic
+  if(prev&&counts[prev]!=null) counts[prev]=Math.max(0,counts[prev]-1);
+  counts[k]=(counts[k]||0)+1;
+  render(k);
+  document.getElementById("status").textContent="vote counted";
+  // persist this browser's choice (one key per voter => idempotent, switchable)
+  try{ await fetch(dbURL(APP,"vote:"+id),{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({k,t:Date.now()})}); }catch(_){}
+  if(ws&&ws.readyState===1) ws.send(JSON.stringify({t:"vote",id,k,prev}));
+}
+
+// authoritative tally from db (all votes), used on load + periodic reconcile
+async function tally(){
+  const fresh={}; OPTIONS.forEach(o=>fresh[o.k]=0);
+  let cursor=null, mine=null;
+  for(let i=0;i<60;i++){
+    let u=dbURL(APP)+"?prefix=vote:&limit=500"+(cursor?"&cursor="+encodeURIComponent(cursor):"");
+    let res; try{ res=await (await fetch(u)).json(); }catch(_){ break; }
+    const items=res.items||[];
+    for(const it of items){
+      const k=it.value&&it.value.k; if(k&&fresh[k]!=null) fresh[k]++;
+      if(it.key==="vote:"+id&&k) mine=k;
+    }
+    cursor=res.cursor||res.next||null;
+    if(!cursor||items.length===0) break;
+  }
+  OPTIONS.forEach(o=>counts[o.k]=fresh[o.k]);
+  if(mine){ myVote=mine; localStorage.ce_poll_vote=mine; }
+  render();
+}
+tally();
+setInterval(tally, 8000); // gentle reconcile against db truth
+
+// realtime: apply deltas immediately, periodic tally corrects drift
+let ws; const peers=new Map();
+function liveCount(){ const now=Date.now(); for(const[k,v] of peers) if(now-v>3500) peers.delete(k); document.getElementById("liveN").textContent=peers.size+1; }
+setInterval(liveCount,1000);
+function connect(){
+  ws=new WebSocket(wsURL(APP,"main"));
+  ws.onopen=()=>ws.send(JSON.stringify({t:"join",id}));
+  ws.onmessage=e=>{
+    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    if(!m||m.id===id)return;
+    peers.set(m.id,Date.now()); liveCount();
+    if(m.t==="vote"&&counts[m.k]!=null){
+      if(m.prev&&counts[m.prev]!=null) counts[m.prev]=Math.max(0,counts[m.prev]-1);
+      counts[m.k]++; render(m.k);
+    }
+  };
+  ws.onclose=()=>setTimeout(connect,1500);
+  ws.onerror=()=>{ try{ws.close();}catch(_){} };
+}
+connect();
+setInterval(()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({t:"ping",id})); },2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,1150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>spacegame — a CE multiplayer arena</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Pilot a neon ship, mine asteroids, build drones and turrets, and fight other players in a shared 2D space arena. No install, instant multiplayer in your browser." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M16 4l9 22-9-6-9 6z'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--abyss);color:var(--text);font-family:var(--body);-webkit-font-smoothing:antialiased;overscroll-behavior:none;touch-action:none}
+canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
+
+/* ---------- HUD ---------- */
+.hud{position:fixed;inset:0;pointer-events:none;z-index:5;font-family:var(--body)}
+.hud .pane{position:absolute;pointer-events:auto}
+
+.topleft{top:max(12px,env(safe-area-inset-top)) ;left:max(12px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:8px}
+.stat{display:flex;align-items:center;gap:9px;background:rgba(7,13,24,.74);border:1px solid var(--line);border-radius:12px;padding:8px 12px;backdrop-filter:blur(7px)}
+.stat .k{font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+.stat .v{font-family:var(--display);font-weight:600;font-size:19px;line-height:1;color:#fff}
+.stat .v.cyan{color:var(--cyan)}.stat .v.gold{color:var(--gold)}
+.hpwrap{width:160px;max-width:42vw}
+.hpbar{height:9px;border-radius:99px;background:rgba(255,93,114,.16);overflow:hidden;margin-top:6px}
+.hpbar i{display:block;height:100%;width:100%;background:linear-gradient(90deg,#43e0a0,#7af0e6);transition:width .15s}
+
+.topright{top:max(12px,env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));width:208px;max-width:48vw;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.online{display:flex;align-items:center;gap:8px;background:rgba(7,13,24,.74);border:1px solid var(--line);border-radius:12px;padding:8px 13px;backdrop-filter:blur(7px)}
+.online .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(67,224,160,.5);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 9px rgba(67,224,160,0)}}
+.online .n{font-family:var(--display);font-weight:600;font-size:20px;line-height:1}
+.online .lbl{font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.board{width:100%;background:rgba(7,13,24,.74);border:1px solid var(--line);border-radius:13px;padding:9px 11px;backdrop-filter:blur(7px)}
+.board h3{margin:0 0 6px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);font-weight:500}
+.board .lr{display:flex;align-items:center;gap:8px;font-size:13px;padding:2px 0}
+.board .lr .sw{width:9px;height:9px;border-radius:2px;flex:none}
+.board .lr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.board .lr .nm.me{color:var(--cyan);font-weight:600}
+.board .lr .kc{font-family:var(--mono);font-size:13px;color:var(--gold);font-weight:500}
+.board .empty{font-size:12px;color:var(--faint)}
+
+/* ---------- build menu ---------- */
+.buildbtn{position:absolute;left:max(12px,env(safe-area-inset-left));bottom:max(14px,env(safe-area-inset-bottom));
+  display:flex;align-items:center;gap:8px;font-family:var(--body);font-weight:700;font-size:15px;color:#021018;
+  background:var(--grad);border:0;border-radius:12px;padding:11px 17px;cursor:pointer;box-shadow:0 6px 22px rgba(55,198,255,.22)}
+.buildbtn:active{transform:translateY(1px)}
+.buildpanel{position:absolute;left:max(12px,env(safe-area-inset-left));bottom:calc(max(14px,env(safe-area-inset-bottom)) + 56px);
+  width:300px;max-width:calc(100vw - 24px);background:rgba(7,13,24,.93);border:1px solid var(--line);border-radius:16px;
+  padding:13px;backdrop-filter:blur(11px);display:none;flex-direction:column;gap:8px;box-shadow:0 14px 50px rgba(0,0,0,.5)}
+.buildpanel.show{display:flex}
+.buildpanel h3{margin:0 0 2px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);font-weight:500;display:flex;justify-content:space-between}
+.buildpanel h3 .bal{color:var(--gold)}
+.bopt{display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:11px;background:var(--deep);padding:9px 11px;cursor:pointer;transition:.15s;text-align:left}
+.bopt:hover{border-color:var(--cyan);background:rgba(55,198,255,.06)}
+.bopt:disabled{opacity:.42;cursor:not-allowed}
+.bopt .ic{width:30px;height:30px;flex:none;display:grid;place-items:center}
+.bopt .ic svg{width:26px;height:26px}
+.bopt .bd{flex:1;min-width:0}
+.bopt .bt{font-weight:600;font-size:14px;color:#fff}
+.bopt .bs{font-size:11.5px;color:var(--muted);line-height:1.35}
+.bopt .cost{font-family:var(--mono);font-size:13px;color:var(--gold);font-weight:500;flex:none}
+.bopt .lv{font-family:var(--mono);font-size:10px;color:var(--faint)}
+
+/* ---------- touch controls ---------- */
+.touch{display:none}
+.firebtn{position:absolute;right:max(16px,env(safe-area-inset-right));bottom:max(22px,env(safe-area-inset-bottom));
+  width:92px;height:92px;border-radius:50%;border:2px solid rgba(55,198,255,.5);background:radial-gradient(circle at 50% 38%,rgba(55,198,255,.28),rgba(7,13,24,.7));
+  display:grid;place-items:center;font-family:var(--mono);font-weight:600;font-size:13px;color:var(--cyan);letter-spacing:.05em;pointer-events:auto;user-select:none}
+.firebtn:active{background:radial-gradient(circle at 50% 38%,rgba(55,198,255,.5),rgba(7,13,24,.8))}
+.hint{position:absolute;left:50%;bottom:max(20px,env(safe-area-inset-bottom));transform:translateX(-50%);
+  font-family:var(--mono);font-size:11.5px;color:var(--faint);background:rgba(7,13,24,.6);padding:6px 13px;border-radius:99px;white-space:nowrap;pointer-events:none}
+
+/* ---------- toasts (kill / death feed) ---------- */
+.feed{position:absolute;left:50%;top:max(14px,env(safe-area-inset-top));transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;width:min(94vw,460px)}
+.toast{font-family:var(--mono);font-size:13px;background:rgba(7,13,24,.82);border:1px solid var(--line);border-radius:10px;padding:6px 13px;animation:tin .3s ease;backdrop-filter:blur(6px);text-align:center;max-width:100%}
+.toast b{color:var(--cyan)}.toast .vs{color:var(--faint)}.toast .victim{color:var(--bad)}
+@keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+/* ---------- join overlay ---------- */
+.overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:22px;
+  background:radial-gradient(72% 52% at 50% -8%,rgba(55,198,255,.14),transparent 60%),radial-gradient(50% 40% at 88% 112%,rgba(47,107,255,.13),transparent 60%),rgba(3,6,14,.82);
+  backdrop-filter:blur(4px);overflow:auto}
+.overlay.hidden{display:none}
+.card{width:100%;max-width:430px;background:linear-gradient(180deg,var(--panel),var(--deep));border:1px solid var(--line);border-radius:20px;padding:26px 24px;box-shadow:0 22px 70px rgba(0,0,0,.55)}
+.kick{font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--cyan)}
+.card h1{font-family:var(--display);font-weight:600;font-size:clamp(30px,9vw,42px);letter-spacing:-.02em;line-height:1.02;margin:9px 0 0}
+.card h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.card .lede{color:var(--muted);font-size:14.5px;margin:11px 0 0;line-height:1.55}
+.field{margin-top:18px}
+.field label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-bottom:7px}
+.namerow{display:flex;gap:9px}
+.namerow input{flex:1;min-width:0;background:#060b14;color:#fff;border:1px solid var(--line);border-radius:11px;font-family:var(--body);font-size:16px;padding:12px 14px;outline:none}
+.namerow input:focus{border-color:rgba(55,198,255,.5)}
+.icobtn{flex:none;width:46px;border:1px solid var(--line);background:var(--deep);color:var(--muted);border-radius:11px;cursor:pointer;font-size:18px;display:grid;place-items:center}
+.icobtn:hover{border-color:var(--cyan);color:var(--cyan)}
+.swatches{display:flex;flex-wrap:wrap;gap:9px;margin-top:9px}
+.swatches button{width:30px;height:30px;border-radius:8px;border:2px solid transparent;cursor:pointer;transition:.15s}
+.swatches button.sel{border-color:#fff;transform:scale(1.08)}
+.playrow{display:flex;gap:10px;margin-top:22px}
+.play{flex:1;font-family:var(--body);font-weight:700;font-size:16px;color:#021018;background:var(--grad);border:0;border-radius:12px;padding:14px;cursor:pointer;transition:.15s}
+.play:active{transform:translateY(1px)}
+.copy{flex:none;border:1px solid var(--line);background:var(--deep);color:var(--text);border-radius:12px;padding:0 16px;cursor:pointer;font-family:var(--body);font-weight:600;font-size:14px}
+.copy:hover{border-color:var(--cyan);color:var(--cyan)}
+.copy.done{color:var(--ok);border-color:rgba(67,224,160,.5)}
+.olstat{display:flex;align-items:center;gap:8px;margin-top:18px;font-size:13.5px;color:var(--muted)}
+.olstat .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.olstat .dot.on{background:var(--ok);box-shadow:0 0 0 0 rgba(67,224,160,.5);animation:p 2s infinite}
+.howto{margin-top:16px;border-top:1px solid var(--line-2);padding-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:7px 16px}
+.howto div{font-size:12.5px;color:var(--muted)}
+.howto b{color:var(--text);font-family:var(--mono);font-size:11.5px}
+.foot{margin-top:16px;font-size:11.5px;color:var(--faint);text-align:center}
+.foot a{color:var(--cyan)}
+
+/* respawn banner */
+.respawn{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);text-align:center;display:none}
+.respawn.show{display:block;animation:tin .3s ease}
+.respawn .big{font-family:var(--display);font-weight:600;font-size:clamp(28px,7vw,44px);color:var(--bad)}
+.respawn .sub{font-family:var(--mono);font-size:14px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div class="hud" id="hud" style="display:none">
+  <div class="pane topleft">
+    <div class="stat hpwrap">
+      <div style="flex:1">
+        <span class="k">Hull</span>
+        <div class="hpbar"><i id="hpfill"></i></div>
+      </div>
+    </div>
+    <div class="stat"><span class="k">Minerals</span><span class="v gold" id="hud-min">0</span></div>
+    <div class="stat"><span class="k">Level</span><span class="v cyan" id="hud-lvl">1</span><span class="k" style="margin-left:6px">Kills</span><span class="v" id="hud-kills">0</span></div>
+  </div>
+
+  <div class="pane topright">
+    <div class="online"><span class="dot"></span><span class="n" id="hud-online">1</span><span class="lbl">online</span></div>
+    <div class="board">
+      <h3>Leaderboard</h3>
+      <div id="board-list"><div class="empty">no kills yet</div></div>
+    </div>
+  </div>
+
+  <div class="pane feed" id="feed"></div>
+
+  <button class="buildbtn pane" id="buildToggle">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#021018" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Build
+  </button>
+  <div class="buildpanel pane" id="buildPanel">
+    <h3>Build &amp; Upgrade <span class="bal" id="build-bal">0 min</span></h3>
+    <div id="buildList"></div>
+  </div>
+
+  <div class="touch" id="touch">
+    <div class="firebtn pane" id="fireBtn">FIRE</div>
+  </div>
+
+  <div class="respawn pane" id="respawn"><div class="big">DESTROYED</div><div class="sub" id="respawn-sub">Respawning…</div></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="card">
+    <div class="kick">CE · multiplayer arena</div>
+    <h1>space<em>game</em></h1>
+    <p class="lede">Pilot a neon ship in a shared asteroid field. Mine minerals, build drones &amp; turrets, and blast the other pilots. Instant multiplayer, no install.</p>
+
+    <div class="field">
+      <label for="name">Pilot handle</label>
+      <div class="namerow">
+        <input id="name" maxlength="18" autocomplete="off" spellcheck="false" placeholder="your handle" />
+        <button class="icobtn" id="reroll" title="Random handle">↻</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Ship color</label>
+      <div class="swatches" id="swatches"></div>
+    </div>
+
+    <div class="playrow">
+      <button class="play" id="playBtn">Launch</button>
+      <button class="copy" id="copyBtn">Copy link</button>
+    </div>
+
+    <div class="olstat"><span class="dot" id="ol-dot"></span><span id="ol-text">connecting to the mesh…</span></div>
+
+    <div class="howto">
+      <div><b>Aim</b> · mouse / drag</div>
+      <div><b>Thrust</b> · hold click / WASD</div>
+      <div><b>Fire</b> · space / click</div>
+      <div><b>Mine</b> · shoot asteroids</div>
+    </div>
+    <div class="foot">Runs on <a href="https://ce-net.com" target="_blank" rel="noopener">CE</a> realtime — share the link, friends join the same arena.</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   spacegame — single-file CE multiplayer arena
+   ============================================================ */
+
+const APP = "spa", ROOM = "main";
+const WORLD = 6000;            // square world half-extent is WORLD; world spans 0..WORLD*2? -> we use 0..WORLD
+const SHOT_INTERVAL = 1000/12; // state broadcast cadence
+const PEER_TTL = 3000;         // expire silent peers
+const MINE_GRID = 520;         // asteroid grid spacing
+const RESP_TIME = 3200;
+
+/* ---------- stable per-browser id ---------- */
+function genId(){ return "p_"+Math.random().toString(36).slice(2,8)+Date.now().toString(36).slice(-4); }
+let ID = localStorage.getItem("spa_id");
+if(!ID){ ID = genId(); localStorage.setItem("spa_id", ID); }
+
+/* ---------- url helpers (CE endpoints, same origin) ---------- */
+function wsURL(app,room){ return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room; }
+function dbURL(app,key){ return location.origin+"/db/"+app+(key?"/"+encodeURIComponent(key):""); }
+
+/* ---------- palette ---------- */
+const COLORS = ["#37c6ff","#7af0e6","#43e0a0","#ffd166","#ff5d72","#c98bff","#ff9f43","#5aa0ff","#ff6fc1","#9be15d"];
+
+/* ---------- math ---------- */
+const TAU = Math.PI*2;
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+function angLerp(a,b,t){ let d=((b-a+Math.PI)%TAU)-Math.PI; if(d<-Math.PI)d+=TAU; return a+d*t; }
+// deterministic hash -> [0,1)
+function h2(x,y){ let n=x*374761393+y*668265263; n=(n^(n>>>13))*1274126177; return ((n^(n>>>16))>>>0)/4294967296; }
+
+/* ---------- random space handle ---------- */
+const HANDLE_A=["Void","Nova","Astro","Quasar","Comet","Lunar","Solar","Ion","Photon","Pulsar","Nebula","Cosmo","Orbit","Hyper","Vega","Rigel","Drift","Zenith","Echo","Cinder"];
+const HANDLE_B=["runner","blade","wing","hawk","fox","drift","spark","ghost","ranger","striker","pilot","nomad","reaper","scout","ace","viper","raven","comet","flare","wolf"];
+function randomHandle(){ return HANDLE_A[Math.floor(Math.random()*HANDLE_A.length)]+HANDLE_B[Math.floor(Math.random()*HANDLE_B.length)]+(Math.random()<.5?Math.floor(Math.random()*90+10):""); }
+
+/* ============================================================
+   game state
+   ============================================================ */
+const me = {
+  id: ID,
+  name: localStorage.getItem("spa_name") || randomHandle(),
+  color: localStorage.getItem("spa_color") || COLORS[Math.floor(Math.random()*COLORS.length)],
+  x: rand(WORLD*0.35, WORLD*0.65), y: rand(WORLD*0.35, WORLD*0.65),
+  vx:0, vy:0, a:-Math.PI/2,
+  hp:100, maxhp:100,
+  minerals:0, lvl:1, kills:0,
+  speed:1, guns:1,           // upgrade levels
+  alive:true, deadUntil:0,
+  lastShot:0,
+};
+let playing = false;
+
+const peers = new Map();      // id -> {name,color,x,y,a,hp,lvl,last, dvx,dvy, px,py, ...interp}
+const bullets = [];           // {x,y,vx,vy,life,owner,dmg,color,mine}
+const drones = [];            // friendly: {x,y,a,vx,vy,target,cool}
+const turrets = [];           // {x,y,a,cool,life}
+const particles = [];
+const popups = [];            // floating text {x,y,t,txt,color}
+const minedRocks = new Map();    // asteroid key -> respawn time (ms)
+const asteroidHits = new Map();  // key -> hp (transient damage)
+
+/* ============================================================
+   canvas / camera
+   ============================================================ */
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.floor(W*DPR); cv.height = Math.floor(H*DPR);
+  cv.style.width=W+"px"; cv.style.height=H+"px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener("resize", resize);
+resize();
+const cam = {x:me.x, y:me.y};
+
+/* starfield (parallax layers) */
+const stars=[];
+for(let i=0;i<460;i++) stars.push({x:Math.random(),y:Math.random(),z:rand(.25,1),s:rand(.5,1.7)});
+
+/* ============================================================
+   input
+   ============================================================ */
+const keys={};
+const pointer={x:W/2,y:H/2,down:false,active:false};
+let firing=false;
+
+addEventListener("keydown",e=>{
+  if(!playing) return;
+  keys[e.key.toLowerCase()]=true;
+  if(e.key===" "){ firing=true; e.preventDefault(); }
+  if(e.key.toLowerCase()==="b"){ toggleBuild(); }
+});
+addEventListener("keyup",e=>{ keys[e.key.toLowerCase()]=false; if(e.key===" ") firing=false; });
+
+cv.addEventListener("mousemove",e=>{ pointer.x=e.clientX; pointer.y=e.clientY; pointer.active=true; });
+cv.addEventListener("mousedown",e=>{ if(!playing)return; pointer.down=true; firing=true; pointer.x=e.clientX; pointer.y=e.clientY; });
+addEventListener("mouseup",()=>{ pointer.down=false; if(!keys[" "]) firing=false; });
+
+/* touch: drag anywhere on canvas to steer+thrust toward finger */
+const isTouch = matchMedia("(pointer:coarse)").matches || "ontouchstart" in window;
+let touchSteer=null; // {x,y}
+cv.addEventListener("touchstart",e=>{ if(!playing)return; const t=e.changedTouches[0]; touchSteer={x:t.clientX,y:t.clientY,id:t.identifier}; pointer.active=true; e.preventDefault(); },{passive:false});
+cv.addEventListener("touchmove",e=>{ if(!touchSteer)return; for(const t of e.changedTouches){ if(t.identifier===touchSteer.id){ touchSteer.x=t.clientX; touchSteer.y=t.clientY; } } e.preventDefault(); },{passive:false});
+cv.addEventListener("touchend",e=>{ for(const t of e.changedTouches){ if(touchSteer && t.identifier===touchSteer.id) touchSteer=null; } e.preventDefault(); },{passive:false});
+
+const fireBtn=document.getElementById("fireBtn");
+fireBtn.addEventListener("touchstart",e=>{ firing=true; e.preventDefault(); },{passive:false});
+fireBtn.addEventListener("touchend",e=>{ firing=false; e.preventDefault(); },{passive:false});
+fireBtn.addEventListener("mousedown",()=>firing=true);
+fireBtn.addEventListener("mouseup",()=>firing=false);
+
+/* ============================================================
+   networking (CE realtime websocket)
+   ============================================================ */
+let ws=null, wsReady=false, reconnectT=null;
+let onlineProbe=null;
+
+function send(obj){ if(ws && wsReady){ try{ ws.send(JSON.stringify(obj)); }catch(e){} } }
+
+function connect(joining){
+  try{ ws = new WebSocket(wsURL(APP,ROOM)); }catch(e){ scheduleReconnect(joining); return; }
+  ws.onopen = ()=>{
+    wsReady=true;
+    setOnlineDot(true);
+    if(playing){ send({t:"join",id:ID,name:me.name}); pushState(true); }
+  };
+  ws.onmessage = (e)=>{
+    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    handleMsg(m);
+  };
+  ws.onclose = ()=>{ wsReady=false; setOnlineDot(false); scheduleReconnect(playing); };
+  ws.onerror = ()=>{ try{ ws.close(); }catch(_){} };
+}
+function scheduleReconnect(joining){
+  if(reconnectT) return;
+  reconnectT=setTimeout(()=>{ reconnectT=null; connect(joining); }, 1600);
+}
+function setOnlineDot(on){
+  const d=document.getElementById("ol-dot"), t=document.getElementById("ol-text");
+  if(on){ d.classList.add("on"); t.textContent = "connected — "+onlineCount()+" online"; }
+  else  { d.classList.remove("on"); t.textContent = "connecting to the mesh…"; }
+}
+
+function handleMsg(m){
+  if(!m||!m.t||m.id===ID) return; // never our own (server filters, but guard)
+  const now=performance.now();
+  switch(m.t){
+    case "join":
+    case "state": {
+      let p = peers.get(m.id);
+      if(!p){ p = newPeer(m.id); peers.set(m.id,p); }
+      p.name=m.name||p.name; if(m.color)p.color=m.color;
+      if(typeof m.x==="number"){
+        // store as interpolation target
+        p.tx=m.x; p.ty=m.y; p.ta=(typeof m.a==="number")?m.a:p.ta;
+        if(p.x===undefined){ p.x=m.x; p.y=m.y; p.a=p.ta; }
+      }
+      if(typeof m.hp==="number") p.hp=m.hp;
+      if(typeof m.lvl==="number") p.lvl=m.lvl;
+      p.last=now; p.alive=true;
+      break;
+    }
+    case "shot": {
+      // a remote ship fired — spawn a visual+damaging bullet from their pos
+      spawnBullet(m.x,m.y,m.vx,m.vy, m.id, m.dmg||10, m.color||"#fff", false);
+      break;
+    }
+    case "hit": {
+      // someone reports being hit (victim-authoritative) — just feedback if near
+      if(typeof m.x==="number"){ burst(m.x,m.y, m.color||"#ff5d72", 6, 1.4); }
+      break;
+    }
+    case "death": {
+      const p=peers.get(m.id);
+      const px = (p&&p.x!==undefined)?p.x:m.x, py=(p&&p.y!==undefined)?p.y:m.y;
+      if(typeof px==="number"){ explosion(px,py, (p?p.color:m.color)||"#fff"); }
+      if(p){ p.alive=false; p.hp=0; }
+      pushFeed((m.killerName||"someone"), (m.name|| (p?p.name:"a ship") ||"a ship"));
+      // dropped minerals near death site — local pickups derive from this
+      if(m.drop && typeof px==="number"){ spawnLoot(px,py,m.drop); }
+      break;
+    }
+  }
+  refreshOnline();
+}
+
+function newPeer(id){ return {id, name:"ship", color:"#8ab4ff", x:undefined,y:undefined,a:0, tx:0,ty:0,ta:0, hp:100,lvl:1, last:performance.now(), alive:true}; }
+
+function pushState(force){
+  if(!playing) return;
+  send({t:"state", id:ID, name:me.name, color:me.color,
+        x:Math.round(me.x), y:Math.round(me.y),
+        a:+me.a.toFixed(2), hp:Math.round(me.hp), lvl:me.lvl, alive:me.alive?1:0});
+}
+
+/* ============================================================
+   leaderboard (CE database)
+   ============================================================ */
+let lastKillWrite=0;
+async function writeKills(){
+  try{
+    await fetch(dbURL(APP,"kills:"+ID),{method:"PUT",headers:{"content-type":"application/json"},
+      body:JSON.stringify({name:me.name,kills:me.kills})});
+  }catch(e){ /* tolerate 507 / network */ }
+}
+async function loadBoard(){
+  try{
+    const r = await fetch(dbURL(APP)+"?prefix=kills:&limit=40");
+    if(!r.ok) return;
+    const data = await r.json();
+    const items = (data && data.items) || [];
+    const rows = items.map(it=>{
+      let v=it.value; if(typeof v==="string"){ try{v=JSON.parse(v);}catch(_){v={};} }
+      return {id:(it.key||"").replace(/^kills:/,""), name:(v&&v.name)||"ship", kills:(v&&v.kills)||0};
+    }).filter(r=>r.kills>0).sort((a,b)=>b.kills-a.kills).slice(0,10);
+    renderBoard(rows);
+  }catch(e){}
+}
+function renderBoard(rows){
+  const el=document.getElementById("board-list");
+  if(!rows.length){ el.innerHTML='<div class="empty">no kills yet — be the first</div>'; return; }
+  el.innerHTML = rows.map(r=>{
+    const meRow = r.id===ID;
+    const col = meRow?me.color:(peers.get(r.id)?peers.get(r.id).color:"#5aa0ff");
+    const nm = meRow?(me.name+" (you)"):r.name;
+    return `<div class="lr"><span class="sw" style="background:${esc(col)}"></span><span class="nm${meRow?' me':''}">${esc(nm)}</span><span class="kc">${r.kills}</span></div>`;
+  }).join("");
+}
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ============================================================
+   online count + HUD
+   ============================================================ */
+function onlineCount(){
+  const now=performance.now(); let c = playing?1:0;
+  for(const p of peers.values()) if(now-p.last < PEER_TTL) c++;
+  return Math.max(c, playing?1:0);
+}
+function refreshOnline(){
+  const n=onlineCount();
+  document.getElementById("hud-online").textContent=n;
+  const olt=document.getElementById("ol-text");
+  if(wsReady) olt.textContent = "connected — "+n+" online";
+}
+
+/* ============================================================
+   feed toasts
+   ============================================================ */
+const feedEl=document.getElementById("feed");
+function pushFeed(killer, victim){
+  const d=document.createElement("div");
+  d.className="toast";
+  d.innerHTML = `<b>${esc(killer)}</b> <span class="vs">destroyed</span> <span class="victim">${esc(victim)}</span>`;
+  feedEl.appendChild(d);
+  setTimeout(()=>{ d.style.transition="opacity .4s,transform .4s"; d.style.opacity="0"; d.style.transform="translateY(-8px)"; setTimeout(()=>d.remove(),420); }, 3400);
+  while(feedEl.children.length>4) feedEl.removeChild(feedEl.firstChild);
+}
+
+/* ============================================================
+   bullets / particles / loot
+   ============================================================ */
+function spawnBullet(x,y,vx,vy,owner,dmg,color,mine){
+  bullets.push({x,y,vx,vy,life:1.5,owner,dmg,color,mine});
+}
+function burst(x,y,color,n,spd){
+  for(let i=0;i<n;i++){ const a=Math.random()*TAU, s=rand(.4,1)*spd*220; particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(.3,.7),max:.7,color,r:rand(1.4,3.2)}); }
+}
+function explosion(x,y,color){
+  for(let i=0;i<34;i++){ const a=Math.random()*TAU, s=rand(.3,1)*420; particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(.4,1.0),max:1.0,color:(i%3?color:"#fff"),r:rand(1.6,4.2)}); }
+  // shockwave
+  particles.push({x,y,vx:0,vy:0,life:.45,max:.45,color,ring:true,r:6,rmax:120});
+}
+const loot=[]; // {x,y,vx,vy,amt,life}
+function spawnLoot(x,y,amt){
+  const n=Math.min(8,Math.max(2,Math.round(amt/3)));
+  for(let i=0;i<n;i++){ const a=Math.random()*TAU,s=rand(40,170); loot.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,amt:Math.max(1,Math.round(amt/n)),life:14}); }
+}
+function popup(x,y,txt,color){ popups.push({x,y,txt,color,t:0}); }
+
+/* ============================================================
+   shared deterministic asteroid field
+   For a cell (gx,gy) we deterministically decide if it holds an
+   asteroid, its offset, size, mineral value. "Destroyed" asteroids
+   respawn on a deterministic timer keyed on a global epoch so all
+   clients agree on cycles; local mining just hides until next cycle.
+   ============================================================ */
+const ROCK_CYCLE = 22000; // ms — respawn period
+function rockAt(gx,gy){
+  if(gx<0||gy<0||gx*MINE_GRID>WORLD||gy*MINE_GRID>WORLD) return null;
+  const r=h2(gx+11,gy+7);
+  if(r>0.62) return null;                  // ~62% of cells have a rock
+  const ox=h2(gx*3+1,gy)*MINE_GRID*0.7+MINE_GRID*0.15;
+  const oy=h2(gx,gy*3+5)*MINE_GRID*0.7+MINE_GRID*0.15;
+  const sz=20+h2(gx+99,gy+3)*34;
+  const val=Math.round(6+h2(gx+5,gy+17)*16);
+  return {gx,gy,x:gx*MINE_GRID+ox,y:gy*MINE_GRID+oy,r:sz,val,seed:h2(gx+2,gy+8),
+          key:gx+":"+gy};
+}
+function rockAlive(rk,now){
+  // a rock the local player mined is gone until its next respawn time
+  const m = minedRocks.get(rk.key);
+  if(m===undefined){ return true; }
+  if(now > m){ minedRocks.delete(rk.key); return true; }
+  return false;
+}
+
+function eachVisibleRock(cb){
+  const now=performance.now();
+  const left=cam.x-W/2-MINE_GRID, right=cam.x+W/2+MINE_GRID, top=cam.y-H/2-MINE_GRID, bot=cam.y+H/2+MINE_GRID;
+  const gx0=Math.max(0,Math.floor(left/MINE_GRID)), gx1=Math.floor(right/MINE_GRID);
+  const gy0=Math.max(0,Math.floor(top/MINE_GRID)), gy1=Math.floor(bot/MINE_GRID);
+  for(let gx=gx0;gx<=gx1;gx++)for(let gy=gy0;gy<=gy1;gy++){
+    const rk=rockAt(gx,gy); if(!rk) continue;
+    if(!rockAlive(rk,now)) continue;
+    cb(rk);
+  }
+}
+function mineRock(rk, amount){
+  const dmg = asteroidHits.get(rk.key)||0;
+  const nd = dmg+amount;
+  if(nd >= rk.r){ // destroyed
+    asteroidHits.delete(rk.key);
+    minedRocks.set(rk.key, performance.now()+ROCK_CYCLE*(0.6+rk.seed*0.8));
+    gainMinerals(rk.val, rk.x, rk.y);
+    burst(rk.x,rk.y,"#7af0e6",16,1.8);
+    explosion(rk.x,rk.y,"#9be15d");
+  } else {
+    asteroidHits.set(rk.key,nd);
+    burst(rk.x,rk.y,"#7af0e6",4,1);
+  }
+}
+function gainMinerals(v,x,y){ me.minerals+=v; popup(x,y,"+"+v,"#ffd166"); updateBuildUI(); }
+
+/* ============================================================
+   shooting
+   ============================================================ */
+function tryFire(now){
+  if(!me.alive) return;
+  const cd = 240 - Math.min(120, (me.guns-1)*30); // faster with more guns
+  if(now-me.lastShot < cd) return;
+  me.lastShot=now;
+  const spd=720;
+  const dmg = 9 + me.guns*2;
+  const baseA=me.a;
+  const spread = me.guns>1 ? 0.12 : 0;
+  for(let g=0; g<me.guns; g++){
+    const off = me.guns>1 ? (g-(me.guns-1)/2)*spread : 0;
+    const a=baseA+off;
+    const bx=me.x+Math.cos(a)*22, by=me.y+Math.sin(a)*22;
+    const vx=Math.cos(a)*spd+me.vx, vy=Math.sin(a)*spd+me.vy;
+    spawnBullet(bx,by,vx,vy, ID, dmg, me.color, true);
+    // broadcast each shot so others see + take damage
+    send({t:"shot",id:ID,x:Math.round(bx),y:Math.round(by),vx:Math.round(vx),vy:Math.round(vy),dmg,color:me.color});
+  }
+  // muzzle
+  burst(me.x+Math.cos(me.a)*22, me.y+Math.sin(me.a)*22, me.color, 3, .8);
+}
+
+/* ============================================================
+   damage to self (victim-authoritative)
+   ============================================================ */
+function damageSelf(amount, fromColor){
+  if(!me.alive) return;
+  me.hp -= amount;
+  burst(me.x,me.y, fromColor||"#ff5d72", 5, 1.2);
+  if(me.hp<=0){ die(); }
+}
+function die(){
+  if(!me.alive) return;
+  me.alive=false; me.hp=0;
+  explosion(me.x,me.y,me.color);
+  const drop = Math.floor(me.minerals*0.4);
+  me.deadUntil = performance.now()+RESP_TIME;
+  // broadcast death (others credit the kill via proximity heuristic on their side; we also feed locally)
+  send({t:"death",id:ID,name:me.name,color:me.color,x:Math.round(me.x),y:Math.round(me.y),drop});
+  document.getElementById("respawn").classList.add("show");
+  // clear our minerals on death (dropped)
+  me.minerals = Math.max(0, me.minerals - drop);
+  updateBuildUI();
+}
+function respawn(){
+  me.alive=true;
+  me.x=rand(WORLD*0.3,WORLD*0.7); me.y=rand(WORLD*0.3,WORLD*0.7);
+  me.vx=0; me.vy=0; me.hp=me.maxhp;
+  document.getElementById("respawn").classList.remove("show");
+}
+
+/* when WE destroy a peer: we detect their hp<=0 from their state OR we just credit on our bullets.
+   Simplest robust scheme: track damage we deal to peers locally; if a peer we've been hitting
+   sends a death, and we were the last to damage them recently, we claim the kill. */
+const myDamageTo = new Map(); // peerId -> {amt,t}
+function noteDamageDealt(peerId, amt){
+  const now=performance.now();
+  myDamageTo.set(peerId, {amt:(myDamageTo.has(peerId)?myDamageTo.get(peerId).amt:0)+amt, t:now});
+}
+
+/* ============================================================
+   build menu
+   ============================================================ */
+const BUILD = [
+  { id:"hull", name:"Reinforce Hull", desc:"+40 max hull, full repair",
+    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#43e0a0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>`,
+    cost:(lv)=>30+lv*25, max:6, lvl:()=>Math.round((me.maxhp-100)/40),
+    apply:()=>{ me.maxhp+=40; me.hp=me.maxhp; } },
+  { id:"speed", name:"Thruster Tune", desc:"+18% top speed & accel",
+    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14l9-9 2 2-4 5h5l-9 9-2-2 4-5H4z"/></svg>`,
+    cost:(lv)=>25+lv*22, max:6, lvl:()=>me.speed_lv||0,
+    apply:()=>{ me.speed*=1.18; me.speed_lv=(me.speed_lv||0)+1; } },
+  { id:"gun", name:"Extra Gun", desc:"+1 cannon, faster fire",
+    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#ffd166" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h13M16 9l4 3-4 3M6 7v10"/></svg>`,
+    cost:(lv)=>40+lv*40, max:4, lvl:()=>me.guns-1,
+    apply:()=>{ me.guns=Math.min(5,me.guns+1); } },
+  { id:"drone", name:"Combat Drone", desc:"Orbits you, auto-fires at enemies",
+    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#c98bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 4v3M12 17v3M4 12h3M17 12h3"/></svg>`,
+    cost:(lv)=>50+lv*45, max:5, lvl:()=>drones.length,
+    apply:()=>{ drones.push({x:me.x,y:me.y,a:0,vx:0,vy:0,cool:0,orbit:rand(0,TAU),rad:rand(46,72)}); } },
+  { id:"turret", name:"Sentry Turret", desc:"Drop a turret that holds ground",
+    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#ff9f43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20h14M8 20v-5h8v5M12 15V9M12 9l5-3M12 9L7 6"/></svg>`,
+    cost:(lv)=>45, max:99, lvl:()=>turrets.length,
+    apply:()=>{ turrets.push({x:me.x-Math.cos(me.a)*40,y:me.y-Math.sin(me.a)*40,a:0,cool:0,life:30}); } },
+];
+const buildPanel=document.getElementById("buildPanel");
+function toggleBuild(){ buildPanel.classList.toggle("show"); if(buildPanel.classList.contains("show")) updateBuildUI(); }
+document.getElementById("buildToggle").addEventListener("click",toggleBuild);
+
+function buildBuildUI(){
+  const list=document.getElementById("buildList");
+  list.innerHTML="";
+  BUILD.forEach(b=>{
+    const btn=document.createElement("button");
+    btn.className="bopt"; btn.dataset.id=b.id;
+    btn.innerHTML=`<span class="ic">${b.icon}</span><span class="bd"><span class="bt">${b.name} <span class="lv" data-lv></span></span><span class="bs">${b.desc}</span></span><span class="cost" data-cost></span>`;
+    btn.addEventListener("click",()=>buy(b));
+    list.appendChild(btn);
+  });
+  updateBuildUI();
+}
+function curCost(b){ return b.cost(b.lvl()); }
+function updateBuildUI(){
+  document.getElementById("hud-min").textContent=me.minerals;
+  document.getElementById("build-bal").textContent=me.minerals+" min";
+  document.querySelectorAll("#buildList .bopt").forEach(btn=>{
+    const b=BUILD.find(x=>x.id===btn.dataset.id); if(!b)return;
+    const lv=b.lvl(), maxed=lv>=b.max, cost=curCost(b);
+    btn.querySelector("[data-cost]").textContent = maxed?"MAX":cost;
+    const lvEl=btn.querySelector("[data-lv]");
+    lvEl.textContent = b.max<90 ? "Lv "+lv : (lv>0?("×"+lv):"");
+    btn.disabled = maxed || me.minerals<cost;
+  });
+}
+function buy(b){
+  const lv=b.lvl(); if(lv>=b.max) return;
+  const cost=curCost(b);
+  if(me.minerals<cost) return;
+  me.minerals-=cost;
+  b.apply();
+  // level changes with hull/guns
+  me.lvl = 1 + (me.guns-1) + Math.round((me.maxhp-100)/40) + (me.speed_lv||0) + drones.length;
+  popup(me.x,me.y-30,b.name,"#37c6ff");
+  burst(me.x,me.y,"#37c6ff",10,1.3);
+  updateBuildUI();
+  refreshHud();
+  pushState(true);
+}
+
+/* ============================================================
+   HUD refresh
+   ============================================================ */
+function refreshHud(){
+  document.getElementById("hpfill").style.width=clamp(me.hp/me.maxhp*100,0,100)+"%";
+  document.getElementById("hud-min").textContent=me.minerals;
+  document.getElementById("hud-lvl").textContent=me.lvl;
+  document.getElementById("hud-kills").textContent=me.kills;
+}
+
+/* ============================================================
+   main update
+   ============================================================ */
+let last=performance.now(), stateAcc=0, boardAcc=0;
+function update(dt, now){
+  // ----- input intent -----
+  let thrust=false, aimX=0, aimY=0;
+  if(touchSteer){
+    aimX = touchSteer.x - W/2; aimY = touchSteer.y - H/2;
+    me.a = Math.atan2(aimY,aimX);
+    thrust=true;
+  } else {
+    // mouse aim
+    aimX = pointer.x - W/2; aimY = pointer.y - H/2;
+    if(pointer.active && (Math.abs(aimX)+Math.abs(aimY))>4) me.a = Math.atan2(aimY,aimX);
+    if(pointer.down) thrust=true;
+  }
+  // keyboard movement (WASD/arrows): directional thrust
+  let kx=0,ky=0;
+  if(keys["w"]||keys["arrowup"])ky-=1;
+  if(keys["s"]||keys["arrowdown"])ky+=1;
+  if(keys["a"]||keys["arrowleft"])kx-=1;
+  if(keys["d"]||keys["arrowright"])kx+=1;
+
+  if(me.alive){
+    const accel = 560*me.speed;
+    const maxv = 360*me.speed;
+    if(kx||ky){
+      const l=Math.hypot(kx,ky); me.vx+=kx/l*accel*dt; me.vy+=ky/l*accel*dt;
+      if(!touchSteer && !pointer.down) me.a=angLerp(me.a, Math.atan2(ky,kx), 0.2);
+    }
+    if(thrust){ me.vx+=Math.cos(me.a)*accel*dt; me.vy+=Math.sin(me.a)*accel*dt;
+      // thruster particles
+      if(Math.random()<.8){ const ta=me.a+Math.PI+rand(-.3,.3); particles.push({x:me.x+Math.cos(me.a)*-16,y:me.y+Math.sin(me.a)*-16,vx:Math.cos(ta)*rand(60,180)+me.vx*.4,vy:Math.sin(ta)*rand(60,180)+me.vy*.4,life:rand(.18,.4),max:.4,color:Math.random()<.5?me.color:"#7af0e6",r:rand(1.4,3)}); }
+    }
+    // drag + clamp
+    const sp=Math.hypot(me.vx,me.vy);
+    if(sp>maxv){ me.vx*=maxv/sp; me.vy*=maxv/sp; }
+    me.vx*=0.992; me.vy*=0.992;
+    me.x+=me.vx*dt; me.y+=me.vy*dt;
+    // world bounds (soft bounce)
+    if(me.x<20){me.x=20;me.vx=Math.abs(me.vx)*.5;} if(me.x>WORLD-20){me.x=WORLD-20;me.vx=-Math.abs(me.vx)*.5;}
+    if(me.y<20){me.y=20;me.vy=Math.abs(me.vy)*.5;} if(me.y>WORLD-20){me.y=WORLD-20;me.vy=-Math.abs(me.vy)*.5;}
+    // slow hull regen
+    if(me.hp<me.maxhp) me.hp=Math.min(me.maxhp, me.hp+2.5*dt);
+    if(firing) tryFire(now);
+  } else {
+    if(now>=me.deadUntil) respawn();
+  }
+
+  // ----- camera follow -----
+  cam.x = lerp(cam.x, me.x, 1-Math.pow(0.001,dt));
+  cam.y = lerp(cam.y, me.y, 1-Math.pow(0.001,dt));
+
+  // ----- peers interpolation + cull -----
+  for(const [id,p] of peers){
+    if(now-p.last>PEER_TTL){ peers.delete(id); continue; }
+    if(p.x!==undefined){ p.x=lerp(p.x,p.tx,clamp(dt*10,0,1)); p.y=lerp(p.y,p.ty,clamp(dt*10,0,1)); p.a=angLerp(p.a,p.ta,clamp(dt*10,0,1)); }
+  }
+
+  // ----- bullets -----
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
+    if(b.life<=0){ bullets.splice(i,1); continue; }
+    // mine our own bullets vs asteroids
+    if(b.mine){
+      let hit=false;
+      eachVisibleRock(rk=>{
+        if(hit)return;
+        if((b.x-rk.x)**2+(b.y-rk.y)**2 < (rk.r*rk.r)){ mineRock(rk, b.dmg); hit=true; }
+      });
+      if(hit){ bullets.splice(i,1); continue; }
+      // our bullets vs peers (visual only — peers decide their own damage; but we note for kill credit)
+      for(const p of peers.values()){
+        if(p.x===undefined||!p.alive)continue;
+        if((b.x-p.x)**2+(b.y-p.y)**2 < 20*20){
+          noteDamageDealt(p.id,b.dmg);
+          burst(b.x,b.y,p.color,5,1.2);
+          bullets.splice(i,1); hit=true; break;
+        }
+      }
+      if(hit)continue;
+    } else {
+      // enemy bullet vs ME (victim-authoritative)
+      if(me.alive && (b.x-me.x)**2+(b.y-me.y)**2 < 18*18){
+        damageSelf(b.dmg, b.color);
+        send({t:"hit",id:ID,x:Math.round(me.x),y:Math.round(me.y),color:b.color});
+        bullets.splice(i,1); continue;
+      }
+    }
+  }
+
+  // ----- collide ME with asteroids (mining by ramming, light damage) -----
+  if(me.alive){
+    eachVisibleRock(rk=>{
+      const dx=me.x-rk.x, dy=me.y-rk.y, d2=dx*dx+dy*dy, rr=(rk.r+14);
+      if(d2<rr*rr){
+        mineRock(rk, 30);                 // ramming mines fast
+        const d=Math.sqrt(d2)||1; me.vx+=dx/d*60; me.vy+=dy/d*60; // push off
+        if(Math.random()<.3) damageSelf(2,"#9be15d");
+      }
+    });
+  }
+
+  // ----- loot pickups -----
+  for(let i=loot.length-1;i>=0;i--){
+    const L=loot[i]; L.x+=L.vx*dt; L.y+=L.vy*dt; L.vx*=0.95; L.vy*=0.95; L.life-=dt;
+    if(L.life<=0){ loot.splice(i,1); continue; }
+    if(me.alive){
+      const dx=me.x-L.x, dy=me.y-L.y, d2=dx*dx+dy*dy;
+      if(d2<140*140){ const d=Math.sqrt(d2)||1; L.vx+=dx/d*420*dt; L.vy+=dy/d*420*dt; } // magnet
+      if(d2<22*22){ gainMinerals(L.amt,L.x,L.y); loot.splice(i,1); }
+    }
+  }
+
+  // ----- drones -----
+  for(const dr of drones){
+    dr.orbit += dt*1.4;
+    const ox=me.x+Math.cos(dr.orbit)*dr.rad, oy=me.y+Math.sin(dr.orbit)*dr.rad;
+    dr.x=lerp(dr.x,ox,clamp(dt*5,0,1)); dr.y=lerp(dr.y,oy,clamp(dt*5,0,1));
+    // target nearest peer
+    let tgt=null,best=520*520;
+    for(const p of peers.values()){ if(p.x===undefined||!p.alive)continue; const d2=(p.x-dr.x)**2+(p.y-dr.y)**2; if(d2<best){best=d2;tgt=p;} }
+    if(tgt){ dr.a=Math.atan2(tgt.y-dr.y,tgt.x-dr.x); dr.cool-=dt;
+      if(dr.cool<=0){ dr.cool=0.6; const spd=680; const vx=Math.cos(dr.a)*spd,vy=Math.sin(dr.a)*spd;
+        spawnBullet(dr.x,dr.y,vx,vy,ID,8,"#c98bff",true);
+        send({t:"shot",id:ID,x:Math.round(dr.x),y:Math.round(dr.y),vx:Math.round(vx),vy:Math.round(vy),dmg:8,color:"#c98bff"});
+      }
+    } else { dr.a=me.a; }
+  }
+
+  // ----- turrets -----
+  for(let i=turrets.length-1;i>=0;i--){
+    const t=turrets[i]; t.life-=dt; if(t.life<=0){ turrets.splice(i,1); continue; }
+    let tgt=null,best=600*600;
+    for(const p of peers.values()){ if(p.x===undefined||!p.alive)continue; const d2=(p.x-t.x)**2+(p.y-t.y)**2; if(d2<best){best=d2;tgt=p;} }
+    if(tgt){ t.a=angLerp(t.a,Math.atan2(tgt.y-t.y,tgt.x-t.x),0.15); t.cool-=dt;
+      if(t.cool<=0){ t.cool=0.5; const spd=720; const vx=Math.cos(t.a)*spd,vy=Math.sin(t.a)*spd;
+        spawnBullet(t.x+Math.cos(t.a)*14,t.y+Math.sin(t.a)*14,vx,vy,ID,7,"#ff9f43",true);
+        send({t:"shot",id:ID,x:Math.round(t.x),y:Math.round(t.y),vx:Math.round(vx),vy:Math.round(vy),dmg:7,color:"#ff9f43"});
+      }
+    }
+  }
+
+  // ----- particles -----
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i]; p.life-=dt;
+    if(p.life<=0){ particles.splice(i,1); continue; }
+    if(p.ring){ p.r += (p.rmax-p.r)*clamp(dt*8,0,1); continue; }
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.94; p.vy*=0.94;
+  }
+  // ----- popups -----
+  for(let i=popups.length-1;i>=0;i--){ const q=popups[i]; q.t+=dt; q.y-=22*dt; if(q.t>1.1) popups.splice(i,1); }
+
+  // ----- networking cadence -----
+  stateAcc+=dt*1000;
+  if(stateAcc>=SHOT_INTERVAL){ stateAcc=0; pushState(); }
+
+  boardAcc+=dt*1000;
+  if(boardAcc>=4000){ boardAcc=0; loadBoard(); refreshOnline(); }
+
+  refreshHud();
+}
+
+/* ============================================================
+   render
+   ============================================================ */
+function render(){
+  ctx.fillStyle="#03060e"; ctx.fillRect(0,0,W,H);
+  // nebula glow
+  const g=ctx.createRadialGradient(W*0.5,H*-0.1,0,W*0.5,H*-0.1,Math.max(W,H));
+  g.addColorStop(0,"rgba(55,198,255,0.06)"); g.addColorStop(1,"rgba(3,6,14,0)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  // starfield (parallax)
+  ctx.save();
+  for(const s of stars){
+    const px=((s.x*W - cam.x*s.z*0.15)%W+W)%W;
+    const py=((s.y*H - cam.y*s.z*0.15)%H+H)%H;
+    ctx.globalAlpha=0.35+s.z*0.55;
+    ctx.fillStyle = s.z>0.8?"#bfe6ff":"#5e768f";
+    ctx.fillRect(px,py,s.s,s.s);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(W/2-cam.x, H/2-cam.y);
+
+  // world border
+  ctx.strokeStyle="rgba(116,176,255,.16)"; ctx.lineWidth=2;
+  ctx.strokeRect(0,0,WORLD,WORLD);
+
+  // asteroids
+  eachVisibleRock(rk=>{
+    const dmg=asteroidHits.get(rk.key)||0;
+    drawRock(rk, dmg);
+  });
+
+  // loot
+  for(const L of loot){
+    ctx.globalAlpha=clamp(L.life/3,0,1);
+    ctx.fillStyle="#ffd166"; ctx.shadowColor="#ffd166"; ctx.shadowBlur=8;
+    ctx.beginPath(); ctx.arc(L.x,L.y,3.4,0,TAU); ctx.fill();
+    ctx.shadowBlur=0; ctx.globalAlpha=1;
+  }
+
+  // turrets
+  for(const t of turrets) drawTurret(t);
+  // drones
+  for(const dr of drones) drawDrone(dr);
+
+  // bullets
+  for(const b of bullets){
+    ctx.globalAlpha=clamp(b.life/1.2,0,1);
+    ctx.strokeStyle=b.color; ctx.lineWidth=2.4; ctx.shadowColor=b.color; ctx.shadowBlur=10; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*0.012,b.y-b.vy*0.012); ctx.stroke();
+    ctx.shadowBlur=0; ctx.globalAlpha=1;
+  }
+
+  // peers
+  for(const p of peers.values()){
+    if(p.x===undefined)continue;
+    if(!p.alive){ continue; }
+    drawShip(p.x,p.y,p.a,p.color,false,p.name,p.lvl);
+  }
+
+  // me
+  if(me.alive) drawShip(me.x,me.y,me.a,me.color,true,me.name,me.lvl);
+
+  // particles
+  for(const p of particles){
+    if(p.ring){
+      ctx.globalAlpha=clamp(p.life/p.max,0,1)*0.6;
+      ctx.strokeStyle=p.color; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,TAU); ctx.stroke();
+      ctx.globalAlpha=1; continue;
+    }
+    ctx.globalAlpha=clamp(p.life/p.max,0,1);
+    ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=6;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,TAU); ctx.fill();
+  }
+  ctx.shadowBlur=0; ctx.globalAlpha=1;
+
+  // popups
+  ctx.textAlign="center"; ctx.font="600 14px "+'"JetBrains Mono",monospace';
+  for(const q of popups){
+    ctx.globalAlpha=clamp(1.1-q.t,0,1);
+    ctx.fillStyle=q.color; ctx.shadowColor=q.color; ctx.shadowBlur=8;
+    ctx.fillText(q.txt,q.x,q.y);
+  }
+  ctx.shadowBlur=0; ctx.globalAlpha=1;
+
+  ctx.restore();
+
+  // minimap
+  drawMinimap();
+}
+
+function drawRock(rk,dmg){
+  ctx.save();
+  ctx.translate(rk.x,rk.y);
+  const sides=7, frac=clamp(1-dmg/rk.r,0.35,1);
+  ctx.beginPath();
+  for(let i=0;i<sides;i++){
+    const ang=i/sides*TAU;
+    const wob=0.7+h2(rk.gx*sides+i,rk.gy)*0.5;
+    const r=rk.r*wob*frac;
+    const x=Math.cos(ang)*r, y=Math.sin(ang)*r;
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  }
+  ctx.closePath();
+  const grd=ctx.createLinearGradient(-rk.r,-rk.r,rk.r,rk.r);
+  grd.addColorStop(0,"#16324a"); grd.addColorStop(1,"#0c1a2a");
+  ctx.fillStyle=grd; ctx.fill();
+  ctx.strokeStyle="rgba(122,240,230,.4)"; ctx.lineWidth=1.6; ctx.stroke();
+  // mineral veins (green glow)
+  ctx.strokeStyle="rgba(155,225,93,.55)"; ctx.lineWidth=1.4; ctx.shadowColor="#9be15d"; ctx.shadowBlur=6;
+  ctx.beginPath();
+  ctx.moveTo(-rk.r*0.3*frac,0); ctx.lineTo(rk.r*0.2*frac,-rk.r*0.25*frac); ctx.lineTo(rk.r*0.35*frac,rk.r*0.1*frac);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawShip(x,y,a,color,isMe,name,lvl){
+  ctx.save();
+  ctx.translate(x,y); ctx.rotate(a);
+  // glow body
+  ctx.shadowColor=color; ctx.shadowBlur=isMe?16:11;
+  ctx.beginPath();
+  ctx.moveTo(18,0); ctx.lineTo(-12,-11); ctx.lineTo(-6,0); ctx.lineTo(-12,11);
+  ctx.closePath();
+  const grd=ctx.createLinearGradient(-12,0,18,0);
+  grd.addColorStop(0,"rgba(7,13,24,.9)"); grd.addColorStop(1,color);
+  ctx.fillStyle=grd; ctx.fill();
+  ctx.lineWidth=2; ctx.strokeStyle=color; ctx.stroke();
+  // cockpit
+  ctx.shadowBlur=0;
+  ctx.beginPath(); ctx.arc(2,0,3,0,TAU); ctx.fillStyle="#eaf6ff"; ctx.fill();
+  ctx.restore();
+
+  // name + level tag (screen-up, not rotated)
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.shadowBlur=0; ctx.textAlign="center";
+  ctx.font="600 12px "+'"Hanken Grotesk",sans-serif';
+  ctx.fillStyle=isMe?"#fff":"rgba(233,241,251,.85)";
+  ctx.fillText(name,0,-24);
+  ctx.font="500 9px "+'"JetBrains Mono",monospace';
+  ctx.fillStyle=color;
+  ctx.fillText("Lv"+lvl,0,-13);
+  ctx.restore();
+}
+
+function drawDrone(dr){
+  ctx.save(); ctx.translate(dr.x,dr.y); ctx.rotate(dr.a);
+  ctx.shadowColor="#c98bff"; ctx.shadowBlur=9;
+  ctx.fillStyle="#c98bff";
+  ctx.beginPath(); ctx.moveTo(8,0); ctx.lineTo(-6,-5); ctx.lineTo(-6,5); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function drawTurret(t){
+  ctx.save(); ctx.translate(t.x,t.y);
+  ctx.globalAlpha=clamp(t.life/5,0.3,1);
+  ctx.shadowColor="#ff9f43"; ctx.shadowBlur=8;
+  ctx.fillStyle="rgba(7,13,24,.9)"; ctx.strokeStyle="#ff9f43"; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(0,0,9,0,TAU); ctx.fill(); ctx.stroke();
+  ctx.rotate(t.a);
+  ctx.fillStyle="#ff9f43"; ctx.fillRect(0,-2.5,16,5);
+  ctx.restore(); ctx.globalAlpha=1; ctx.shadowBlur=0;
+}
+
+function drawMinimap(){
+  const S=Math.min(150, W*0.32), pad=12;
+  const ox=W-S-pad, oy=H-S-pad - (isTouch?0:0);
+  ctx.save();
+  ctx.globalAlpha=0.92;
+  ctx.fillStyle="rgba(7,13,24,.7)"; ctx.strokeStyle="rgba(116,176,255,.2)"; ctx.lineWidth=1;
+  roundRect(ox,oy,S,S,8); ctx.fill(); ctx.stroke();
+  const sc=S/WORLD;
+  // viewport box
+  ctx.strokeStyle="rgba(116,176,255,.18)";
+  ctx.strokeRect(ox+(cam.x-W/2)*sc, oy+(cam.y-H/2)*sc, W*sc, H*sc);
+  // peers
+  for(const p of peers.values()){ if(p.x===undefined||!p.alive)continue;
+    ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(ox+p.x*sc,oy+p.y*sc,2,0,TAU); ctx.fill(); }
+  // me
+  ctx.fillStyle=me.color; ctx.shadowColor=me.color; ctx.shadowBlur=6;
+  ctx.beginPath(); ctx.arc(ox+me.x*sc,oy+me.y*sc,3,0,TAU); ctx.fill(); ctx.shadowBlur=0;
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+/* ============================================================
+   loop
+   ============================================================ */
+function frame(now){
+  let dt=(now-last)/1000; last=now;
+  if(dt>0.05)dt=0.05;
+  if(playing) update(dt, now);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ============================================================
+   kill credit — process peer deaths for our kills
+   We listen by patching the death case: when a death arrives, if we
+   dealt damage to that peer in the last 2.5s, count it as our kill.
+   ============================================================ */
+const origHandleMsg = handleMsg;
+handleMsg = function(m){
+  if(m && m.t==="death" && m.id!==ID){
+    const dmg=myDamageTo.get(m.id);
+    if(dmg && performance.now()-dmg.t < 2800){
+      me.kills++;
+      // we get a share of their dropped minerals
+      const steal=Math.floor((m.drop||0)*0.5);
+      if(steal>0){ me.minerals+=steal; popup(me.x,me.y-40,"+"+steal+" salvage","#9be15d"); }
+      myDamageTo.delete(m.id);
+      refreshHud();
+      writeKills();
+      // override feed killer to us
+      const p=peers.get(m.id);
+      pushFeed(me.name, (m.name||(p?p.name:"a ship")));
+      // mark handled so origHandle doesn't double-feed
+      m._fed=true;
+    }
+  }
+  // call original but skip its feed if we already fed
+  if(m && m._fed){
+    // run original minus feed: replicate explosion + loot only
+    const p=peers.get(m.id);
+    const px=(p&&p.x!==undefined)?p.x:m.x, py=(p&&p.y!==undefined)?p.y:m.y;
+    if(typeof px==="number") explosion(px,py,(p?p.color:m.color)||"#fff");
+    if(p){p.alive=false;p.hp=0;}
+    if(m.drop && typeof px==="number") spawnLoot(px,py,m.drop);
+    refreshOnline();
+    return;
+  }
+  return origHandleMsg(m);
+};
+
+/* ============================================================
+   join screen
+   ============================================================ */
+const overlay=document.getElementById("overlay");
+const hud=document.getElementById("hud");
+const nameInput=document.getElementById("name");
+nameInput.value=me.name;
+let selColor=me.color;
+
+(function buildSwatches(){
+  const wrap=document.getElementById("swatches");
+  COLORS.forEach(c=>{
+    const b=document.createElement("button");
+    b.style.background=c; if(c===selColor)b.classList.add("sel");
+    b.addEventListener("click",()=>{ selColor=c; wrap.querySelectorAll("button").forEach(x=>x.classList.remove("sel")); b.classList.add("sel"); });
+    wrap.appendChild(b);
+  });
+})();
+document.getElementById("reroll").addEventListener("click",()=>{ nameInput.value=randomHandle(); });
+
+document.getElementById("copyBtn").addEventListener("click",async function(){
+  const url=location.origin+location.pathname;
+  try{ await navigator.clipboard.writeText(url); }catch(e){
+    const ta=document.createElement("textarea"); ta.value=url; document.body.appendChild(ta); ta.select(); try{document.execCommand("copy");}catch(_){} ta.remove();
+  }
+  this.textContent="Copied!"; this.classList.add("done");
+  setTimeout(()=>{ this.textContent="Copy link"; this.classList.remove("done"); },1600);
+});
+
+function startGame(){
+  me.name=(nameInput.value.trim()||randomHandle()).slice(0,18);
+  me.color=selColor;
+  localStorage.setItem("spa_name",me.name);
+  localStorage.setItem("spa_color",me.color);
+  playing=true;
+  overlay.classList.add("hidden");
+  hud.style.display="block";
+  if(isTouch){ document.getElementById("touch").style.display="block"; }
+  buildBuildUI();
+  refreshHud(); updateBuildUI();
+  if(ws && wsReady){ send({t:"join",id:ID,name:me.name}); pushState(true); }
+  loadBoard();
+  writeKills();
+}
+document.getElementById("playBtn").addEventListener("click",startGame);
+nameInput.addEventListener("keydown",e=>{ if(e.key==="Enter") startGame(); });
+
+/* ============================================================
+   boot
+   ============================================================ */
+connect(false);
+loadBoard();
+setInterval(()=>{ if(!playing) refreshOnline(); }, 2500);
+
+// keep online count in join screen fresh
+setInterval(()=>{
+  const n=onlineCount();
+  const olt=document.getElementById("ol-text");
+  if(wsReady && !playing) olt.textContent="connected — "+n+" online";
+}, 2000);
+</script>
+</body>
+</html>

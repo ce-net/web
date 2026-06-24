@@ -2,13 +2,23 @@
 // ce-app — one command to a live, globally reachable, hot-reloading app.
 //
 //   ce-app new [template] [dir]   scaffold a template (lists available if omitted)
-//   ce-app dev                    build + watch + live-upload, prints the public URL
+//   ce-app whoami                 print your stable public id + derived nodeprefix
+//   ce-app dev                    build + watch + live-upload, prints the public URL(s)
 //   ce-app deploy                 framework auto-detect + build + upload + spa config
 //   ce-app domain add|rm|ls <d>   manage custom production domains for this app
 //   ce-app detect                 print the detected framework + output dir (no network)
 //   ce-app smoke                  build a tiny fixture locally (no network) — self-check
 //
-// Flags: --help  --hub <base>  --app <id>
+// Flags: --help  --hub <base>  --app <id>  --project <name>
+//
+// Per-project, node-id-tied domains:
+//   A stable public id lives at ~/.ce/id (16 hex; generated if absent; prefers the
+//   `ce` node id from `ce id` when the CE CLI is installed). The first 10 hex chars are
+//   the "nodeprefix". Each project deploys as "<project>-<nodeprefix>" and is reachable
+//   at BOTH https://<project>-<nodeprefix>.ce-net.com and
+//   https://ce-net.com/apps/<project>-<nodeprefix>/ — same origin either way. The single
+//   DNS label keeps wildcard TLS automatic. Bring your own domain on top with
+//   `ce-app domain add <your-domain>`.
 //
 // Node 18+, ESM. Light deps: esbuild, chokidar (the framework build tools — vite,
 // next, svelte, astro, expo — are invoked through the project's own npm scripts /
@@ -18,7 +28,7 @@ import { promises as fs } from "node:fs";
 import fssync from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -30,7 +40,7 @@ const DEFAULT_HUB = "https://ce-net.com";
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { _: [], hub: process.env.CE_HUB || DEFAULT_HUB, app: undefined, help: false };
+  const opts = { _: [], hub: process.env.CE_HUB || DEFAULT_HUB, app: undefined, project: undefined, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") opts.help = true;
@@ -38,10 +48,30 @@ function parseArgs(argv) {
     else if (a.startsWith("--hub=")) opts.hub = a.slice("--hub=".length);
     else if (a === "--app") opts.app = argv[++i];
     else if (a.startsWith("--app=")) opts.app = a.slice("--app=".length);
+    else if (a === "--project") opts.project = argv[++i];
+    else if (a.startsWith("--project=")) opts.project = a.slice("--project=".length);
     else opts._.push(a);
   }
   if (opts.hub) opts.hub = String(opts.hub).replace(/\/+$/, "");
   return opts;
+}
+
+// Bare apex host of the hub (e.g. "https://ce-net.com" -> "ce-net.com"), used to
+// build the per-project subdomain URL.
+function hubHost(hub) {
+  try {
+    return new URL(hub).host;
+  } catch (_) {
+    return String(hub).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  }
+}
+
+function hubScheme(hub) {
+  try {
+    return new URL(hub).protocol.replace(/:$/, "");
+  } catch (_) {
+    return hub.startsWith("http://") ? "http" : "https";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -80,23 +110,127 @@ function contentType(file) {
 }
 
 // ---------------------------------------------------------------------------
-// app id — the user's public dev id, persisted at ./.ce/app-id
+// identity — a STABLE public dev id tied to this node, persisted at ~/.ce/id
+//
+//   - 16 hex chars; generated once if absent.
+//   - If the `ce` CLI is installed, we prefer its node id (first hex token of
+//     `ce id`) so every project you deploy from this machine shares one identity.
+//   - nodeprefix = first 10 hex of the id; it namespaces every project subdomain
+//     so two developers' "chat" apps never collide.
 // ---------------------------------------------------------------------------
 
-async function resolveAppId(cwd, override) {
-  if (override) return override;
-  const ceDir = path.join(cwd, ".ce");
-  const idFile = path.join(ceDir, "app-id");
+const NODEPREFIX_LEN = 10;
+
+function ceHomeDir() {
+  return path.join(os.homedir(), ".ce");
+}
+
+// Try `ce id` and return the first 16-hex-or-longer token, lowercased. Returns
+// null if the CLI is missing, errors, or prints nothing hex-looking. Best-effort
+// and fast: a short timeout, no throw.
+function tryCeNodeId() {
   try {
-    const existing = (await fs.readFile(idFile, "utf8")).trim();
-    if (existing) return existing;
+    const r = spawnSync(process.platform === "win32" ? "ce.cmd" : "ce", ["id"], {
+      encoding: "utf8",
+      timeout: 4000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (r.status !== 0 || !r.stdout) return null;
+    const m = r.stdout.match(/[0-9a-fA-F]{16,}/);
+    return m ? m[0].toLowerCase() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Resolve (and persist) the stable public id at ~/.ce/id. Generates a 16-hex id
+// on first run; thereafter the file wins so the id never changes underneath you.
+async function resolvePublicId() {
+  const ceDir = ceHomeDir();
+  const idFile = path.join(ceDir, "id");
+  try {
+    const existing = (await fs.readFile(idFile, "utf8")).trim().toLowerCase();
+    if (/^[0-9a-f]{16,}$/.test(existing)) return existing;
   } catch (_) {
     /* not yet created */
   }
-  const id = crypto.randomBytes(8).toString("hex"); // 16 hex chars
+  // Prefer the CE node id if the CLI is present, else generate a stable 16-hex id.
+  const ceId = tryCeNodeId();
+  const id = ceId || crypto.randomBytes(8).toString("hex");
   await fs.mkdir(ceDir, { recursive: true });
   await fs.writeFile(idFile, id + "\n");
   return id;
+}
+
+function nodePrefix(id) {
+  return String(id).toLowerCase().slice(0, NODEPREFIX_LEN);
+}
+
+// Sanitize an arbitrary string into a single DNS label fragment: lowercase,
+// [a-z0-9-] only, collapse runs of dashes, no leading/trailing dash.
+function dnsLabelPart(s) {
+  return String(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// The project name: --project, else package.json "name", else the directory name.
+function resolveProjectName(cwd, override) {
+  if (override && String(override).trim()) return dnsLabelPart(override);
+  const pkg = readJsonSafe(path.join(cwd, "package.json"));
+  if (pkg && typeof pkg.name === "string" && pkg.name.trim()) {
+    // npm scoped names ("@scope/name") -> use the last path segment.
+    const bare = pkg.name.replace(/^@[^/]+\//, "");
+    const lbl = dnsLabelPart(bare);
+    if (lbl) return lbl;
+  }
+  const dir = dnsLabelPart(path.basename(cwd) || "app");
+  return dir || "app";
+}
+
+// The deployed app id: "<project>-<nodeprefix>", DNS-label-safe, <= ~50 chars.
+// Overridable by --app or ./.ce/app-id (project-local pin), which win as-is
+// (still sanitized to a valid single label).
+async function resolveAppId(cwd, opts) {
+  // 1) explicit --app flag wins.
+  if (opts && opts.app) {
+    const lbl = dnsLabelPart(opts.app);
+    if (lbl) return lbl;
+  }
+  // 2) a project-local pin at ./.ce/app-id wins (lets you fix an id per checkout).
+  try {
+    const pinned = (await fs.readFile(path.join(cwd, ".ce", "app-id"), "utf8")).trim();
+    const lbl = dnsLabelPart(pinned);
+    if (lbl) return lbl;
+  } catch (_) {
+    /* no pin */
+  }
+  // 3) derive "<project>-<nodeprefix>".
+  const id = await resolvePublicId();
+  const prefix = nodePrefix(id);
+  const project = resolveProjectName(cwd, opts && opts.project);
+  let appId = `${project}-${prefix}`;
+  // DNS label cap (~50 chars here, well under the 63 hard limit) without ever
+  // cutting off the node prefix — trim the project portion if the whole is long.
+  const MAX = 50;
+  if (appId.length > MAX) {
+    const room = MAX - (prefix.length + 1);
+    const trimmedProject = dnsLabelPart(project.slice(0, Math.max(1, room)));
+    appId = `${trimmedProject}-${prefix}`;
+  }
+  return dnsLabelPart(appId);
+}
+
+// Build both public URLs for an app id given the hub.
+function appUrls(hub, appId) {
+  const scheme = hubScheme(hub);
+  const host = hubHost(hub);
+  return {
+    subdomain: `${scheme}://${appId}.${host}/`,
+    path: `${hub}/apps/${appId}/`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -631,7 +765,7 @@ export {};
 
 async function cmdDeploy(opts) {
   const cwd = process.cwd();
-  const appId = await resolveAppId(cwd, opts.app);
+  const appId = await resolveAppId(cwd, opts);
   const recipe = detectFramework(cwd);
 
   console.log(`ce-app deploy  app=${appId}  hub=${opts.hub}`);
@@ -654,29 +788,34 @@ async function cmdDeploy(opts) {
   if (cfg.ok) console.log("SPA fallback: enabled");
   else console.log(`SPA fallback: could not set (${cfg.status || cfg.error || "unknown"}) — non-fatal`);
 
-  const url = `${opts.hub}/apps/${appId}/`;
+  const urls = appUrls(opts.hub, appId);
   console.log(`\nUploaded ${uploaded}/${total} file(s).`);
-  console.log(`Live: ${url}`);
+  console.log("Live at both URLs (same origin):");
+  console.log(`  ${urls.subdomain}`);
+  console.log(`  ${urls.path}`);
   if (_esbuildCtx) {
     try { await _esbuildCtx.dispose(); } catch (_) {}
     _esbuildCtx = null;
   }
-  return url;
+  return urls.subdomain;
 }
 
 async function cmdDev(opts) {
   const cwd = process.cwd();
-  const appId = await resolveAppId(cwd, opts.app);
+  const appId = await resolveAppId(cwd, opts);
   const recipe = detectFramework(cwd);
   // dev uses esbuild's fast in-process watch when the project is esbuild-shaped;
   // vite projects get vite --watch; other frameworks fall back to rebuild-on-change.
   const isEsbuild = recipe.id === "esbuild";
   const isVite = recipe.id === "vite";
   const outDir = isEsbuild ? path.join(cwd, "out") : resolveOutDir(cwd, recipe);
-  const url = `${opts.hub}/apps/${appId}/`;
+  const urls = appUrls(opts.hub, appId);
+  const url = urls.path; // [push] log target
 
   console.log(`ce-app dev  app=${appId}  hub=${opts.hub}  builder=${recipe.id}`);
-  console.log(`Live: ${url}\n`);
+  console.log("Live at both URLs (same origin):");
+  console.log(`  ${urls.subdomain}`);
+  console.log(`  ${urls.path}\n`);
 
   const { default: chokidar } = await import("chokidar");
   let prev = new Map();
@@ -774,7 +913,7 @@ async function cmdDomain(opts) {
   const cwd = process.cwd();
 
   if (sub === "ls" || sub === "list") {
-    const appId = await resolveAppId(cwd, opts.app);
+    const appId = await resolveAppId(cwd, opts);
     const res = await fetch(`${opts.hub}/domains`);
     if (!res.ok) throw new Error(`GET /domains -> ${res.status}`);
     const all = await res.json();
@@ -791,7 +930,7 @@ async function cmdDomain(opts) {
   if (sub === "add") {
     const domain = (opts._[2] || "").toLowerCase().trim();
     if (!domain) throw new Error("usage: ce-app domain add <domain>");
-    const appId = await resolveAppId(cwd, opts.app);
+    const appId = await resolveAppId(cwd, opts);
     const res = await fetch(`${opts.hub}/apps/${encodeURIComponent(appId)}/domain`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -819,7 +958,7 @@ async function cmdDomain(opts) {
   if (sub === "rm" || sub === "remove") {
     const domain = (opts._[2] || "").toLowerCase().trim();
     if (!domain) throw new Error("usage: ce-app domain rm <domain>");
-    const appId = await resolveAppId(cwd, opts.app);
+    const appId = await resolveAppId(cwd, opts);
     const res = await fetch(
       `${opts.hub}/apps/${encodeURIComponent(appId)}/domain/${encodeURIComponent(domain)}`,
       { method: "DELETE" }
@@ -833,6 +972,29 @@ async function cmdDomain(opts) {
   }
 
   console.log("Usage:\n  ce-app domain add <domain>\n  ce-app domain rm <domain>\n  ce-app domain ls");
+}
+
+// ---------------------------------------------------------------------------
+// whoami — print the stable public id + derived nodeprefix (no network)
+// ---------------------------------------------------------------------------
+
+async function cmdWhoami(opts) {
+  const cwd = process.cwd();
+  const id = await resolvePublicId();
+  const prefix = nodePrefix(id);
+  const source = tryCeNodeId() ? "ce id (CE node)" : "generated";
+  const project = resolveProjectName(cwd, opts && opts.project);
+  const appId = await resolveAppId(cwd, opts);
+  const urls = appUrls(opts.hub, appId);
+
+  console.log(`id:         ${id}`);
+  console.log(`nodeprefix: ${prefix}`);
+  console.log(`source:     ${source}  (~/.ce/id)`);
+  console.log(`project:    ${project}`);
+  console.log(`app id:     ${appId}`);
+  console.log("urls:");
+  console.log(`  ${urls.subdomain}`);
+  console.log(`  ${urls.path}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,7 +1162,8 @@ const HELP = `ce-app — one command to a live, globally reachable, hot-reloadin
 
 Usage:
   ce-app new [template] [dir]   Scaffold a template (no name -> list available)
-  ce-app dev                    Build + watch + live-upload; prints the public URL
+  ce-app whoami                 Print your stable public id + derived nodeprefix
+  ce-app dev                    Build + watch + live-upload; prints the public URL(s)
   ce-app deploy                 Auto-detect framework, build, upload, enable SPA routing
   ce-app domain add <domain>    Register a custom production domain for this app
   ce-app domain rm <domain>     Unregister a custom domain
@@ -1009,19 +1172,25 @@ Usage:
   ce-app smoke                  Build a fixture + run detection self-checks (no network)
 
 Options:
-  --hub <base>   Hub base URL (default: ${DEFAULT_HUB}, or $CE_HUB)
-  --app <id>     Override app id (default: ./.ce/app-id, auto-created as 16-hex)
-  -h, --help     Show this help
+  --hub <base>      Hub base URL (default: ${DEFAULT_HUB}, or $CE_HUB)
+  --project <name>  Project name for the app id (default: package.json name / dir)
+  --app <id>        Override the full app id (default: ./.ce/app-id, then derived)
+  -h, --help        Show this help
 
 Frameworks auto-detected on deploy: Vite (vanilla/React/Vue/Svelte), SvelteKit
 (static adapter), Next.js (static export), Astro (static), Nuxt (static generate),
 Create React App, Expo / react-native-web (web export), plain static sites, and the
 built-in esbuild path (src/main + src/index.html).
 
-Your public dev id is stored at ./.ce/app-id and your app goes live at
-  ${DEFAULT_HUB}/apps/<id>/
-Hot reload is automatic (the hub injects a reload snippet into served HTML).
-Custom domains: CNAME your domain to ce-net.com, then \`ce-app domain add <domain>\`.
+Identity & domains:
+  Your stable public id lives at ~/.ce/id (prefers \`ce id\` if the CE CLI is
+  installed). nodeprefix = its first 10 hex chars. Each project deploys as
+  "<project>-<nodeprefix>" and is live at BOTH
+    ${DEFAULT_HUB}/apps/<project>-<nodeprefix>/
+    https://<project>-<nodeprefix>.${hubHost(DEFAULT_HUB)}/
+  Same origin either way; the single DNS label keeps wildcard TLS automatic.
+  Hot reload is automatic (the hub injects a reload snippet into served HTML).
+  Bring your own domain: CNAME it to ce-net.com, then \`ce-app domain add <domain>\`.
 `;
 
 async function main() {
@@ -1036,6 +1205,9 @@ async function main() {
   switch (cmd) {
     case "new":
       await cmdNew(opts);
+      break;
+    case "whoami":
+      await cmdWhoami(opts);
       break;
     case "dev":
       await cmdDev(opts);

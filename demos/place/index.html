@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>CE Place — a shared pixel canvas</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Tap a cell, pick a color, paint together. A shared pixel canvas on the CE mesh — every pixel persists, everyone paints live." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='5' width='9' height='9' fill='%2337c6ff'/%3E%3Crect x='18' y='5' width='9' height='9' fill='%23ffd166'/%3E%3Crect x='5' y='18' width='9' height='9' fill='%23ff5d72'/%3E%3Crect x='18' y='18' width='9' height='9' fill='%2343e0a0'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.16),transparent 60%),radial-gradient(50% 40% at 90% 110%,rgba(47,107,255,.14),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:760px;margin:0 auto;padding:0 16px 40px}
+nav{display:flex;align-items:center;gap:10px;height:56px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:18px}
+.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}
+.live{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);position:relative}
+.dot::after{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px rgba(67,224,160,.5);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
+.live b{color:var(--text);font-weight:600}
+header{padding:26px 0 10px}
+.kick{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(26px,7vw,40px);letter-spacing:-.02em;line-height:1.05;margin:10px 0 0}
+h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);margin:12px 0 0;max-width:54ch;font-size:15px}
+.stage{margin-top:20px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:16px}
+.canvas-wrap{position:relative;width:100%;aspect-ratio:1;border-radius:12px;overflow:hidden;background:#04080f;border:1px solid var(--line-2);touch-action:none}
+canvas{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;cursor:crosshair}
+.palette{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.sw{width:34px;height:34px;border-radius:9px;cursor:pointer;border:2px solid transparent;transition:.15s;position:relative}
+.sw:hover{transform:translateY(-2px)}
+.sw.on{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.2)}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line-2)}
+.stat .v{font-family:var(--display);font-weight:600;font-size:22px}
+.stat .k{font-family:var(--mono);font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.cool{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--muted);min-width:120px;text-align:right}
+.cool.wait{color:var(--gold)}
+.coolbar{height:5px;border-radius:99px;background:rgba(116,176,255,.12);overflow:hidden;margin-top:6px}
+.coolbar i{display:block;height:100%;width:100%;background:var(--grad);transform-origin:left;transition:transform .1s linear}
+.hint{font-size:12.5px;color:var(--faint);margin-top:14px}
+.swatch-pick{display:flex;align-items:center;gap:10px;margin-top:14px}
+.swatch-pick .cur{width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.2)}
+.swatch-pick span{font-family:var(--mono);font-size:12px;color:var(--muted)}
+a{color:var(--cyan);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <div class="brand"><span class="ce">CE</span> Place</div>
+    <div class="sp"></div>
+    <div class="live"><span class="dot"></span><b id="liveN">1</b>&nbsp;painting</div>
+  </nav>
+  <header>
+    <div class="kick">shared canvas / mesh</div>
+    <h1>One canvas, <em>everyone</em> paints</h1>
+    <p class="lede">Pick a color, tap a cell. Every pixel is saved on the CE mesh and broadcast live — reload anytime, it is all still here.</p>
+  </header>
+
+  <div class="stage">
+    <div class="canvas-wrap"><canvas id="cv" width="64" height="64"></canvas></div>
+    <div class="swatch-pick"><span>color</span><div class="cur" id="curSw"></div><span id="curHex"></span></div>
+    <div class="palette" id="pal"></div>
+    <div class="bar">
+      <div class="stat"><div class="v" id="paintN">0</div><div class="k">pixels placed</div></div>
+      <div class="stat"><div class="v" id="mineN">0</div><div class="k">by you</div></div>
+      <div class="cool" id="cool">
+        <div id="coolTxt">ready</div>
+        <div class="coolbar"><i id="coolBar"></i></div>
+      </div>
+    </div>
+    <div class="hint">Cooldown keeps it civil. Drag on desktop to paint fast. The whole grid is loaded from the database on open.</div>
+  </div>
+</div>
+
+<script>
+const APP="place", N=64, COOLDOWN=900;
+const PALETTE=["#ffffff","#e9f1fb","#92a8c6","#5e768f","#1b2638","#0a1422",
+  "#ff5d72","#ffd166","#43e0a0","#37c6ff","#3b82ff","#7af0e6",
+  "#ff8fa3","#ffe08a","#7ef0bd","#a78bfa","#ff9d4d","#2f6bff"];
+const id = (localStorage.ce_id ||= Math.random().toString(36).slice(2,10));
+let color = PALETTE[9], lastPaint = 0;
+
+function wsURL(app,room){return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room;}
+function dbURL(app,key){return location.origin+"/db/"+app+(key?"/"+encodeURIComponent(key):"");}
+
+const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
+ctx.fillStyle="#04080f"; ctx.fillRect(0,0,N,N);
+const grid=new Array(N*N).fill(null);
+
+function setCell(x,y,c){ if(x<0||y<0||x>=N||y>=N)return; grid[y*N+x]=c; ctx.fillStyle=c; ctx.fillRect(x,y,1,1); }
+
+// palette UI
+const pal=document.getElementById("pal");
+PALETTE.forEach(c=>{
+  const s=document.createElement("div"); s.className="sw"; s.style.background=c;
+  if(c===color)s.classList.add("on");
+  s.onclick=()=>{ color=c; document.querySelectorAll(".sw").forEach(e=>e.classList.remove("on")); s.classList.add("on"); updateCur(); };
+  pal.appendChild(s);
+});
+function updateCur(){ document.getElementById("curSw").style.background=color; document.getElementById("curHex").textContent=color; }
+updateCur();
+
+// stats
+let total=0, mine=0;
+function bump(self){ total++; document.getElementById("paintN").textContent=total; if(self){ mine++; document.getElementById("mineN").textContent=mine; } }
+
+// cooldown
+const coolTxt=document.getElementById("coolTxt"), coolBar=document.getElementById("coolBar"), coolEl=document.getElementById("cool");
+function tickCool(){
+  const dt=Date.now()-lastPaint, left=COOLDOWN-dt;
+  if(left<=0){ coolTxt.textContent="ready"; coolEl.classList.remove("wait"); coolBar.style.transform="scaleX(1)"; }
+  else{ coolTxt.textContent=(left/1000).toFixed(1)+"s"; coolEl.classList.add("wait"); coolBar.style.transform="scaleX("+(1-left/COOLDOWN)+")"; }
+  requestAnimationFrame(tickCool);
+}
+tickCool();
+
+// painting
+let drawing=false;
+function evCell(e){
+  const r=cv.getBoundingClientRect();
+  const px=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const py=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return [Math.floor(px/r.width*N), Math.floor(py/r.height*N)];
+}
+function paintAt(x,y){
+  if(Date.now()-lastPaint<COOLDOWN) return;
+  if(x<0||y<0||x>=N||y>=N) return;
+  if(grid[y*N+x]===color) return;
+  lastPaint=Date.now();
+  setCell(x,y,color); bump(true);
+  const key="px:"+x+","+y, val={c:color,by:id,t:Date.now()};
+  fetch(dbURL(APP,key),{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(val)}).catch(()=>{});
+  if(ws.readyState===1) ws.send(JSON.stringify({t:"px",id,x,y,c:color}));
+}
+function pointerDown(e){ e.preventDefault(); drawing=true; const[x,y]=evCell(e); paintAt(x,y); }
+function pointerMove(e){ if(!drawing)return; e.preventDefault(); const[x,y]=evCell(e); paintAt(x,y); }
+function pointerUp(){ drawing=false; }
+cv.addEventListener("mousedown",pointerDown); cv.addEventListener("mousemove",pointerMove); window.addEventListener("mouseup",pointerUp);
+cv.addEventListener("touchstart",pointerDown,{passive:false}); cv.addEventListener("touchmove",pointerMove,{passive:false}); window.addEventListener("touchend",pointerUp);
+
+// hydrate from db (paginate)
+async function hydrate(){
+  let cursor=null, loaded=0;
+  for(let i=0;i<60;i++){
+    let u=dbURL(APP)+"?prefix=px:&limit=500"+(cursor?"&cursor="+encodeURIComponent(cursor):"");
+    let res; try{ res=await (await fetch(u)).json(); }catch(_){ break; }
+    const items=res.items||[];
+    for(const it of items){
+      const m=String(it.key).slice(3).split(",");
+      const x=+m[0], y=+m[1], c=it.value&&it.value.c;
+      if(Number.isFinite(x)&&Number.isFinite(y)&&c){ if(grid[y*N+x]===null) total++; setCell(x,y,c); loaded++; }
+    }
+    cursor=res.cursor||res.next||null;
+    if(!cursor||items.length===0) break;
+  }
+  document.getElementById("paintN").textContent=total;
+}
+hydrate();
+
+// realtime
+let ws, peers=new Map();
+function liveCount(){
+  const now=Date.now();
+  for(const[k,v] of peers) if(now-v>3500) peers.delete(k);
+  document.getElementById("liveN").textContent=peers.size+1;
+}
+setInterval(liveCount,1000);
+function connect(){
+  ws=new WebSocket(wsURL(APP,"main"));
+  ws.onopen=()=>ws.send(JSON.stringify({t:"join",id}));
+  ws.onmessage=e=>{
+    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    if(!m||m.id===id) return;
+    peers.set(m.id,Date.now()); liveCount();
+    if(m.t==="px" && Number.isFinite(m.x) && Number.isFinite(m.y) && m.c){ const fresh=grid[m.y*N+m.x]===null; setCell(m.x,m.y,m.c); if(fresh) bump(false); }
+  };
+  ws.onclose=()=>setTimeout(connect,1500);
+  ws.onerror=()=>{ try{ws.close();}catch(_){} };
+}
+connect();
+setInterval(()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({t:"ping",id})); },2000);
+</script>
+</body>
+</html>
