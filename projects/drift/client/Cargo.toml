@@ -1,0 +1,68 @@
+[package]
+name = "drift-client"
+version = "0.1.0"
+edition = "2021"
+description = "wgpu (WebGPU-first, WebGL2 fallback) wasm frontend for drift: renders authoritative state from drift-sim, interpolates remotes, and runs local prediction + reconciliation by stepping the same deterministic World."
+license = "MIT OR Apache-2.0"
+
+# cdylib  -> the browser instantiates the wasm-bindgen module.
+# rlib    -> lets native tooling / benchmarks link the render+predict logic.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The deterministic simulation: the SINGLE source of truth. We link it as an
+# rlib (NOT through its C-ABI) so we get the real `World::step`, `Snapshot`,
+# `Delta`, `Entity` and the quantization helpers for client-side prediction,
+# reconciliation, and authoritative-state decode.
+drift-sim = { path = "../sim" }
+
+# wgpu: WebGPU-first with an automatic WebGL2 fallback. The `webgl` feature
+# makes the wasm build probe for WebGPU and transparently fall back to a WebGL2
+# adapter when navigator.gpu is unavailable.
+wgpu = { version = "0.20", default-features = false, features = ["webgl", "wgsl"] }
+
+# Windowing / event loop that targets the browser canvas under wasm.
+winit = { version = "0.29", default-features = false, features = ["rwh_06"] }
+raw-window-handle = "0.6"
+
+# Vertex/instance buffer plumbing.
+bytemuck = { version = "1", features = ["derive"] }
+
+# Async adapter/device request inside the browser.
+pollster = "0.3"
+
+# Decoding bincode net frames produced by drift-sim::net.
+bincode = "1.3"
+
+# Logging + panic surfacing in the browser console.
+log = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+console_log = "1"
+web-sys = { version = "0.3", features = [
+  "Document",
+  "Window",
+  "Element",
+  "HtmlCanvasElement",
+  "Navigator",
+  "Gpu",
+  "Performance",
+] }
+
+# Native builds (cargo check without the wasm target, and the rlib path) still
+# need a logger backend and a blocking executor; pollster + env_logger keep the
+# crate compiling for `cargo check` on the host toolchain.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11"
+
+[profile.release]
+# Frontends are built later by an operator; keep wasm small.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

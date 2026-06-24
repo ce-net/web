@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Feedback — live threads on the CE mesh</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Post feedback, reply in threads, and upvote — live on the CE mesh. One board per project; everything is kept in the app's KV store and streams in realtime." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M5 7h22v14H13l-6 5v-5H5z' fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.15),transparent 60%),radial-gradient(50% 40% at 90% 110%,rgba(47,107,255,.13),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:720px;margin:0 auto;padding:0 16px 60px}
+a{color:inherit;text-decoration:none}
+nav{display:flex;align-items:center;gap:10px;height:56px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:18px}
+.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}
+.live{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);position:relative;flex:none}
+.dot::after{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px rgba(67,224,160,.5);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
+.live b{color:var(--text);font-weight:600}
+header{padding:26px 0 4px}
+.kick{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(26px,7vw,40px);letter-spacing:-.02em;line-height:1.08;margin:11px 0 0}
+h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);margin:11px 0 0;font-size:15px}
+.target{font-family:var(--mono);font-size:12px;color:var(--surf)}
+
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px;align-items:center}
+.bar .seg{display:inline-flex;border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.bar .seg button{font-family:var(--mono);font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:transparent;border:0;padding:8px 14px;cursor:pointer;transition:.15s}
+.bar .seg button.on{color:#021018;background:var(--grad);font-weight:700}
+.bar .sp{flex:1}
+.bar .total{font-family:var(--mono);font-size:12px;color:var(--faint)}
+
+.composer{margin-top:16px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:14px}
+.crow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.swatch{width:26px;height:26px;border-radius:8px;flex:none}
+input.fld,textarea.fld{width:100%;background:#060b14;color:var(--text);border:1px solid var(--line);border-radius:11px;font-family:var(--body);font-size:15px;padding:12px 13px;outline:none;resize:none}
+input.fld:focus,textarea.fld:focus{border-color:rgba(55,198,255,.45)}
+.nm{flex:0 0 150px}
+.msgbox{margin-top:10px}
+.crow2{display:flex;align-items:center;gap:12px;margin-top:10px}
+.count{font-family:var(--mono);font-size:12px;color:var(--faint)}
+.crow2 .sp{flex:1}
+.btn{font-family:var(--body);font-weight:700;font-size:15px;border:0;border-radius:11px;padding:11px 20px;cursor:pointer;color:#021018;background:var(--grad);transition:.16s}
+.btn:hover{transform:translateY(-1px)}.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn.ghost{color:var(--muted);background:transparent;border:1px solid var(--line);font-weight:600;font-size:13px;padding:7px 13px}
+.btn.ghost:hover{color:var(--text);border-color:rgba(116,176,255,.34);transform:none}
+
+.feed{margin-top:22px;display:flex;flex-direction:column;gap:13px}
+.thread{border:1px solid var(--line-2);border-radius:14px;background:var(--deep);padding:14px 15px;animation:in .35s cubic-bezier(.2,.8,.2,1)}
+.thread.hidden{opacity:.5}
+@keyframes in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.row{display:flex;gap:11px;align-items:flex-start}
+.vote{display:flex;flex-direction:column;align-items:center;gap:2px;flex:none;padding-top:2px}
+.vote button{background:transparent;border:1px solid var(--line);border-radius:9px;width:32px;height:30px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s;color:var(--muted)}
+.vote button:hover{border-color:rgba(55,198,255,.45);color:var(--cyan)}
+.vote button.on{color:#021018;background:var(--grad);border:0}
+.vote button svg{width:15px;height:15px}
+.vote .n{font-family:var(--mono);font-size:13px;color:var(--surf);font-weight:600}
+.main{flex:1;min-width:0}
+.meta{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+.av{width:18px;height:18px;border-radius:6px;flex:none}
+.who{font-weight:600;font-size:14px;overflow-wrap:anywhere}
+.when{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:auto;flex:none}
+.body{font-size:15.5px;color:var(--text);word-break:break-word;white-space:pre-wrap;overflow-wrap:anywhere}
+.tagline{font-family:var(--mono);font-size:11px;color:var(--cyan);margin-top:3px}
+.actions{display:flex;gap:14px;margin-top:9px;align-items:center}
+.actions a{font-family:var(--mono);font-size:12px;color:var(--faint);cursor:pointer}
+.actions a:hover{color:var(--surf)}
+.actions a.flag:hover{color:var(--bad)}
+.replies{margin:11px 0 0 14px;border-left:1px solid var(--line-2);padding-left:13px;display:flex;flex-direction:column;gap:11px}
+.reply .meta{margin-bottom:2px}
+.reply .body{font-size:14.5px}
+.replybox{margin:11px 0 0 14px;display:none}
+.replybox.open{display:block}
+.replybox textarea{font-size:14.5px}
+.empty{color:var(--faint);font-size:14px;text-align:center;padding:34px 0;font-family:var(--mono)}
+.muted-note{font-family:var(--mono);font-size:11px;color:var(--faint);font-style:italic}
+footer{border-top:1px solid var(--line-2);padding:22px 0 0;color:var(--faint);font-size:13px;margin-top:34px}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <div class="brand"><span class="ce">CE</span>&nbsp;Feedback</div>
+    <div class="sp"></div>
+    <div class="live"><span class="dot"></span><b id="liveN">1</b>&nbsp;here now</div>
+  </nav>
+
+  <header>
+    <div class="kick">feedback board / mesh</div>
+    <h1>Tell us what <em>you think.</em></h1>
+    <p class="lede">Post feedback, reply in threads, and upvote what matters — live on the CE mesh.
+      You are looking at the board for <span class="target" id="targetLabel">all projects</span>.</p>
+  </header>
+
+  <div class="bar">
+    <div class="seg" id="sortSeg">
+      <button data-sort="top" class="on">Top</button>
+      <button data-sort="new">New</button>
+    </div>
+    <div class="sp"></div>
+    <span class="total" id="total"></span>
+  </div>
+
+  <div class="composer">
+    <div class="crow">
+      <div class="swatch" id="mySw"></div>
+      <input class="fld nm" id="name" maxlength="20" placeholder="your name" />
+    </div>
+    <div class="msgbox"><textarea class="fld" id="msg" rows="2" maxlength="600" placeholder="Share feedback, an idea, or a bug…"></textarea></div>
+    <div class="crow2">
+      <span class="count" id="count">0 / 600</span>
+      <div class="sp"></div>
+      <span class="count" id="cool"></span>
+      <button class="btn" id="post">Post feedback</button>
+    </div>
+  </div>
+
+  <div class="feed" id="feed"><div class="empty" id="empty">Loading the board…</div></div>
+
+  <footer>CE &mdash; pronounced &ldquo;Sea.&rdquo; This board is a single mesh app: a <code>/rt</code> room for realtime and a
+    <code>/db</code> KV store for durability. Drop it into any project with
+    <a href="/apps/feedback/embed.js">embed.js</a>.
+    <a href="/">Home</a> &middot; <a href="/play">Play</a> &middot; <a href="/projects">Projects</a></footer>
+</div>
+
+<script>
+"use strict";
+// ------- config -------
+// One feedback app namespace; per-project boards are partitioned by a "target" key.
+// The target comes from ?target=<project> (else "global"). Keys: fb:<target>:<invTs>:<id>.
+const APP="feedback", MAXLEN=600, RATE_MS=8000, LIMIT=200, REPLY_MAX=400;
+const params=new URLSearchParams(location.search);
+function cleanTarget(t){ return String(t||"").toLowerCase().replace(/[^a-z0-9_-]/g,"").slice(0,48)||"global"; }
+const TARGET=cleanTarget(params.get("target"));
+const ROOM="t:"+TARGET; // realtime room is scoped to the target so boards don't cross-talk
+
+const id=(localStorage.ce_id ||= Math.random().toString(36).slice(2,10));
+const COLORS=["#37c6ff","#43e0a0","#ffd166","#ff5d72","#7af0e6","#3b82ff","#ff9d4d","#a78bfa","#7ef0bd","#ff8fa3"];
+function colorFor(s){ return COLORS[[...String(s)].reduce((a,c)=>a+c.charCodeAt(0),0)%COLORS.length]; }
+const myColor=colorFor(id);
+
+const $=s=>document.getElementById(s);
+function wsURL(app,room){ return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room; }
+function dbURL(app,key){ return location.origin+"/db/"+app+(key?"/"+key.split("/").map(encodeURIComponent).join("/"):""); }
+function ago(t){ const s=Math.max(0,(Date.now()-t)/1000);
+  if(s<60)return Math.floor(s)+"s ago"; if(s<3600)return Math.floor(s/60)+"m ago";
+  if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; }
+// inverse timestamp so newer keys sort first lexically (newest-first listing)
+function invTs(t){ return (9999999999999-t).toString().padStart(13,"0"); }
+
+if(TARGET!=="global"){ $("targetLabel").textContent=TARGET; }
+
+// ------- soft moderation (client-side, signal-based) -------
+// A post is hidden once its flags-minus-score crosses a threshold; authors can hide their own.
+// This is "soft": nothing is deleted from the store, it is just visually collapsed by default.
+const HIDE_THRESHOLD=4;
+function isHidden(t){
+  if(t.del) return true;                       // author soft-deleted
+  const flags=Object.keys(t.flags||{}).length;
+  const ups=Object.keys(t.up||{}).length;
+  return (flags-ups)>=HIDE_THRESHOLD;
+}
+
+// ------- state -------
+const threads=new Map();   // tid -> thread object {id,by,name,col,body,t,up:{},flags:{},del,replies:Map}
+let sort="top";
+let revealed=new Set();     // tids the local user chose to reveal
+
+// ------- composer wiring -------
+$("mySw").style.background=myColor;
+const nameEl=$("name"), msgEl=$("msg"), countEl=$("count"), postBtn=$("post"), coolEl=$("cool"), feedEl=$("feed");
+nameEl.value=localStorage.ce_name||("guest-"+id.slice(0,3));
+nameEl.oninput=()=>localStorage.ce_name=nameEl.value;
+msgEl.oninput=()=>{ countEl.textContent=msgEl.value.length+" / "+MAXLEN; };
+
+$("sortSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b)return;
+  sort=b.dataset.sort;
+  [...$("sortSeg").children].forEach(x=>x.classList.toggle("on",x===b));
+  renderAll();
+});
+
+// ------- rendering (DOM construction; textContent everywhere user data flows = XSS-safe) -------
+function score(t){ return Object.keys(t.up||{}).length; }
+
+function buildReply(tid,r){
+  const wrap=document.createElement("div"); wrap.className="reply";
+  const meta=document.createElement("div"); meta.className="meta";
+  const av=document.createElement("span"); av.className="av"; av.style.background=r.col||colorFor(r.by||r.name); meta.appendChild(av);
+  const who=document.createElement("span"); who.className="who"; who.textContent=r.name||"anon"; meta.appendChild(who);
+  const when=document.createElement("span"); when.className="when"; when.dataset.t=r.t; when.textContent=ago(r.t); meta.appendChild(when);
+  wrap.appendChild(meta);
+  const body=document.createElement("div"); body.className="body"; body.textContent=r.body; wrap.appendChild(body);
+  return wrap;
+}
+
+function buildThread(t){
+  const el=document.createElement("div");
+  el.className="thread"; el.dataset.tid=t.id; el.dataset.t=t.t; el.dataset.score=score(t);
+
+  const hidden=isHidden(t)&&!revealed.has(t.id);
+  if(hidden) el.classList.add("hidden");
+
+  const row=document.createElement("div"); row.className="row";
+
+  // vote column
+  const vote=document.createElement("div"); vote.className="vote";
+  const vbtn=document.createElement("button");
+  const voted=!!(t.up&&t.up[id]);
+  if(voted) vbtn.classList.add("on");
+  vbtn.title="Upvote";
+  vbtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 11l6-6 6 6"/></svg>';
+  vbtn.addEventListener("click",()=>toggleUp(t.id));
+  vote.appendChild(vbtn);
+  const n=document.createElement("span"); n.className="n"; n.textContent=String(score(t)); vote.appendChild(n);
+  row.appendChild(vote);
+
+  // main column
+  const main=document.createElement("div"); main.className="main";
+  const meta=document.createElement("div"); meta.className="meta";
+  const av=document.createElement("span"); av.className="av"; av.style.background=t.col||colorFor(t.by||t.name); meta.appendChild(av);
+  const who=document.createElement("span"); who.className="who"; who.textContent=t.name||"anon"; meta.appendChild(who);
+  const when=document.createElement("span"); when.className="when"; when.dataset.t=t.t; when.textContent=ago(t.t); meta.appendChild(when);
+  main.appendChild(meta);
+
+  if(hidden){
+    const note=document.createElement("div"); note.className="muted-note";
+    note.textContent=t.del?"Hidden by author.":"Hidden by the community.";
+    main.appendChild(note);
+    const reveal=document.createElement("div"); reveal.className="actions";
+    const a=document.createElement("a"); a.textContent="Show anyway"; a.addEventListener("click",()=>{ revealed.add(t.id); renderAll(); });
+    reveal.appendChild(a); main.appendChild(reveal);
+  }else{
+    const body=document.createElement("div"); body.className="body"; body.textContent=t.body; main.appendChild(body);
+
+    const actions=document.createElement("div"); actions.className="actions";
+    const cnt=t.replies?t.replies.size:0;
+    const replyA=document.createElement("a"); replyA.textContent=cnt?("Reply ("+cnt+")"):"Reply";
+    replyA.addEventListener("click",()=>toggleReplyBox(t.id));
+    actions.appendChild(replyA);
+    const flagA=document.createElement("a"); flagA.className="flag";
+    const flagged=!!(t.flags&&t.flags[id]);
+    flagA.textContent=flagged?"Flagged":"Flag";
+    flagA.addEventListener("click",()=>flag(t.id));
+    actions.appendChild(flagA);
+    if(t.by===id && !t.del){
+      const delA=document.createElement("a"); delA.className="flag"; delA.textContent="Hide mine";
+      delA.addEventListener("click",()=>softDelete(t.id));
+      actions.appendChild(delA);
+    }
+    main.appendChild(actions);
+
+    // replies
+    if(cnt){
+      const rep=document.createElement("div"); rep.className="replies";
+      [...t.replies.values()].sort((a,b)=>(a.t||0)-(b.t||0)).forEach(r=>rep.appendChild(buildReply(t.id,r)));
+      main.appendChild(rep);
+    }
+    // reply composer (hidden until toggled)
+    const rb=document.createElement("div"); rb.className="replybox"; rb.dataset.tid=t.id;
+    const ta=document.createElement("textarea"); ta.className="fld"; ta.rows=2; ta.maxLength=REPLY_MAX; ta.placeholder="Write a reply…";
+    rb.appendChild(ta);
+    const crow=document.createElement("div"); crow.className="crow2"; crow.style.marginTop="8px";
+    const sp=document.createElement("div"); sp.className="sp"; crow.appendChild(sp);
+    const send=document.createElement("button"); send.className="btn ghost"; send.textContent="Send reply";
+    send.addEventListener("click",()=>{ if(sendReply(t.id,ta.value)) ta.value=""; });
+    crow.appendChild(send);
+    rb.appendChild(crow);
+    main.appendChild(rb);
+  }
+  row.appendChild(main);
+  el.appendChild(row);
+  return el;
+}
+
+function compare(a,b){
+  if(sort==="new") return (b.t||0)-(a.t||0);
+  const d=score(b)-score(a); return d!==0?d:(b.t||0)-(a.t||0);
+}
+
+function renderAll(){
+  const emp=$("empty"); if(emp)emp.remove();
+  feedEl.textContent="";
+  const list=[...threads.values()].sort(compare);
+  const visible=list.filter(t=>!isHidden(t)||revealed.has(t.id)).length;
+  $("total").textContent=list.length?(visible+" post"+(visible===1?"":"s")):"";
+  if(!list.length){
+    const e=document.createElement("div"); e.className="empty";
+    e.textContent="No feedback yet. Be the first to post.";
+    feedEl.appendChild(e); return;
+  }
+  list.slice(0,LIMIT).forEach(t=>feedEl.appendChild(buildThread(t)));
+}
+
+setInterval(()=>{ feedEl.querySelectorAll(".when").forEach(w=>w.textContent=ago(+w.dataset.t)); },20000);
+
+function toggleReplyBox(tid){
+  const box=feedEl.querySelector('.replybox[data-tid="'+CSS.escape(tid)+'"]');
+  if(box){ box.classList.toggle("open"); const ta=box.querySelector("textarea"); if(box.classList.contains("open")&&ta) ta.focus(); }
+}
+
+// ------- mutations -------
+function upsertThread(m){
+  let t=threads.get(m.id);
+  if(!t){ t={id:m.id,by:m.by,name:m.name,col:m.col,body:m.body,t:m.t,up:{},flags:{},del:false,replies:new Map()}; threads.set(m.id,t); }
+  else { // keep first-seen authorship; allow body only if it was empty
+    if(!t.body && m.body){ t.body=m.body; t.by=m.by; t.name=m.name; t.col=m.col; t.t=m.t; }
+  }
+  return t;
+}
+function applyUp(tid,voter,on){ const t=threads.get(tid); if(!t)return; t.up=t.up||{}; if(on)t.up[voter]=1; else delete t.up[voter]; }
+function applyFlag(tid,who,on){ const t=threads.get(tid); if(!t)return; t.flags=t.flags||{}; if(on)t.flags[who]=1; else delete t.flags[who]; }
+function applyDel(tid){ const t=threads.get(tid); if(t)t.del=true; }
+function applyReply(r){ const t=threads.get(r.tid); if(!t)return; if(!t.replies.has(r.id)) t.replies.set(r.id,r); }
+
+// ------- network helpers -------
+function send(o){ if(ws&&ws.readyState===1){ try{ ws.send(JSON.stringify(o)); }catch(_){} } }
+async function dbPut(key,val){ try{ await fetch(dbURL(APP,key),{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(val)}); }catch(_){} }
+
+// ------- post feedback -------
+let last=parseInt(localStorage["ce_fb_last_"+TARGET]||"0",10);
+function refreshCool(){
+  const left=RATE_MS-(Date.now()-last);
+  if(left>0){ postBtn.disabled=true; coolEl.textContent="wait "+Math.ceil(left/1000)+"s"; }
+  else{ postBtn.disabled=false; coolEl.textContent=""; }
+}
+setInterval(refreshCool,300); refreshCool();
+
+async function post(){
+  const body=msgEl.value.trim().slice(0,MAXLEN);
+  const name=(nameEl.value.trim()||("guest-"+id.slice(0,3))).slice(0,20);
+  if(!body) return;
+  if(Date.now()-last<RATE_MS) return;
+  last=Date.now(); localStorage["ce_fb_last_"+TARGET]=String(last); localStorage.ce_name=name; refreshCool();
+  const tid=id+":"+last.toString(36);
+  const m={kind:"fb",target:TARGET,id:tid,by:id,name,col:myColor,body,t:last};
+  upsertThread(m); renderAll();
+  msgEl.value=""; countEl.textContent="0 / "+MAXLEN;
+  await dbPut("fb:"+TARGET+":"+invTs(last)+":"+id, m);
+  send({t:"fb",...m});
+}
+postBtn.onclick=post;
+msgEl.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") post(); });
+
+// ------- reply -------
+function sendReply(tid,raw){
+  const body=String(raw||"").trim().slice(0,REPLY_MAX);
+  if(!body) return false;
+  const name=(nameEl.value.trim()||("guest-"+id.slice(0,3))).slice(0,20);
+  const t=Date.now();
+  const rid=id+":"+t.toString(36);
+  const r={kind:"reply",target:TARGET,tid,id:rid,by:id,name,col:colorFor(id),body,t};
+  applyReply(r); renderAll();
+  dbPut("rp:"+TARGET+":"+tid+":"+invTs(t)+":"+id, r);
+  send({t:"reply",...r});
+  return true;
+}
+
+// ------- upvote (one per identity; toggle) -------
+function toggleUp(tid){
+  const t=threads.get(tid); if(!t)return;
+  const on=!(t.up&&t.up[id]);
+  applyUp(tid,id,on); renderAll();
+  // votes persist as their own keyed records so a recount survives reloads
+  dbPut("vt:"+TARGET+":"+tid+":"+id, on?{kind:"vote",target:TARGET,tid,by:id,on:true,t:Date.now()}:{kind:"vote",target:TARGET,tid,by:id,on:false,t:Date.now()});
+  send({t:"vote",target:TARGET,tid,by:id,on});
+}
+
+// ------- flag / soft-delete -------
+function flag(tid){
+  const t=threads.get(tid); if(!t)return;
+  const on=!(t.flags&&t.flags[id]);
+  applyFlag(tid,id,on); renderAll();
+  dbPut("fl:"+TARGET+":"+tid+":"+id, {kind:"flag",target:TARGET,tid,by:id,on,t:Date.now()});
+  send({t:"flag",target:TARGET,tid,by:id,on});
+}
+function softDelete(tid){
+  const t=threads.get(tid); if(!t||t.by!==id)return;
+  applyDel(tid); renderAll();
+  dbPut("dl:"+TARGET+":"+tid+":"+id, {kind:"del",target:TARGET,tid,by:id,t:Date.now()});
+  send({t:"del",target:TARGET,tid,by:id});
+}
+
+// ------- hydrate from the KV store -------
+async function hydrate(){
+  async function list(prefix){
+    try{ const r=await (await fetch(dbURL(APP)+"?prefix="+encodeURIComponent(prefix)+"&limit=1000")).json();
+      return (r.items||[]).map(it=>it.value).filter(Boolean); }
+    catch(_){ return []; }
+  }
+  const [posts,replies,votes,flags,dels]=await Promise.all([
+    list("fb:"+TARGET+":"), list("rp:"+TARGET+":"), list("vt:"+TARGET+":"), list("fl:"+TARGET+":"), list("dl:"+TARGET+":")
+  ]);
+  posts.forEach(m=>upsertThread(m));
+  replies.forEach(r=>applyReply(r));
+  votes.forEach(v=>applyUp(v.tid,v.by,!!v.on));
+  flags.forEach(f=>applyFlag(f.tid,f.by,!!f.on));
+  dels.forEach(d=>applyDel(d.tid));
+  renderAll();
+}
+hydrate();
+
+// ------- realtime -------
+let ws; const peers=new Map();
+function liveCount(){ const now=Date.now(); for(const[k,v] of peers) if(now-v>3500) peers.delete(k); $("liveN").textContent=peers.size+1; }
+setInterval(liveCount,1000);
+
+function onFrame(m){
+  if(!m||typeof m!=="object")return;
+  const from = typeof m.by==="string" ? m.by : m.id;
+  if(from && from!==id){ peers.set(from,Date.now()); liveCount(); }
+  switch(m.t){
+    case "fb":   if(m.id&&m.body){ upsertThread(m); renderAll(); } break;
+    case "reply":if(m.tid&&m.id&&m.body){ applyReply(m); renderAll(); } break;
+    case "vote": if(m.tid&&m.by){ applyUp(m.tid,m.by,!!m.on); renderAll(); } break;
+    case "flag": if(m.tid&&m.by){ applyFlag(m.tid,m.by,!!m.on); renderAll(); } break;
+    case "del":  if(m.tid){ applyDel(m.tid); renderAll(); } break;
+  }
+}
+function connect(){
+  ws=new WebSocket(wsURL(APP,ROOM));
+  ws.onopen=()=>send({t:"join",id});
+  ws.onmessage=e=>{ let m; try{ m=JSON.parse(e.data); }catch(_){ return; } onFrame(m); };
+  ws.onclose=()=>setTimeout(connect,1500);
+  ws.onerror=()=>{ try{ws.close();}catch(_){} };
+}
+connect();
+setInterval(()=>send({t:"ping",id}),2000);
+</script>
+</body>
+</html>

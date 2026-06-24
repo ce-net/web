@@ -1,0 +1,18 @@
+# Files NOT shipped to the live drift ce-app (browser bundle only).
+# .ceignore is honored by ce-app's planned ignore support; the canonical, works-today
+# path is `node stage.mjs` which assembles a clean ./out and is what README documents.
+sim/
+client/
+host.mjs
+host-wasm.js
+stage.mjs
+ce.json
+ce-app.json
+README.md
+node_modules/
+.ce/
+target/
+*.rs
+Cargo.toml
+Cargo.lock
+Trunk.toml

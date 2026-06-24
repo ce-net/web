@@ -1,0 +1,27 @@
+# Trunk build config for the drift-client wasm frontend.
+#
+# This is consumed LATER by an operator / ce-app build step. It is intentionally
+# NOT run here (a release/trunk build is too disk-heavy for this environment).
+#
+# Build (operator):
+#   cd web/projects/drift/client
+#   trunk build --release
+# Output lands in ./dist (drift-client_bg.wasm + JS glue + index.html), which the
+# drift runtime (web/projects/drift/) bundles into its ce-app and serves.
+#
+# Alternatively, wasm-pack (no index.html needed):
+#   wasm-pack build --release --target web --out-dir pkg
+# emits pkg/drift_client.js + drift_client_bg.wasm that drift.js imports directly.
+
+[build]
+target = "index.html"
+dist = "dist"
+# Keep the wasm small; the heavy pipeline runs later.
+release = true
+
+[tools]
+# Pin nothing here; the operator's toolchain provides wasm-bindgen + wasm-opt.
+
+[serve]
+# `trunk serve` for local dev only. Production is served by the ce-app/hub.
+port = 8082

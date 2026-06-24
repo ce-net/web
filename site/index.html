@@ -100,6 +100,13 @@ h1 em{font-style:italic;font-weight:500;background:var(--grad);-webkit-backgroun
   border-top:1px solid var(--line-2)}
 .gauge .v{font-family:var(--display);font-weight:600;font-size:23px;letter-spacing:-.01em;font-optical-sizing:auto}
 .gauge .k{font-family:var(--mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin-top:1px}
+/* browser-task metrics — self-reported, best-effort; held visually apart from chain/credit numbers, never summed with them */
+.taskmetrics{display:flex;flex-wrap:wrap;align-items:center;gap:18px 30px;margin-top:18px;padding:16px 18px;
+  border:1px solid var(--line-2);border-radius:13px;background:rgba(122,240,255,.03)}
+.taskmetrics .tm-note{flex:1 1 100%;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);
+  display:inline-flex;align-items:center;gap:8px}
+.taskmetrics .tm-note .dot{width:6px;height:6px;border-radius:50%;background:var(--surf);flex:none}
+.gauge .v.tm{background:none;-webkit-text-fill-color:initial;color:var(--surf)}
 .sonar{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:13px;color:var(--muted)}
 .ping{position:relative;width:9px;height:9px;border-radius:50%;background:#324b63;flex:none}
 .ping.on{background:var(--surf)}
@@ -281,6 +288,12 @@ footer .row{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
       <div class="gauge"><div class="v" id="g-perf">—</div><div class="k">perf score</div></div>
       <div class="gauge"><div class="v">~10s</div><div class="k">block time</div></div>
       <div class="gauge"><div class="v">21B</div><div class="k">credit cap</div></div>
+    </div>
+
+    <div class="taskmetrics rv d5" role="group" aria-label="Browser-task metrics — self-reported, best-effort">
+      <span class="tm-note"><span class="dot" aria-hidden="true"></span>browser-task metrics — self-reported, best-effort · not the chain/credit economy</span>
+      <div class="gauge"><div class="v tm" id="g-tasks">—</div><div class="k">tasks run</div></div>
+      <div class="gauge"><div class="v tm" id="g-compute">—</div><div class="k">compute distributed</div></div>
     </div>
   </div>
 </header>
@@ -538,7 +551,15 @@ document.querySelectorAll('[data-copy]').forEach(b=>{
   const fmtInt=n=>(+n||0).toLocaleString();
   const fmtGB=g=>{g=+g||0;return g>=1024?(g/1024).toFixed(1)+'TB':(g>=1?Math.round(g):g.toFixed(1))+'GB';};
   const fmtScore=n=>{n=+n||0;return n>=1000?(n/1000).toFixed(1)+'k':Math.round(n);};
-  const blank=()=>['g-cores','g-ram','g-gpu','g-vram','g-store','g-perf'].forEach(id=>set(id,'—'));
+  // human-readable compute time from milliseconds: ms -> seconds -> minutes -> hours -> days -> years
+  const fmtDur=ms=>{ms=Math.max(0,+ms||0);
+    if(ms<1000)return Math.round(ms)+'ms';
+    const s=ms/1000;if(s<60)return (s<10?s.toFixed(1):Math.round(s))+'s';
+    const m=s/60;if(m<60)return (m<10?m.toFixed(1):Math.round(m))+'min';
+    const h=m/60;if(h<24)return (h<10?h.toFixed(1):Math.round(h))+'h';
+    const d=h/24;if(d<365)return (d<10?d.toFixed(1):Math.round(d))+'d';
+    const y=d/365;return (y<10?y.toFixed(1):Math.round(y))+'yr';};
+  const blank=()=>['g-cores','g-ram','g-gpu','g-vram','g-store','g-perf','g-tasks','g-compute'].forEach(id=>set(id,'—'));
   async function tick(){
     try{
       const r=await fetch('/hub/stats',{cache:'no-store'});
@@ -551,6 +572,8 @@ document.querySelectorAll('[data-copy]').forEach(b=>{
         set('g-vram',s.gpu_vram_gb?fmtGB(s.gpu_vram_gb):'—');
         set('g-store',fmtGB(s.storage_gb));
         set('g-perf',s.perf_score?fmtScore(s.perf_score):'—');
+        set('g-tasks',fmtInt(s.tasks_run));
+        set('g-compute',s.compute_distributed_ms!=null?fmtDur(s.compute_distributed_ms):'—');
         return;}
       throw 0;
     }catch(e){

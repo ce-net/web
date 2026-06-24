@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Projects — the public registry on CE</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="The public registry of apps and projects shipped to the CE network — searchable, tagged, with live hosting badges and room counts straight from the mesh." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3Cpath d='M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.16),transparent 60%),radial-gradient(55% 42% at 95% 108%,rgba(47,107,255,.13),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:0 20px}
+a{color:inherit;text-decoration:none}
+nav{display:flex;align-items:center;gap:14px;height:60px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:19px}
+.brand svg{width:24px;height:24px}.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}nav a.lnk{color:var(--muted);font-size:14px;font-weight:500}nav a.lnk:hover{color:var(--text)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;font-size:15px;border-radius:11px;padding:11px 17px;cursor:pointer;border:1px solid var(--line);color:var(--text);background:rgba(116,176,255,.05);transition:.18s;font-family:var(--body);white-space:nowrap}
+.btn:hover{border-color:rgba(116,176,255,.34);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn.primary{border:0;color:#021018;font-weight:700;background:var(--grad)}
+.btn.sm{font-size:13px;padding:8px 13px;border-radius:9px}
+.btn.big{font-size:17px;padding:14px 24px;border-radius:13px}
+
+header{padding:38px 0 10px}
+.kick{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);display:inline-flex;align-items:center;gap:9px}
+.live{width:9px;height:9px;border-radius:50%;background:#324b63}.live.on{background:var(--ok);animation:pp 2s infinite}
+@keyframes pp{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(32px,7vw,50px);letter-spacing:-.02em;line-height:1.04;margin:12px 0 0}
+h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);margin:14px 0 0;max-width:62ch}
+
+.tools{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:26px 0 6px}
+.search{position:relative;flex:1;min-width:240px}
+.search input{width:100%;font-family:var(--body);font-size:15px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px 12px 40px;outline:none;transition:.18s}
+.search input:focus{border-color:rgba(116,176,255,.4)}
+.search svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);width:18px;height:18px;opacity:.6}
+.count{font-family:var(--mono);font-size:13px;color:var(--muted);display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.count b{color:var(--surf);font-weight:600}
+
+.tagbar{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0}
+.chip{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:5px 12px;cursor:pointer;background:rgba(116,176,255,.04);transition:.15s;user-select:none}
+.chip:hover{border-color:rgba(116,176,255,.34);color:var(--text)}
+.chip.on{color:#021018;background:var(--grad);border:0;font-weight:700}
+
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:20px}
+.card{position:relative;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));overflow:hidden;display:flex;flex-direction:column;transition:.18s;min-width:0}
+.card:hover{border-color:rgba(116,176,255,.3);transform:translateY(-2px)}
+.shot{position:relative;aspect-ratio:16/9;background:#060d18;overflow:hidden;border-bottom:1px solid var(--line-2)}
+.shot img{width:100%;height:100%;object-fit:cover;display:block}
+.shot .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(60% 60% at 50% 40%,rgba(55,198,255,.12),transparent 70%)}
+.shot .ph svg{width:46px;height:46px;opacity:.5}
+.badge{position:absolute;top:10px;right:10px;font-family:var(--mono);font-size:11px;letter-spacing:.04em;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;background:rgba(3,6,14,.72);border:1px solid var(--line);color:var(--faint);backdrop-filter:blur(6px)}
+.badge .dot{width:7px;height:7px;border-radius:50%;background:#324b63;flex:none}
+.badge.live{color:var(--surf);border-color:rgba(67,224,160,.4)}
+.badge.live .dot{background:var(--ok);animation:pp 2s infinite}
+.body{padding:16px 17px 18px;display:flex;flex-direction:column;flex:1;min-width:0}
+.card h3{font-family:var(--display);font-weight:600;font-size:19px;margin:0;letter-spacing:-.01em;overflow-wrap:anywhere}
+.card .desc{color:var(--muted);font-size:14px;margin:9px 0 0;flex:1;overflow-wrap:anywhere}
+.card .tags{display:flex;flex-wrap:wrap;gap:6px;margin:13px 0 0}
+.card .tags span{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--cyan);border:1px solid var(--line);border-radius:99px;padding:2px 8px}
+.card .foot{display:flex;align-items:center;gap:10px;margin-top:16px}
+.card .meta{font-family:var(--mono);font-size:12px;color:var(--faint);display:inline-flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .meta b{color:var(--surf);font-weight:600}
+.card .open{margin-left:auto}
+
+.state{margin:40px 0;text-align:center;color:var(--muted);font-size:15px}
+.state.err{color:var(--bad)}
+.skel{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:20px}
+.skel .s{border:1px solid var(--line-2);border-radius:16px;height:300px;background:linear-gradient(100deg,var(--panel),#0c182a 50%,var(--panel));background-size:200% 100%;animation:sh 1.4s linear infinite}
+@keyframes sh{to{background-position:-200% 0}}
+
+.build{margin-top:26px;border:1px solid var(--line);border-radius:16px;background:var(--panel);padding:22px 20px;display:flex;flex-wrap:wrap;align-items:center;gap:16px}
+.build .txt{min-width:240px;flex:1}
+.build h3{font-family:var(--display);font-weight:600;font-size:20px;margin:0 0 6px;letter-spacing:-.01em}
+.build p{color:var(--muted);font-size:14px;margin:0;max-width:62ch}
+.build .acts{display:flex;gap:10px;flex-wrap:wrap}
+.build code{font-family:var(--mono);background:var(--deep);border:1px solid var(--line-2);border-radius:5px;padding:1px 6px;color:#cfe9ff;font-size:13px}
+
+footer{border-top:1px solid var(--line-2);padding:26px 0 60px;color:var(--faint);font-size:13px;margin-top:46px}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="/"><svg viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg><span class="ce">ce</span></a>
+    <div class="sp"></div>
+    <a class="lnk" href="/play">Play</a>
+    <a class="lnk" href="/network">Network</a>
+    <a class="lnk" href="/deploy">Deploy</a>
+  </nav>
+
+  <header>
+    <span class="kick"><span class="live" id="live"></span><span id="livetxt">public registry</span></span>
+    <h1>Everything shipped to <em>the mesh.</em></h1>
+    <p class="lede">A live, public registry of apps and projects running on the CE network. Each card routes straight to the
+      project's own site, with a hosting badge and room count sampled directly from the mesh. Search and filter to find your thing.</p>
+    <div class="tools">
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#92a8c6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="q" type="search" placeholder="Search projects, tags, descriptions…" autocomplete="off" spellcheck="false" />
+      </label>
+      <span class="count" id="count"><span class="pulse"></span><span>loading…</span></span>
+    </div>
+    <div class="tagbar" id="tagbar"></div>
+  </header>
+
+  <div id="content">
+    <div class="skel"><div class="s"></div><div class="s"></div><div class="s"></div><div class="s"></div><div class="s"></div><div class="s"></div></div>
+  </div>
+
+  <div class="build">
+    <div class="txt">
+      <h3>Ship your own to the registry.</h3>
+      <p>Build a single-file mesh app, deploy it, then publish it with the CE platform CLI:
+        <code>ce-app publish</code>. It claims your <code>slug</code>, pins screenshots, and lists your project here — signed by your node identity.</p>
+    </div>
+    <div class="acts">
+      <a class="btn primary" href="/deploy">Deploy an app &rarr;</a>
+      <a class="btn" href="/play">See live demos</a>
+    </div>
+  </div>
+
+  <footer>CE &mdash; pronounced &ldquo;Sea.&rdquo; The registry is served live from the hub; hosting badges and room counts are sampled from the mesh.
+    <a href="/">Home</a> &middot; <a href="/play">Play</a> &middot; <a href="/network">Network</a> &middot; <a href="https://github.com/ce-net/ce">GitHub</a></footer>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+
+// Generic project glyph — inline SVG, no emojis, used when a project has no screenshot.
+const GLYPH='<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18M7 18v2M17 18v2M5 20h14"/></svg>';
+
+// Resolve a screenshot blob hash to its hub URL. Hashes are opaque hex; encode defensively.
+function shotUrl(hash){ return 'https://ce-net.com/blobs/'+encodeURIComponent(String(hash)); }
+
+// Resolve the destination site for a project card.
+// Priority: explicit site -> slug subdomain note -> hosted app path -> play page.
+function projectUrl(p){
+  if(p.site && /^https?:\/\//i.test(p.site)) return p.site;
+  const app = (p.app_id||'').trim();
+  if(app) return 'https://ce-net.com/apps/'+encodeURIComponent(app)+'/';
+  const slug = (p.slug||'').trim();
+  if(slug) return 'https://ce-net.com/apps/'+encodeURIComponent(slug)+'/';
+  return '/play';
+}
+
+let ALL=[];          // all fetched projects
+let activeTags=new Set();
+let query='';
+
+function ago(unix){
+  if(!unix) return '';
+  const s=Math.max(0,Math.floor(Date.now()/1000-Number(unix)));
+  if(s<60) return 'just now';
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
+  if(s<2592000) return Math.floor(s/86400)+'d ago';
+  return Math.floor(s/2592000)+'mo ago';
+}
+
+// Build a card element with textContent everywhere user data flows — XSS-safe by construction.
+function buildCard(p){
+  const card=document.createElement('a');
+  card.className='card';
+  card.href=projectUrl(p);
+  card.rel='noopener';
+
+  const shot=document.createElement('div');
+  shot.className='shot';
+  const firstShot=Array.isArray(p.screenshots)&&p.screenshots.length?p.screenshots[0]:null;
+  if(firstShot){
+    const img=document.createElement('img');
+    img.loading='lazy';
+    img.alt=(p.title||'project')+' screenshot';
+    img.src=shotUrl(firstShot);
+    // On a broken/evicted blob, fall back to the placeholder glyph.
+    img.addEventListener('error',()=>{
+      img.remove();
+      const ph=document.createElement('div');
+      ph.className='ph'; ph.innerHTML=GLYPH;
+      shot.appendChild(ph);
+    });
+    shot.appendChild(img);
+  }else{
+    const ph=document.createElement('div');
+    ph.className='ph'; ph.innerHTML=GLYPH;
+    shot.appendChild(ph);
+  }
+  // Live/hosted badge.
+  const badge=document.createElement('span');
+  const live=!!p.hosted;
+  const rooms=Number(p.rooms||0);
+  badge.className='badge'+(live?' live':'');
+  const bdot=document.createElement('span'); bdot.className='dot'; badge.appendChild(bdot);
+  const btxt=document.createElement('span');
+  btxt.textContent=live?(rooms>0?(rooms+' room'+(rooms===1?'':'s')+' live'):'hosted'):'offline';
+  badge.appendChild(btxt);
+  shot.appendChild(badge);
+  card.appendChild(shot);
+
+  const body=document.createElement('div'); body.className='body';
+  const h3=document.createElement('h3');
+  h3.textContent=(p.title&&p.title.trim())||(p.slug||'untitled');
+  body.appendChild(h3);
+
+  const desc=document.createElement('p'); desc.className='desc';
+  desc.textContent=(p.desc&&p.desc.trim())||'A project on the CE network.';
+  body.appendChild(desc);
+
+  if(Array.isArray(p.tags)&&p.tags.length){
+    const tags=document.createElement('div'); tags.className='tags';
+    p.tags.slice(0,6).forEach(t=>{
+      const s=document.createElement('span'); s.textContent=String(t); tags.appendChild(s);
+    });
+    body.appendChild(tags);
+  }
+
+  const foot=document.createElement('div'); foot.className='foot';
+  const meta=document.createElement('span'); meta.className='meta';
+  const updated=ago(p.updated_unix);
+  if(updated){ meta.textContent=updated; }
+  else if(p.slug){ meta.textContent=String(p.slug); }
+  foot.appendChild(meta);
+
+  const open=document.createElement('span');
+  open.className='btn sm open';
+  open.textContent=live?'Open →':'View →';
+  foot.appendChild(open);
+  body.appendChild(foot);
+
+  card.appendChild(body);
+  return card;
+}
+
+function matches(p){
+  if(activeTags.size){
+    const pt=(p.tags||[]).map(t=>String(t).toLowerCase());
+    for(const t of activeTags){ if(!pt.includes(t)) return false; }
+  }
+  if(query){
+    const hay=[p.title,p.desc,p.slug,p.app_id,(p.tags||[]).join(' ')].join(' ').toLowerCase();
+    if(!hay.includes(query)) return false;
+  }
+  return true;
+}
+
+function renderTags(){
+  const bar=$('tagbar');
+  bar.textContent='';
+  const counts=new Map();
+  ALL.forEach(p=>(p.tags||[]).forEach(t=>{
+    const k=String(t).toLowerCase();
+    counts.set(k,(counts.get(k)||0)+1);
+  }));
+  const sorted=[...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,16);
+  sorted.forEach(([t])=>{
+    const chip=document.createElement('span');
+    chip.className='chip'+(activeTags.has(t)?' on':'');
+    chip.textContent=t;
+    chip.addEventListener('click',()=>{
+      if(activeTags.has(t)) activeTags.delete(t); else activeTags.add(t);
+      renderTags(); renderList();
+    });
+    bar.appendChild(chip);
+  });
+}
+
+function renderList(){
+  const content=$('content');
+  content.textContent='';
+  const shown=ALL.filter(matches);
+  const live=shown.filter(p=>p.hosted).length;
+  const c=$('count');
+  c.textContent='';
+  const cb=document.createElement('b'); cb.textContent=String(shown.length);
+  c.appendChild(cb);
+  c.appendChild(document.createTextNode(' project'+(shown.length===1?'':'s')+(live?(' · '+live+' live'):'')));
+
+  if(!shown.length){
+    const st=document.createElement('div'); st.className='state';
+    st.textContent=ALL.length?'No projects match your search.':'No projects published yet. Be the first to ship one.';
+    content.appendChild(st);
+    return;
+  }
+  const grid=document.createElement('div'); grid.className='gallery';
+  shown.forEach(p=>grid.appendChild(buildCard(p)));
+  content.appendChild(grid);
+}
+
+function showError(msg){
+  $('content').textContent='';
+  const st=document.createElement('div'); st.className='state err';
+  st.textContent=msg;
+  $('content').appendChild(st);
+  const c=$('count'); c.textContent='registry unavailable';
+}
+
+async function load(){
+  try{
+    const res=await fetch('https://ce-net.com/registry',{headers:{'accept':'application/json'}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const list=Array.isArray(data)?data:(data&&Array.isArray(data.projects)?data.projects:[]);
+    ALL=list.filter(p=>p&&typeof p==='object');
+    if(ALL.some(p=>p.hosted)) $('live').className='live on';
+    renderTags();
+    renderList();
+  }catch(e){
+    showError('Could not reach the registry. It may be starting up — try again shortly.');
+  }
+}
+
+let qt;
+$('q').addEventListener('input',e=>{
+  clearTimeout(qt);
+  qt=setTimeout(()=>{ query=e.target.value.trim().toLowerCase(); renderList(); },120);
+});
+
+load();
+setInterval(load,30000); // refresh live badges/room counts
+</script>
+</body>
+</html>

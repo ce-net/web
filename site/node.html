@@ -269,10 +269,53 @@ const log=(html,cls='')=>{const d=$('log');const t=new Date().toLocaleTimeString
   d.prepend(e);while(d.children.length>80)d.removeChild(d.lastChild);};
 
 // ---- identity ----
+// Legacy random 32-byte hex id (kept as a fallback when Ed25519 WebCrypto is unavailable, and as
+// the displayed short id before the keypair is ready).
 function nodeId(){let id=localStorage.getItem('ce_node_id');
   if(!id){const b=new Uint8Array(32);crypto.getRandomValues(b);id=[...b].map(x=>x.toString(16).padStart(2,'0')).join('');localStorage.setItem('ce_node_id',id);}
   return id;}
 const ID=nodeId();
+
+// Signed identity (CONTRACT): an Ed25519 keypair generated via WebCrypto and persisted in
+// localStorage as exported JWKs. On the hub's challenge we sign the nonce and announce the public
+// key as our node id, so flags and trust are keyed to a stable verifiable identity (not an ip).
+// If WebCrypto Ed25519 is unavailable we fall back to the legacy random-id hello transparently.
+const hex=u8=>[...u8].map(x=>x.toString(16).padStart(2,'0')).join('');
+const fromHex=h=>{const a=new Uint8Array(h.length/2);for(let i=0;i<a.length;i++)a[i]=parseInt(h.substr(i*2,2),16);return a;};
+let SIGNER=null; // {keys:CryptoKeyPair, idHex:string} once ready, else null (legacy mode)
+async function loadSigner(){
+  if(!(crypto&&crypto.subtle&&crypto.subtle.sign))return null;
+  try{
+    let pubJwk=null,privJwk=null;
+    try{pubJwk=JSON.parse(localStorage.getItem('ce_ed25519_pub')||'null');
+        privJwk=JSON.parse(localStorage.getItem('ce_ed25519_priv')||'null');}catch(e){}
+    let keys;
+    if(pubJwk&&privJwk){
+      const pub=await crypto.subtle.importKey('jwk',pubJwk,{name:'Ed25519'},true,['verify']);
+      const priv=await crypto.subtle.importKey('jwk',privJwk,{name:'Ed25519'},true,['sign']);
+      keys={publicKey:pub,privateKey:priv};
+    }else{
+      keys=await crypto.subtle.generateKey({name:'Ed25519'},true,['sign','verify']);
+      const ep=await crypto.subtle.exportKey('jwk',keys.publicKey);
+      const es=await crypto.subtle.exportKey('jwk',keys.privateKey);
+      localStorage.setItem('ce_ed25519_pub',JSON.stringify(ep));
+      localStorage.setItem('ce_ed25519_priv',JSON.stringify(es));
+    }
+    // Raw 32-byte public key → hex node id (matches what the hub verifies against).
+    const raw=new Uint8Array(await crypto.subtle.exportKey('raw',keys.publicKey));
+    if(raw.length!==32)return null;
+    return {keys,idHex:hex(raw)};
+  }catch(e){return null;}
+}
+// Sign the hub's challenge nonce (hex) and return {id,sig} hex strings, or null in legacy mode.
+async function signChallenge(nonceHex){
+  if(!SIGNER)return null;
+  try{
+    const sig=new Uint8Array(await crypto.subtle.sign({name:'Ed25519'},SIGNER.keys.privateKey,fromHex(nonceHex)));
+    return {id:SIGNER.idHex,sig:hex(sig)};
+  }catch(e){return null;}
+}
+loadSigner().then(s=>{SIGNER=s;$('nid').textContent=(SIGNER?SIGNER.idHex:ID).slice(0,12)+'…';});
 $('nid').textContent=ID.slice(0,12)+'…';
 
 // in-memory replication cache for hub {t:"store"}/{t:"fetch"} messages (no-op safe).
@@ -411,10 +454,28 @@ function connect(){
   if(!running)return;
   setStatus('warn','connecting…');
   ws=new WebSocket(wsBase()+'/node');
+  let announced=false, helloTimer=null;
+  // Send the legacy unsigned hello (random-id). Used when Ed25519 is unavailable, or if the hub
+  // never issues a challenge (older hub) within the grace window below.
+  const sendLegacyHello=()=>{if(announced)return;announced=true;
+    try{ws.send(JSON.stringify({t:'hello',id:ID,caps}))}catch(e){}};
+  // Send a signed hello in response to the hub's challenge nonce.
+  const sendSignedHello=async nonceHex=>{
+    if(announced)return;
+    const signed=await signChallenge(nonceHex);
+    if(!signed){sendLegacyHello();return;}
+    announced=true;
+    try{ws.send(JSON.stringify({t:'hello',id:signed.id,sig:signed.sig,caps}))}catch(e){}};
   ws.onopen=()=>{setStatus('on','online — contributing');log('connected to the mesh','ok');
-    ws.send(JSON.stringify({t:'hello',id:ID,caps}));
-    clearInterval(hb);hb=setInterval(()=>{try{ws.send(JSON.stringify({t:'hb'}))}catch(e){}},10000);};
+    clearInterval(hb);hb=setInterval(()=>{try{ws.send(JSON.stringify({t:'hb'}))}catch(e){}},10000);
+    // If no signer, announce immediately (legacy). With a signer, wait for the challenge but fall
+    // back to an unsigned hello if none arrives shortly (so an old hub still sees this node).
+    if(!SIGNER)sendLegacyHello();
+    else helloTimer=setTimeout(sendLegacyHello,1500);};
   ws.onmessage=async ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
+    if(m.t==='challenge'){if(helloTimer){clearTimeout(helloTimer);helloTimer=null;}
+      await sendSignedHello(m.nonce||'');return;}
+    if(m.t==='welcome'){log('identity '+String(m.id||'').slice(0,12)+'… accepted by hub','ok');return;}
     if(m.t==='ping'){try{ws.send(JSON.stringify({t:'pong',ts:m.ts}))}catch(e){}return;}
     if(m.t==='store'){
       // best-effort replication: cache app file bytes in memory, within the budget (relay stays source of truth)

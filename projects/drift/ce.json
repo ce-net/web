@@ -1,0 +1,73 @@
+{
+  "name": "drift",
+  "app": "drift",
+  "title": "drift",
+  "description": "A region-sharded, authoritative multiplayer ship arena on the CE mesh. netgame is the control plane; authoritative state streams as binary StateFrames over an ephemeral /rt room; regions shard as r:<gx>:<gy> with a /db/world directory and cross-shard handoff; hosting is hybrid pinned-node-preferred with browser fallback.",
+  "domain": "drift.ce-net.com",
+  "entry": "index.html",
+  "static": true,
+  "build": null,
+
+  "runtime": {
+    "controlPlane": "netgame",
+    "transport": {
+      "stateRoom": "r:<gx>:<gy>::st",
+      "ephemeral": true,
+      "frame": "binary StateFrame (Message::Binary), base64 {t:\"st2\"} fallback",
+      "controlRoom": "r:<gx>:<gy>"
+    },
+    "aoi": {
+      "enabled": true,
+      "radiusDefaultUnits": 4096,
+      "advertise": "{k:\"aoi\",id,x,y,r} over the control room; host unicasts snapshot_aoi() frames per viewer"
+    },
+    "snapshot": {
+      "key": "snap:r:<gx>:<gy>",
+      "store": "/db/drift",
+      "casHeader": "If-Match (term)",
+      "everyTicksDefault": 60,
+      "restoreOnFailover": true
+    },
+    "hz": 30
+  },
+
+  "sharding": {
+    "regionSize": 4096,
+    "roomNaming": "r:<gx>:<gy>",
+    "directory": {
+      "key": "world:dir",
+      "store": "/db/drift",
+      "shape": "{ dir: { \"r:<gx>:<gy>\": { host, ts } }, ts }"
+    },
+    "boundaryCross": "client switches control+state rooms when its view center leaves the current region",
+    "handoff": {
+      "messages": ["{k:\"xfer\",xferId,from,ent}", "{k:\"xack\",xferId}"],
+      "idempotent": true,
+      "mailbox": "/db/drift/handoff:r:<gx>:<gy>",
+      "ack": "/db/drift/handoff-ack:<region>"
+    }
+  },
+
+  "hosting": {
+    "model": "hybrid",
+    "preferred": "pinned headless node (host.mjs, server-class election score)",
+    "fallback": "browser (netgame election among connected clients)",
+    "election": "deterministic netgame: highest score, ties -> smallest id",
+    "headlessRunner": "host.mjs",
+    "wasmHost": "host-wasm.js (loads the drift-sim cdylib over linear memory)"
+  },
+
+  "deploy": {
+    "tool": "ce-app",
+    "appId": "drift",
+    "url": "https://drift.ce-net.com/",
+    "pathUrl": "https://ce-net.com/apps/drift/",
+    "note": "app id pinned via .ce/app-id; project name via ce-app.json. Static deploy of index.html + drift.js + host-wasm.js + the built client pkg/."
+  },
+
+  "owners": {
+    "this": "web/projects/drift/ (JS + config + index.html, EXCEPT sim/ and client/)",
+    "sim": "web/projects/drift/sim (drift-sim cdylib+rlib)",
+    "client": "web/projects/drift/client (drift-client wgpu wasm frontend)"
+  }
+}

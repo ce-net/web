@@ -1,0 +1,54 @@
+{
+  "name": "feedback",
+  "app": "feedback",
+  "title": "Feedback",
+  "description": "A realtime feedback board on the CE mesh: post feedback, reply in threads, and upvote, with one board per target project. Durable in the app KV store, live over a /rt room, with a shadow-DOM embed.js drop-in widget and soft community moderation.",
+  "domain": "feedback.ce-net.com",
+  "entry": "index.html",
+  "static": true,
+  "build": null,
+
+  "runtime": {
+    "durable": {
+      "store": "/db/feedback",
+      "keys": {
+        "post":  "fb:<target>:<invTs>:<id>",
+        "reply": "rp:<target>:<tid>:<invTs>:<id>",
+        "vote":  "vt:<target>:<tid>:<voterId>",
+        "flag":  "fl:<target>:<tid>:<flaggerId>",
+        "del":   "dl:<target>:<tid>:<authorId>"
+      },
+      "note": "invTs = (9999999999999 - ms).padStart(13) so newest posts sort first lexically; <target> is the per-project board id (?target=...)."
+    },
+    "realtime": {
+      "room": "t:<target>",
+      "url": "/rt/feedback/t:<target>",
+      "frames": ["{t:'fb'}", "{t:'reply'}", "{t:'vote'}", "{t:'flag'}", "{t:'del'}", "{t:'join'}", "{t:'ping'}"],
+      "note": "each board is its own room so projects do not cross-talk; the server echoes frames to peers (self filtered by id)."
+    },
+    "moderation": {
+      "model": "soft",
+      "rule": "a post is collapsed once (flags - upvotes) >= 4, or when its author soft-deletes (dl: record); nothing is erased from the store and viewers can reveal.",
+      "rateLimit": "8s per identity per board (client); pairs with the hub per-namespace IP limiter (CE_HUB_RATELIMIT_NS=feedback)."
+    },
+    "embed": {
+      "file": "embed.js",
+      "isolation": "shadow DOM (mode:open), :host{all:initial}",
+      "auto": "<script src=\"https://feedback.ce-net.com/embed.js\" data-target=\"<project>\" data-host=\"https://feedback.ce-net.com\"></script>",
+      "manual": "CEFeedback.mount({ target, host, el })",
+      "shared": "the widget uses the same /db/feedback + /rt/feedback/t:<target> as the full board, so embedded and standalone posts share one thread per target."
+    }
+  },
+
+  "deploy": {
+    "tool": "ce-app",
+    "appId": "feedback",
+    "url": "https://feedback.ce-net.com/",
+    "pathUrl": "https://ce-net.com/apps/feedback/",
+    "note": "Static deploy of index.html + embed.js. App id pinned via .ce/app-id; project name via ce-app.json."
+  },
+
+  "owners": {
+    "this": "web/projects/feedback/ (the feedback ce-app: index.html, embed.js, config)"
+  }
+}

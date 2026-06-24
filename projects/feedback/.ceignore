@@ -1,0 +1,7 @@
+# Files NOT shipped to the live feedback ce-app (the browser bundle is index.html + embed.js only).
+ce.json
+ce-app.json
+README.md
+.ce/
+node_modules/
+target/

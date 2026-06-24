@@ -98,6 +98,17 @@ input{width:140px}
 .lat .bar i.slow{background:linear-gradient(118deg,#ff8a4b,#ffb454)}
 .lat .pn{font-family:var(--mono);font-size:13px;flex:none;width:60px;text-align:right;color:var(--text)}
 .more{color:var(--faint);font-size:12.5px;font-family:var(--mono);margin-top:12px}
+
+/* browser-task metrics — self-reported, best-effort; kept visually apart from any chain/credit economy numbers, never summed */
+.tasksec{margin-top:14px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:18px 20px 20px}
+.tasksec .tm-note{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;gap:9px;margin-bottom:14px}
+.tasksec .tm-note .dot{width:7px;height:7px;border-radius:50%;background:var(--surf);flex:none}
+.tasksec .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.tasksec .tm{border:1px solid var(--line);border-radius:13px;background:var(--deep);padding:18px 18px;min-width:0}
+.tasksec .tm .v{font-family:var(--display);font-weight:600;font-size:clamp(26px,5vw,38px);line-height:1;letter-spacing:-.02em;color:var(--surf)}
+.tasksec .tm .k{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-top:8px}
+.tasksec .tm .s{font-size:12px;color:var(--muted);margin-top:3px}
+@media(max-width:680px){.tasksec .grid{grid-template-columns:1fr}}
 footer{border-top:1px solid var(--line-2);padding:26px 0 60px;color:var(--faint);font-size:13px;margin-top:40px}
 footer a{color:var(--muted)}
 </style>
@@ -132,6 +143,15 @@ footer a{color:var(--muted)}
     <div class="card"><div class="v" id="s-store">0</div><div class="k">storage (GB)</div><div class="s">available</div></div>
     <div class="card"><div class="v" id="s-gpu">0</div><div class="k">GPUs</div><div class="s" id="s-gpu-s">—</div></div>
     <div class="card"><div class="v" id="s-webgpu">0</div><div class="k">WebGPU</div><div class="s">capable nodes</div></div>
+  </div>
+
+  <h2>Browser-task metrics</h2>
+  <div class="tasksec" role="group" aria-label="Browser-task metrics — self-reported, best-effort">
+    <div class="tm-note"><span class="dot" aria-hidden="true"></span>self-reported, best-effort — work the browser nodes ran. Not the chain or credit economy; never summed with on-chain totals.</div>
+    <div class="grid">
+      <div class="tm"><div class="v" id="t-tasks">0</div><div class="k">tasks run</div><div class="s">cumulative, all nodes</div></div>
+      <div class="tm"><div class="v" id="t-compute">—</div><div class="k">compute distributed</div><div class="s">aggregate wall-clock</div></div>
+    </div>
   </div>
 
   <h2>Push a compute task</h2>
@@ -196,11 +216,21 @@ function setNum(id,val,dec=0){const el=$(id);const from=disp[id]||0;disp[id]=val
     el.textContent=dec?(Math.round(v*10)/10).toFixed(dec):Math.round(v).toLocaleString();
     if(k<1)requestAnimationFrame(step);})(t0);}
 
+// human-readable compute time from milliseconds: ms -> seconds -> minutes -> hours -> days -> years
+function fmtComputeMs(ms){ms=Math.max(0,+ms||0);
+  if(ms<1000)return Math.round(ms)+'ms';
+  const s=ms/1000;if(s<60)return (s<10?s.toFixed(1):Math.round(s))+'s';
+  const m=s/60;if(m<60)return (m<10?m.toFixed(1):Math.round(m))+'min';
+  const h=m/60;if(h<24)return (h<10?h.toFixed(1):Math.round(h))+'h';
+  const d=h/24;if(d<365)return (d<10?d.toFixed(1):Math.round(d))+'d';
+  const y=d/365;return (y<10?y.toFixed(1):Math.round(y))+'yr';}
 function applyStats(s){
   setNum('s-nodes',s.nodes||0);setNum('s-cores',s.cores||0);setNum('s-tasks',s.tasks_run||0);
   setNum('s-ram',s.ram_gb||0,1);setNum('s-store',s.storage_gb||0,1);
   setNum('s-gpu',(s.gpus||[]).reduce((a,g)=>a+g.count,0));setNum('s-webgpu',s.webgpu_nodes||0);
   $('s-gpu-s').textContent=(s.gpus&&s.gpus[0])?s.gpus[0].name.slice(0,22):'—';
+  setNum('t-tasks',s.tasks_run||0);
+  $('t-compute').textContent=s.compute_distributed_ms!=null?fmtComputeMs(s.compute_distributed_ms):'—';
   applyReliability(s);
   applyLatency(s);
 }

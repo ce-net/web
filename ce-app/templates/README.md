@@ -14,6 +14,8 @@ Self-contained, deployable starter projects for the CE app platform. Scaffold on
 | `react`        | Vite + React Router SPA (3 routes)     | proves SPA fallback; `/counter` uses `db`          |
 | `next`         | Next.js App Router static export       | prerendered to `out/`; client `db.set`             |
 | `react-native` | Expo react-native-web UI               | one RN component exported to web; `db.set`         |
+| `rust-game`    | Rust→wasm multiplayer + WebGPU frontend | authoritative wasm `tick` over **netgame** (host election + `/db` snapshot failover); WebGPU/canvas render |
+| `rust-backend` | The authoritative game crate only      | deterministic `World` + `snapshot`/`restore` ABI; no frontend (the brain to embed) |
 
 Each template ships a small `ce.ts` (the framework's `@ce/client` contract:
 `createClient().db` over `/db/<app>/<key>`, `.room(name)` over `ws /rt/<app>/<room>`) against the
@@ -32,3 +34,12 @@ Framework-specific notes:
 
 `ce-app deploy` runs the right build for the detected framework, uploads the static output, and sets
 `spa=true` on the app so client-side routers work in production.
+
+## Rust → wasm templates
+
+`rust-game` and `rust-backend` are Rust crates (a `Cargo.toml` at the root selects the Rust→wasm
+recipe; no `package.json` needed). `ce-app deploy` auto-detects the build variant (Trunk, wasm-pack,
+or raw cargo), runs a toolchain preflight with exact install hints, compiles to wasm, and uploads with
+the correct `application/wasm` MIME — warning on any file over the hub's per-file cap. See each
+template's own `README.md` for the contract and the build commands; both ship a vendored `netgame.js`
+(`rust-game`) and run their native unit tests with plain `cargo test` (no wasm toolchain needed).

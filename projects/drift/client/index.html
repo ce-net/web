@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>drift · CE</title>
+    <meta name="theme-color" content="#070d18" />
+    <!--
+      Trunk entry for the drift-client wasm frontend. `trunk build` compiles the
+      crate to wasm, runs wasm-bindgen, and injects the loader below. The drift
+      RUNTIME (web/projects/drift/drift.js, a different owner) is the real host:
+      it owns the netgame control plane, the canvas sizing, and the /rt transport,
+      and drives the exported `Drift` handle. This page is the standalone dev
+      harness; production embeds the generated pkg into the drift ce-app.
+    -->
+    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <style>
+      :root { --bg:#070d18; --panel:#0b1626; --line:rgba(120,170,255,.16); --text:#e9f1fb; --muted:#8fa6c4; --cyan:#37c6ff; --ok:#43e0a0; --gold:#ffd166; }
+      * { box-sizing: border-box; }
+      html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+        font:15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow:hidden; }
+      canvas { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+      .hud { position:fixed; top:12px; left:12px; z-index:5; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+      .card { background:rgba(11,22,38,.82); border:1px solid var(--line); border-radius:12px;
+        padding:9px 13px; backdrop-filter:blur(8px); font-variant-numeric:tabular-nums; }
+      .card b { color:var(--cyan); }
+      .hint { position:fixed; bottom:14px; left:12px; right:12px; z-index:5; color:var(--muted); font-size:13px; }
+      .hint kbd { background:#13233a; border:1px solid var(--line); border-radius:5px; padding:1px 6px; color:var(--text); font-family:ui-monospace,monospace; font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="drift-canvas"></canvas>
+    <div class="hud">
+      <div class="card">drift · <b id="drift-backend">init</b></div>
+      <div class="card">tick <b id="drift-tick">0</b> · lead <b id="drift-lead">0</b> · corr <b id="drift-corr">0</b></div>
+    </div>
+    <div class="hint">
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly ·
+      <kbd>Space</kbd> fire · <kbd>E</kbd> mine · <kbd>B</kbd> build · wheel to zoom
+    </div>
+  </body>
+</html>

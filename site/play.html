@@ -132,7 +132,10 @@ const ICONS={
   coop:'<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l4 7-4 3-4-3 4-7z"/><circle cx="5" cy="18" r="2.4"/><circle cx="19" cy="18" r="2.4"/><path d="M12 12v4M9.6 16.4 6.8 17.4M14.4 16.4l2.8 1"/></svg>'
 };
 
-// the gallery — slug must match the deployed app's APP namespace + URL path
+// the gallery — slug must match the deployed app's APP namespace + URL path.
+// This is the STATIC FALLBACK list: shown immediately and used verbatim if the live
+// registry (GET /registry) is unreachable. When the registry responds, its public
+// projects are merged in (by slug) so newly-shipped apps appear without editing this file.
 const DEMOS=[
   {slug:'arena', name:'Arena', icon:'arena', tag:'flagship', flag:true, live:true,
    desc:'A shared top-down playfield. Move with mouse or touch, bump scores, watch dozens of dots dart around in real time.'},
@@ -150,24 +153,92 @@ const DEMOS=[
    desc:'A server-authoritative ship arena. Clients send only input; the best mesh node simulates everything and fails over to another node from a /db snapshot if it drops.'}
 ];
 
-function appUrl(slug){return 'https://ce-net.com/apps/'+slug+'/';}
+function appUrl(slug){return 'https://ce-net.com/apps/'+encodeURIComponent(slug)+'/';}
+
+// Live gallery = the static DEMOS list, with any extra public registry projects merged in by slug.
+let GALLERY=DEMOS.slice();
+
+// Generic glyph for registry apps that don't map to a known DEMO icon — inline SVG, no emojis.
+const GENERIC_ICO='<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18M8 18v2M16 18v2"/></svg>';
+
+// Build one demo card via DOM construction — all user/registry-sourced text via textContent (XSS-safe).
+function buildDemo(d){
+  const card=document.createElement('div');
+  card.className='demo'+(d.flag?' flag':'');
+
+  const top=document.createElement('div'); top.className='top';
+  const ico=document.createElement('span'); ico.className='ico';
+  ico.innerHTML=ICONS[d.icon]||GENERIC_ICO; // icon markup is a fixed, trusted constant
+  top.appendChild(ico);
+  const h3=document.createElement('h3'); h3.textContent=d.name; top.appendChild(h3);
+  const tag=document.createElement('span'); tag.className=d.flag?'tag flag':'tag';
+  tag.textContent=d.tag||'app'; top.appendChild(tag);
+  card.appendChild(top);
+
+  const desc=document.createElement('p'); desc.className='desc';
+  desc.textContent=d.desc||'A live app on the CE network.'; card.appendChild(desc);
+
+  const foot=document.createElement('div'); foot.className='foot';
+  const now=document.createElement('span'); now.className='now'; now.id='now-'+d.slug;
+  const dot=document.createElement('span'); dot.className='dot'; now.appendChild(dot);
+  now.appendChild(document.createTextNode(d.live?'checking room…':'open to join'));
+  foot.appendChild(now);
+  const a=document.createElement('a');
+  a.className=d.flag?'btn primary sm open':'btn sm open';
+  a.href=d.url||appUrl(d.slug);
+  a.rel='noopener';
+  a.textContent=d.flag?'Play →':'Open →';
+  foot.appendChild(a);
+  card.appendChild(foot);
+  return card;
+}
 
 function render(){
-  $('gallery').innerHTML=DEMOS.map(d=>{
-    const url=appUrl(d.slug);
-    const tagCls=d.flag?'tag flag':'tag';
-    const btnCls=d.flag?'btn primary sm open':'btn sm open';
-    return '<div class="demo'+(d.flag?' flag':'')+'">'+
-      '<div class="top"><span class="ico">'+ICONS[d.icon]+'</span>'+
-        '<h3>'+d.name+'</h3><span class="'+tagCls+'">'+d.tag+'</span></div>'+
-      '<p class="desc">'+d.desc+'</p>'+
-      '<div class="foot">'+
-        '<span class="now" id="now-'+d.slug+'">'+(d.live?'<span class="dot"></span>checking room…':'<span class="dot"></span>open to join')+'</span>'+
-        '<a class="'+btnCls+'" href="'+url+'">'+(d.flag?'Play →':'Open →')+'</a>'+
-      '</div></div>';
-  }).join('');
+  const g=$('gallery'); g.textContent='';
+  GALLERY.forEach(d=>g.appendChild(buildDemo(d)));
 }
 render();
+
+// Merge live registry projects (GET /registry) into the gallery, keyed by slug.
+// Static DEMOS always win on name/icon/desc (curated copy); registry adds NEW public apps
+// and supplies live=true / a destination url when the project resolves to a hosted app.
+async function loadRegistry(){
+  let data;
+  try{
+    const res=await fetch('https://ce-net.com/registry',{headers:{'accept':'application/json'}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    data=await res.json();
+  }catch(e){ return; } // keep the static fallback exactly as-is
+  const list=Array.isArray(data)?data:(data&&Array.isArray(data.projects)?data.projects:[]);
+  if(!Array.isArray(list)) return;
+  const known=new Set(DEMOS.map(d=>d.slug));
+  const extra=[];
+  list.forEach(p=>{
+    if(!p||typeof p!=='object') return;
+    const slug=String(p.slug||p.app_id||'').trim();
+    if(!slug||known.has(slug)) return; // don't duplicate curated demos
+    known.add(slug);
+    let url;
+    if(p.site && /^https?:\/\//i.test(p.site)) url=p.site;
+    else if(p.app_id) url=appUrl(p.app_id);
+    else url=appUrl(slug);
+    extra.push({
+      slug,
+      name:(p.title&&String(p.title).trim())||slug,
+      icon:null,
+      tag:(Array.isArray(p.tags)&&p.tags.length?String(p.tags[0]):'app'),
+      desc:(p.desc&&String(p.desc).trim())||'A project shipped to the CE network.',
+      live:!!p.hosted,
+      url
+    });
+  });
+  if(!extra.length) return;
+  GALLERY=DEMOS.concat(extra);
+  render();
+  // sample any newly-live registry rooms too
+  extra.forEach(d=>{ if(d.live) sampleCount(d.slug,n=>showCount(d.slug,n)); });
+}
+loadRegistry();
 
 // ---- live participant count via a brief websocket sample ----
 function wsURL(app,room){return (location.protocol==='https:'?'wss':'ws')+'://ce-net.com/rt/'+app+'/'+room;}
@@ -208,7 +279,7 @@ function sampleCount(app,onResult){
 
 function showCount(slug,n){
   const el=$('now-'+slug);if(!el)return;
-  const demo=DEMOS.find(d=>d.slug===slug);
+  const demo=GALLERY.find(d=>d.slug===slug);
   if(n==null){
     // could not connect — degrade gracefully
     el.className='now';

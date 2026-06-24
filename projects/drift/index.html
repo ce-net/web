@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>drift</title>
+    <meta name="theme-color" content="#070d18" />
+    <meta name="description" content="drift — a region-sharded, authoritative multiplayer ship arena on the CE mesh." />
+    <style>
+      :root {
+        --bg: #070d18; --panel: #0b1626; --line: rgba(120, 170, 255, 0.16);
+        --text: #e9f1fb; --muted: #8fa6c4; --cyan: #37c6ff; --ok: #43e0a0;
+        --warn: #ffb454; --gold: #ffd166; --bad: #ff6b7d;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; height: 100%; background: var(--bg); color: var(--text);
+        font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden;
+      }
+      canvas {
+        position: fixed; inset: 0; width: 100%; height: 100%; display: block;
+        touch-action: none; background: radial-gradient(circle at 50% 40%, #0a1426, #060a12 70%);
+      }
+      .hud {
+        position: fixed; top: 12px; left: 12px; z-index: 5; display: flex;
+        flex-direction: column; gap: 8px; pointer-events: none; max-width: 60vw;
+      }
+      .card {
+        background: rgba(11, 22, 38, 0.82); border: 1px solid var(--line);
+        border-radius: 12px; padding: 9px 13px; backdrop-filter: blur(8px);
+        font-variant-numeric: tabular-nums;
+      }
+      .card b { color: var(--cyan); }
+      .card .ok { color: var(--ok); }
+      .card .warn { color: var(--warn); }
+      .card .bad { color: var(--bad); }
+      .title { font-weight: 650; letter-spacing: 0.04em; }
+      .title .dot { color: var(--cyan); }
+      .hint {
+        position: fixed; bottom: 14px; left: 12px; right: 12px; z-index: 5;
+        color: var(--muted); font-size: 13px; pointer-events: none;
+      }
+      .hint kbd {
+        background: #13233a; border: 1px solid var(--line); border-radius: 5px;
+        padding: 1px 6px; color: var(--text); font-family: ui-monospace, monospace; font-size: 12px;
+      }
+      .banner {
+        position: fixed; left: 50%; top: 18px; transform: translateX(-50%);
+        z-index: 6; background: rgba(11, 22, 38, 0.92); border: 1px solid var(--line);
+        border-radius: 12px; padding: 10px 16px; max-width: 90vw; text-align: center;
+        color: var(--muted); display: none;
+      }
+      .banner b { color: var(--gold); }
+      a { color: var(--cyan); }
+    </style>
+  </head>
+  <body>
+    <canvas id="drift-canvas"></canvas>
+
+    <div class="hud">
+      <div class="card title">drift <span class="dot">·</span> <span id="d-backend">connecting</span></div>
+      <div class="card">
+        region <b id="d-region">r:0:0</b> ·
+        host <b id="d-host">?</b> ·
+        <span id="d-role" class="muted">client</span>
+      </div>
+      <div class="card">
+        tick <b id="d-tick">0</b> ·
+        net <span id="d-net" class="warn">offline</span> ·
+        viewers <b id="d-viewers">0</b>
+      </div>
+    </div>
+
+    <div class="banner" id="d-banner"></div>
+
+    <div class="hint">
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly ·
+      <kbd>Space</kbd> fire · <kbd>E</kbd> mine · <kbd>B</kbd> build · wheel zoom ·
+      cross a region edge to shard-switch automatically
+    </div>
+
+    <script type="module">
+      // DRIFT BROWSER ENTRY — wires the wgpu wasm renderer (drift-client, built later by
+      // trunk into ./pkg/) to the drift runtime (drift.js: netgame control plane + binary
+      // ephemeral StateFrames + region sharding + /db failover). The renderer is OPTIONAL:
+      // if ./pkg is not yet built, the page still connects, shards, and shows live HUD/net
+      // state so the runtime can be verified standalone. No emojis.
+
+      import { createDriftRuntime } from "./drift.js";
+
+      const $ = (id) => document.getElementById(id);
+      const canvas = $("drift-canvas");
+
+      // ---- query params: pick a starting region + a stable-ish controller id ----
+      const params = new URLSearchParams(location.search);
+      const startRegion = (() => {
+        const r = params.get("region");
+        if (r) {
+          const m = r.match(/^(-?\d+):(-?\d+)$/);
+          if (m) return { gx: parseInt(m[1], 10), gy: parseInt(m[2], 10) };
+        }
+        return { gx: 0, gy: 0 };
+      })();
+      const myId = (() => {
+        let v = localStorage.getItem("drift:id");
+        if (!v) {
+          v = "p" + Math.random().toString(36).slice(2, 12);
+          try { localStorage.setItem("drift:id", v); } catch (_) {}
+        }
+        return v;
+      })();
+      const controller = (() => {
+        // a small stable per-browser controller slot derived from the id
+        let h = 0;
+        for (let i = 0; i < myId.length; i++) h = (h * 31 + myId.charCodeAt(i)) >>> 0;
+        return h % 1000000;
+      })();
+
+      const REGION_SIZE = 4096;
+
+      // ---- canvas sizing (the runtime owns transport; we own the canvas) ----
+      function fit() {
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+        const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          if (drift) drift.resize(w, h);
+        }
+      }
+      window.addEventListener("resize", fit);
+
+      // ---- try to load the wgpu renderer (drift-client). Optional. ----
+      // trunk emits ./pkg/drift_client.js + .wasm; wasm-pack emits ./pkg/<name>.js. We probe
+      // a couple of conventional names and degrade to a transport-only session if none load.
+      let drift = null; // the wasm-bindgen Drift handle
+      async function loadRenderer() {
+        const candidates = ["./pkg/drift_client.js", "./pkg/drift-client.js"];
+        for (const url of candidates) {
+          try {
+            const mod = await import(url);
+            if (typeof mod.default === "function") await mod.default();
+            const Drift = mod.Drift;
+            if (!Drift) continue;
+            const d = new Drift(Date.now() & 0xffffffff, REGION_SIZE / 2, controller);
+            fit();
+            const backend = await d.attach_canvas(canvas);
+            $("d-backend").textContent = String(backend || "rendering");
+            return d;
+          } catch (_) {
+            /* try the next candidate */
+          }
+        }
+        return null;
+      }
+
+      // ---- view center for AoI + region boundary detection ----
+      // Without the renderer we cannot read the predicted ship position, so we hold the
+      // region center; with the renderer we read its camera focus through hud_json.
+      let viewX = startRegion.gx * REGION_SIZE + REGION_SIZE / 2;
+      let viewY = startRegion.gy * REGION_SIZE + REGION_SIZE / 2;
+
+      function showBanner(html) {
+        const b = $("d-banner");
+        b.innerHTML = html;
+        b.style.display = "block";
+        clearTimeout(showBanner._t);
+        showBanner._t = setTimeout(() => { b.style.display = "none"; }, 2600);
+      }
+
+      // ---- input: the renderer serializes the local InputFrame each fixed tick ----
+      function takeInput() {
+        if (!drift) return null;
+        try {
+          const bytes = drift.take_outgoing_input();
+          return bytes || null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      // ---- boot the runtime ----
+      const runtime = createDriftRuntime({
+        app: "drift",
+        id: myId,
+        region: startRegion,
+        regionSize: REGION_SIZE,
+        hz: 30,
+        snapshotEvery: 60,
+        canHost: true, // browsers are the fallback host (hybrid pinned/browser)
+        server: false,
+        input: takeInput,
+        viewCenter: () => ({ x: viewX, y: viewY }),
+        onAuthFrame: (bytes) => {
+          if (drift) {
+            try { drift.on_auth_frame(bytes); } catch (_) {}
+          }
+        },
+        onHostChange: (meta) => {
+          $("d-host").textContent = meta.host ? String(meta.host).slice(0, 8) : "?";
+          $("d-role").textContent = meta.isHost ? "HOSTING" : "client";
+          $("d-role").className = meta.isHost ? "ok" : "muted";
+          if (meta.isHost) showBanner("you are now <b>hosting</b> region " + meta.region);
+        },
+        onRegionChange: (region) => {
+          $("d-region").textContent = region.room;
+          showBanner("shard switch to <b>" + region.room + "</b>");
+        },
+      });
+
+      // ---- key input -> renderer (if present) ----
+      function key(e, down) {
+        if (!drift) return;
+        try {
+          if (drift.set_key(e.code, down)) e.preventDefault();
+        } catch (_) {}
+      }
+      window.addEventListener("keydown", (e) => key(e, true), { passive: false });
+      window.addEventListener("keyup", (e) => key(e, false), { passive: false });
+      window.addEventListener(
+        "wheel",
+        (e) => {
+          if (!drift) return;
+          try { drift.zoom_by(e.deltaY > 0 ? 1.1 : 0.9); } catch (_) {}
+        },
+        { passive: true }
+      );
+
+      // ---- render + prediction loop ----
+      const DT = 1 / 60;
+      let acc = 0;
+      let last = performance.now();
+      function loop(t) {
+        const dt = Math.min(0.1, (t - last) / 1000);
+        last = t;
+        if (drift) {
+          // fixed-step local prediction
+          acc += dt;
+          let guard = 0;
+          while (acc >= DT && guard < 6) {
+            try {
+              drift.tick();
+              const inp = drift.take_outgoing_input();
+              if (inp) runtime.sendInput(inp);
+            } catch (_) {}
+            acc -= DT;
+            guard++;
+          }
+          // draw
+          try { drift.frame(dt); } catch (_) {}
+          // read HUD + camera focus for AoI / boundary
+          try {
+            const hud = JSON.parse(drift.hud_json());
+            $("d-tick").textContent = hud.authTick != null ? hud.authTick : "0";
+            if (hud.viewX != null) viewX = hud.viewX;
+            if (hud.viewY != null) viewY = hud.viewY;
+          } catch (_) {}
+        }
+        // HUD that does not depend on the renderer
+        const m = runtime.metrics();
+        $("d-region").textContent = m.region;
+        $("d-viewers").textContent = m.viewers;
+        const net = $("d-net");
+        net.textContent = m.stateOnline ? "online" : "offline";
+        net.className = m.stateOnline ? "ok" : "warn";
+        if (!drift) $("d-tick").textContent = m.tick;
+        requestAnimationFrame(loop);
+      }
+
+      (async () => {
+        drift = await loadRenderer();
+        if (!drift) {
+          $("d-backend").textContent = "transport-only (renderer not built)";
+        }
+        fit();
+        requestAnimationFrame(loop);
+      })();
+
+      // expose for console debugging / verification
+      window.__drift = { runtime, get handle() { return drift; } };
+    </script>
+  </body>
+</html>
