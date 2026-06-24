@@ -2,332 +2,902 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>CE Docs — run a node, build on the mesh</title>
-<meta name="description" content="Documentation for CE: a trustless compute marketplace on a proof-of-work chain. Install, run a node, and build with the ce-rs and ce-coord SDKs." />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2357f0c8'/%3E%3Cstop offset='1' stop-color='%234a7bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M22 9a9 9 0 1 0 0 14' fill='none' stroke='url(%23g)' stroke-width='3.2' stroke-linecap='round'/%3E%3C/svg%3E" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>CE Platform Documentation — host, store, realtime, compute</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="The complete CE platform docs: one-command deploy of any frontend framework, a persistent database, realtime rooms, compute tasks in wasm/js/python, custom domains, and the full HTTP API — all live at ce-net.com." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3Cpath d='M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
-:root{
-  --ink:#06080d;--ink-2:#0a0e15;--ink-3:#0f141d;
-  --line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.05);
-  --text:#e8eef5;--muted:#9aa6b6;--faint:#6b7787;
-  --aqua:#57f0c8;--cyan:#34d6ff;--blue:#6a86ff;
-  --grad:linear-gradient(115deg,#57f0c8,#34d6ff 45%,#6a86ff);
-  --display:"Bricolage Grotesque",serif;--body:"Hanken Grotesk",-apple-system,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
-  --sidebar:248px;--toc:200px;
-}
-*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:84px}
-body{margin:0;background:var(--ink);color:var(--text);font-family:var(--body);font-size:15.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace;
+  --sidebar:266px}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:74px}
+body{margin:0;background:var(--abyss);color:var(--text);font-family:var(--body);font-size:15.5px;line-height:1.66;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(60% 44% at 18% -8%,rgba(55,198,255,.13),transparent 60%),radial-gradient(48% 38% at 96% 108%,rgba(47,107,255,.12),transparent 60%)}
 a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
-code{font-family:var(--mono);font-size:.86em;background:var(--ink-3);border:1px solid var(--line-2);border-radius:5px;padding:1.5px 6px;color:#cfe9ff}
-pre{margin:18px 0;background:var(--ink-2);border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow-x:auto}
-pre code{background:none;border:0;padding:0;font-size:13.2px;line-height:1.7;color:var(--text)}
-.c-k{color:#6a86ff}.c-fn{color:var(--cyan)}.c-ty{color:var(--aqua)}.c-st{color:#c8b6ff}.c-cm{color:var(--faint)}.c-pn{color:#e8eef5}
+em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+code{font-family:var(--mono);font-size:.86em;background:var(--panel);border:1px solid var(--line-2);border-radius:5px;padding:1.5px 6px;color:#cfe9ff;word-break:break-word}
+pre{margin:16px 0;background:var(--deep);border:1px solid var(--line);border-radius:13px;padding:15px 17px;overflow-x:auto}
+pre code{background:none;border:0;padding:0;font-size:13px;line-height:1.7;color:#cfe9ff;white-space:pre}
+.c-k{color:#7aa2ff}.c-fn{color:var(--cyan)}.c-ty{color:#7af0e6}.c-st{color:#ffd9a8}.c-cm{color:var(--faint)}.c-nu{color:#b6f0c0}
 
 /* top bar */
-.top{position:sticky;top:0;z-index:60;height:60px;display:flex;align-items:center;gap:22px;padding:0 22px;
-  background:linear-gradient(var(--ink),rgba(6,8,13,.72));backdrop-filter:blur(12px);border-bottom:1px solid var(--line-2)}
-.logo{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:700;font-size:18px;color:var(--text);letter-spacing:-.02em}
-.logo .mark{width:20px;height:20px}
-.logo .tag{font-family:var(--mono);font-size:11px;color:var(--aqua);border:1px solid var(--line);border-radius:6px;padding:2px 7px;margin-left:2px}
-.top .sp{flex:1}
-.top a.tl{color:var(--muted);font-size:14px;font-weight:500}.top a.tl:hover{color:var(--text);text-decoration:none}
-.menu-btn{display:none;background:var(--ink-3);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer}
+.top{position:sticky;top:0;z-index:60;height:58px;display:flex;align-items:center;gap:20px;padding:0 20px;
+  background:linear-gradient(var(--abyss),rgba(3,6,14,.72));backdrop-filter:blur(12px);border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:18px;letter-spacing:-.01em;color:var(--text)}
+.brand svg{width:23px;height:23px}.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand .tag{font-family:var(--mono);font-size:10.5px;color:var(--cyan);border:1px solid var(--line);border-radius:6px;padding:2px 7px;margin-left:3px;background:rgba(55,198,255,.05)}
+.top .sp{flex:1}.top a.tl{color:var(--muted);font-size:14px;font-weight:500}.top a.tl:hover{color:var(--text);text-decoration:none}
+.menu-btn{display:none;background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 11px;font-size:13px;cursor:pointer}
 
 /* layout */
-.layout{display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr) var(--toc);max-width:1320px;margin:0 auto;gap:0}
-aside{position:sticky;top:60px;align-self:start;height:calc(100vh - 60px);overflow-y:auto;padding:26px 18px 60px;border-right:1px solid var(--line-2)}
-aside .grp{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:22px 0 8px;padding-left:10px}
+.layout{display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr);max-width:1180px;margin:0 auto;position:relative;z-index:1}
+aside{position:sticky;top:58px;align-self:start;height:calc(100vh - 58px);overflow-y:auto;padding:24px 14px 80px;border-right:1px solid var(--line-2)}
+aside .grp{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);margin:22px 0 7px;padding-left:11px}
 aside .grp:first-child{margin-top:0}
-aside a{display:block;color:var(--muted);font-size:14px;padding:6px 10px;border-radius:7px;line-height:1.35}
-aside a:hover{color:var(--text);background:var(--ink-2);text-decoration:none}
-aside a.active{color:#06120f;background:var(--grad);font-weight:600}
+aside a{display:block;color:var(--muted);font-size:13.6px;padding:5px 11px;border-radius:8px;line-height:1.35}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.active{color:#021018;background:var(--grad);font-weight:600}
 
-main{padding:40px 52px 120px;min-width:0}
-main h1{font-family:var(--display);font-weight:700;letter-spacing:-.03em;font-size:38px;margin:0 0 6px;line-height:1.08}
-main .kick{font-family:var(--mono);font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--aqua)}
-main h2{font-family:var(--display);font-weight:700;letter-spacing:-.02em;font-size:25px;margin:54px 0 14px;padding-top:14px;border-top:1px solid var(--line-2)}
-main h3{font-family:var(--display);font-weight:600;font-size:18px;margin:30px 0 8px;letter-spacing:-.01em}
-main p{color:#c4cdd9;margin:14px 0}
-main ul,main ol{color:#c4cdd9;padding-left:22px}main li{margin:7px 0}
-.lead{font-size:18px;color:var(--muted)!important;margin-top:14px}
-.note{border:1px solid var(--line);border-left:3px solid var(--aqua);background:rgba(87,240,200,.04);border-radius:10px;padding:14px 16px;margin:20px 0}
+main{padding:44px 56px 140px;min-width:0}
+main h1{font-family:var(--display);font-weight:600;letter-spacing:-.02em;font-size:clamp(30px,5vw,42px);margin:0 0 4px;line-height:1.06}
+main h1 em{font-style:italic}
+.kick{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--cyan)}
+main h2{font-family:var(--display);font-weight:600;letter-spacing:-.015em;font-size:26px;margin:62px 0 6px;padding-top:30px;border-top:1px solid var(--line-2);scroll-margin-top:74px}
+main h3{font-family:var(--display);font-weight:600;font-size:19px;margin:30px 0 8px;letter-spacing:-.01em;scroll-margin-top:74px}
+main h4{font-family:var(--body);font-weight:700;font-size:15px;margin:22px 0 6px;color:var(--text)}
+main p{color:#c1cddc;margin:13px 0}
+main ul,main ol{color:#c1cddc;padding-left:22px}main li{margin:6px 0}
+main strong{color:var(--text);font-weight:600}
+.lead{font-size:18.5px;color:var(--muted)!important;margin-top:14px;max-width:64ch}
+
+.note{border:1px solid var(--line);border-left:3px solid var(--cyan);background:rgba(55,198,255,.045);border-radius:11px;padding:13px 16px;margin:20px 0;font-size:14.5px}
 .note b{color:var(--text)}
-.note.warn{border-left-color:#ffb454;background:rgba(255,180,84,.05)}
-.pill{display:inline-block;font-family:var(--mono);font-size:11px;color:var(--blue);border:1px solid var(--line);border-radius:999px;padding:3px 9px}
-table{width:100%;border-collapse:collapse;margin:18px 0;font-size:13.6px}
-th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-2);vertical-align:top}
-th{font-family:var(--mono);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);font-weight:500}
-td code{white-space:nowrap}
-.next{display:flex;gap:14px;margin-top:60px;flex-wrap:wrap}
-.next a{flex:1;min-width:220px;border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--ink-2);color:var(--text)}
-.next a:hover{border-color:rgba(87,240,200,.4);text-decoration:none}
-.next .s{font-family:var(--mono);font-size:11px;color:var(--faint)}
-.next .t{font-family:var(--display);font-weight:600;font-size:17px;margin-top:4px}
+.note.warn{border-left-color:var(--gold);background:rgba(255,209,102,.05)}
+.note.bad{border-left-color:var(--bad);background:rgba(255,93,114,.05)}
 
-/* on-this-page */
-.toc{position:sticky;top:60px;align-self:start;height:calc(100vh - 60px);overflow-y:auto;padding:40px 18px;border-left:1px solid var(--line-2)}
-.toc .h{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:12px}
-.toc a{display:block;color:var(--muted);font-size:12.8px;padding:4px 0;border-left:2px solid transparent;padding-left:12px;margin-left:-2px}
-.toc a:hover{color:var(--text);text-decoration:none}
-.toc a.active{color:var(--text);border-left-color:var(--aqua)}
+.pill{display:inline-block;font-family:var(--mono);font-size:11px;color:var(--cyan);border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:rgba(55,198,255,.05)}
+.pill.get{color:var(--ok);border-color:rgba(67,224,160,.3)}
+.pill.put{color:var(--gold);border-color:rgba(255,209,102,.3)}
+.pill.post{color:var(--cyan)}
+.pill.del{color:var(--bad);border-color:rgba(255,93,114,.3)}
 
-@media(max-width:1180px){.layout{grid-template-columns:var(--sidebar) minmax(0,1fr)}.toc{display:none}}
-@media(max-width:880px){
+/* hero callout */
+.hero{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:22px 22px 8px;margin:26px 0 6px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:11px;margin:24px 0}
+.card{border:1px solid var(--line);border-radius:13px;background:var(--deep);padding:15px 15px;display:block}
+.card:hover{border-color:rgba(55,198,255,.34);text-decoration:none;transform:translateY(-1px);transition:.16s}
+.card .ck{font-family:var(--display);font-weight:600;font-size:16px;color:var(--text)}
+.card .cs{font-size:13px;color:var(--muted);margin-top:3px;line-height:1.5}
+
+/* tabs */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:18px 0 0}
+.tabs button{font-family:var(--mono);font-size:12.5px;border:1px solid var(--line);border-radius:9px 9px 0 0;border-bottom:0;
+  padding:8px 14px;cursor:pointer;background:var(--deep);color:var(--muted);transition:.14s}
+.tabs button:hover{color:var(--text)}
+.tabs button.active{color:var(--cyan);background:var(--panel);border-color:var(--line)}
+.tabwrap pre{margin-top:0;border-top-left-radius:0}
+.tabpane{display:none}.tabpane.show{display:block}
+
+/* tables */
+.tbl{width:100%;border-collapse:collapse;margin:18px 0;font-size:14px}
+.tbl th,.tbl td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-2);vertical-align:top}
+.tbl th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:500}
+.tbl td{color:#c1cddc}
+.tbl td code{font-size:12.5px}
+.tbl tr:hover td{background:rgba(116,176,255,.03)}
+
+/* endpoint block */
+.ep{border:1px solid var(--line);border-radius:12px;background:var(--deep);margin:14px 0;overflow:hidden}
+.ep .eph{display:flex;align-items:center;gap:11px;padding:11px 15px;border-bottom:1px solid var(--line-2);flex-wrap:wrap}
+.ep .path{font-family:var(--mono);font-size:13.5px;color:var(--text);word-break:break-all}
+.ep .epb{padding:4px 15px 14px}
+.ep .epb p{margin:11px 0 0;font-size:14px;color:#c1cddc}
+.ep .epb p:first-child{margin-top:11px}
+
+footer{border-top:1px solid var(--line-2);padding:26px 0 60px;margin-top:60px;color:var(--faint);font-size:13px}
+footer a{color:var(--muted)}
+
+.tocmini{font-family:var(--mono);font-size:12px;color:var(--faint);margin:6px 0 0}
+hr{border:0;border-top:1px solid var(--line-2);margin:30px 0}
+
+@media(max-width:900px){
   .layout{grid-template-columns:1fr}
-  aside{position:fixed;z-index:55;top:60px;left:0;width:280px;background:var(--ink);transform:translateX(-100%);transition:.25s;border-right:1px solid var(--line)}
+  aside{position:fixed;top:58px;left:0;width:280px;background:var(--abyss);z-index:55;transform:translateX(-105%);transition:.2s;border-right:1px solid var(--line)}
   aside.open{transform:none}
   .menu-btn{display:inline-block}
-  main{padding:30px 22px 100px}
+  main{padding:30px 20px 100px}
 }
 </style>
 </head>
 <body>
 <div class="top">
-  <button class="menu-btn" id="menu">☰</button>
-  <a class="logo" href="/"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57f0c8"/><stop offset="1" stop-color="#6a86ff"/></linearGradient></defs><path d="M22 9a9 9 0 1 0 0 14" fill="none" stroke="url(#lg)" stroke-width="3.2" stroke-linecap="round"/></svg>ce<span class="tag">docs</span></a>
+  <button class="menu-btn" id="menuBtn">Menu</button>
+  <a class="brand" href="https://ce-net.com"><svg viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg><span class="ce">ce</span><span class="tag">docs</span></a>
   <div class="sp"></div>
-  <a class="tl" href="https://ce-net.com">← ce-net.com</a>
-  <a class="tl" href="https://github.com/ce-net/ce">GitHub</a>
+  <a class="tl" href="https://ce-net.com/node">Run a node</a>
+  <a class="tl" href="https://ce-net.com/network">Network</a>
 </div>
 
 <div class="layout">
-  <aside id="side">
-    <div class="grp">Start here</div>
-    <a href="#introduction">Introduction</a>
-    <a href="#install">Install</a>
-    <a href="#quickstart">Quickstart: run a node</a>
-    <div class="grp">Concepts</div>
-    <a href="#identity">Identity</a>
-    <a href="#mesh">The mesh</a>
-    <a href="#ledger">Ledger &amp; credits</a>
-    <a href="#capabilities">Capabilities</a>
-    <a href="#compute">Compute</a>
-    <div class="grp">Build</div>
-    <a href="#sdk">The SDK (ce-rs)</a>
-    <a href="#coord">Coordination (ce-coord)</a>
-    <a href="#apps">Apps: swarm &amp; rdev</a>
-    <div class="grp">Reference</div>
-    <a href="#cli">CLI</a>
-    <a href="#http">HTTP API</a>
-    <a href="#faq">FAQ</a>
-  </aside>
+<aside id="side">
+  <div class="grp">Start</div>
+  <a href="#overview">Overview</a>
+  <a href="#quickstart">Quickstart</a>
+  <a href="#concepts">Core concepts</a>
+  <div class="grp">Build</div>
+  <a href="#hosting">Hosting &amp; frameworks</a>
+  <a href="#database">CE database</a>
+  <a href="#realtime">Realtime rooms</a>
+  <a href="#tasks">Compute tasks</a>
+  <a href="#languages">Languages &amp; SDKs</a>
+  <div class="grp">Ship</div>
+  <a href="#domains">Custom domains</a>
+  <a href="#subdomain">Subdomain</a>
+  <a href="#hotreload">Hot reload</a>
+  <a href="#metrics">Uptime &amp; latency</a>
+  <a href="#limits">Storage limits</a>
+  <div class="grp">Reference</div>
+  <a href="#client">@ce/client</a>
+  <a href="#nodes">Run a node</a>
+  <a href="#api">HTTP API</a>
+  <a href="#api-compute">&nbsp;&nbsp;Compute</a>
+  <a href="#api-blobs">&nbsp;&nbsp;Blobs</a>
+  <a href="#api-apps">&nbsp;&nbsp;App hosting</a>
+  <a href="#api-domains">&nbsp;&nbsp;Domains</a>
+  <a href="#api-db">&nbsp;&nbsp;Database</a>
+  <a href="#api-rt">&nbsp;&nbsp;Realtime</a>
+</aside>
 
-  <main id="content">
-    <span class="kick">Documentation</span>
-    <h1 id="introduction">Build on CE</h1>
-    <p class="lead">CE is a trustless, Byzantine-fault-tolerant compute marketplace on a proof-of-work
-      chain. Run a node, mine credits, and spend them to run containers on machines anywhere — no
-      accounts, no orchestrator, no middleman. <em>Bitcoin, but it runs Docker.</em></p>
+<main>
+  <span class="kick">CE Platform · live at ce-net.com</span>
+  <h1>Build and ship on <em>CE</em>.</h1>
+  <p class="lead">CE is a mesh of compute nodes — phones, laptops, and servers running in the browser or headless.
+    On top of that mesh sits a developer platform: deploy any frontend with one command, store data in a persistent
+    database, broadcast realtime messages, and run compute tasks in WebAssembly, JavaScript, or Python. Everything in
+    these docs is deployed and reachable today at <code>https://ce-net.com</code>.</p>
 
-    <p>CE is three layers, and you only touch the ones you need:</p>
-    <ul>
-      <li><b>The node</b> — one binary (<code>ce</code>) that joins the mesh, mines, settles payments, and runs sandboxed jobs. It owns the <em>trustless mechanism</em>: identity, transport, ledger, capabilities.</li>
-      <li><b>The SDK</b> — typed crates that talk to your local node. <code>ce-rs</code> (core: economy, placement, messaging) and <code>ce-coord</code> (optional: streams + replicated state). Additive — add what you need.</li>
-      <li><b>Apps</b> — programs built on the SDK that own <em>policy and UX</em>: <code>swarm</code> (scheduler), <code>rdev</code> (remote dev). New device-to-device features are apps, not node changes.</li>
-    </ul>
-    <div class="note"><b>Mental model.</b> The node is the part that trusts no one. Everything that assumes cooperation — schedulers, replicated state, dashboards — lives above it in the SDK/app tiers. That boundary is the whole architecture.</div>
+  <div class="cards">
+    <a class="card" href="#quickstart"><div class="ck">Quickstart</div><div class="cs">From empty directory to a live URL in one command.</div></a>
+    <a class="card" href="#hosting"><div class="ck">Host a frontend</div><div class="cs">Vite, React, Svelte, Next, Expo. SPA fallback, hot reload.</div></a>
+    <a class="card" href="#database"><div class="ck">Database</div><div class="cs">Persistent, namespaced key-value store over HTTP.</div></a>
+    <a class="card" href="#realtime"><div class="ck">Realtime</div><div class="cs">WebSocket rooms with replay of the last 50 messages.</div></a>
+    <a class="card" href="#tasks"><div class="ck">Compute</div><div class="cs">Push wasm / js / python tasks to the mesh and get results.</div></a>
+    <a class="card" href="#api"><div class="ck">HTTP API</div><div class="cs">Every endpoint, with curl and JS examples.</div></a>
+  </div>
 
-    <h2 id="install">Install</h2>
-    <p>One static binary, every platform. Then <code>ce start</code> and you're on the network.</p>
-    <table>
-      <tr><th>Platform</th><th>Command</th></tr>
-      <tr><td>macOS · Linux</td><td><code>brew install ce-net/ce/ce</code></td></tr>
-      <tr><td>Shell</td><td><code>curl -sSL https://ce-net.com/install.sh | bash</code></td></tr>
-      <tr><td>Windows (Scoop)</td><td><code>scoop bucket add ce-net https://github.com/ce-net/scoop-ce &amp;&amp; scoop install ce</code></td></tr>
-      <tr><td>Windows (PowerShell)</td><td><code>irm https://ce-net.com/install.ps1 | iex</code></td></tr>
-      <tr><td>Arch (AUR)</td><td><code>yay -S ce-bin</code></td></tr>
-      <tr><td>From source</td><td><code>cargo build --release</code></td></tr>
-    </table>
+  <!-- ===================== OVERVIEW ===================== -->
+  <h2 id="overview">Overview</h2>
+  <p>CE has two halves that share one network:</p>
+  <ul>
+    <li><strong>The mesh</strong> — compute nodes that anyone can run. Open <a href="https://ce-net.com/node">ce-net.com/node</a>
+      in any browser (including a phone) and the tab becomes a real WebAssembly/JavaScript compute node and mesh peer. A
+      headless node is one command on a server. Nodes advertise their cores, RAM, storage, and GPU; they receive work and
+      return results.</li>
+    <li><strong>The hub</strong> — the developer-facing service (<code>ce-hub</code>) exposed publicly through nginx at
+      <code>ce-net.com</code>. It is one HTTP surface that gives you: app hosting, a persistent database, realtime rooms,
+      content-addressed blob storage, and a compute task router that dispatches your tasks to connected nodes.</li>
+  </ul>
+  <p>You build against the hub. The hub talks to the mesh. Every API in this document is served from
+    <code>https://ce-net.com</code> and is also reachable under the <code>/hub/&lt;path&gt;</code> prefix.</p>
 
-    <h2 id="quickstart">Quickstart: run a node</h2>
-    <p>Start a node. It auto-joins the public mesh via <code>ce-net.com/bootstrap</code>, begins mining, and exposes a local HTTP API on <code>:8844</code>.</p>
-<pre><code><span class="c-cm"># start the node (foreground; auto-bootstraps + mines)</span>
-ce start
+  <div class="note"><b>One origin, three ways to reach it.</b> Your app, its database, and its rooms are all available on
+    the path origin <code>https://ce-net.com/apps/&lt;id&gt;/</code>, on your personal subdomain
+    <code>https://&lt;id&gt;.ce-net.com/</code>, and on any custom domain you CNAME to <code>ce-net.com</code>.</p>
 
-<span class="c-cm"># in another shell — node id, chain height, balance</span>
-ce status
-ce id</code></pre>
-    <p>Behind NAT? <code>ce start</code> reserves a relay circuit automatically — no flags needed. Once a few blocks land, your balance grows from the per-block uptime reward. That balance is what you spend to run jobs on other machines.</p>
-    <div class="note">Docker is optional. Without it, a node still mesh-routes, mines, and participates in the economy — it just can't <em>host</em> container jobs.</div>
+  <!-- ===================== QUICKSTART ===================== -->
+  <h2 id="quickstart">Quickstart</h2>
+  <p>The fastest path is the <code>ce-app</code> CLI. It scaffolds a template, detects your framework, builds it, uploads
+    the result to the hub, and prints your live URL — then hot-reloads on every save.</p>
 
-    <h2 id="identity">Identity</h2>
-    <p>A node's identity is an <b>Ed25519 keypair</b>. The 32-byte public key <em>is</em> the NodeId — the principal for everything: signing transactions, authoring messages, holding capabilities. There is no registration and no account system; you generate a key and you are a participant.</p>
-    <p>The secret key lives at <code>~/.local/share/ce/identity/node.key</code> (chmod 600). <b>Back it up</b> — it is your node, your balance, and your reputation.</p>
+  <h3>One-command developer flow</h3>
+<pre><code><span class="c-cm"># scaffold the chat template into a new directory</span>
+npm create ce-app
 
-    <h2 id="mesh">The mesh</h2>
-    <p>Nodes talk over a <b>libp2p</b> mesh — never stored IP:port. The stack:</p>
-    <ul>
-      <li><b>Transport:</b> TCP + QUIC, Noise-encrypted (the sender's NodeId is authenticated at the wire).</li>
-      <li><b>Discovery:</b> Kademlia DHT + mDNS, bootstrapped from <code>ce-net.com/bootstrap</code>.</li>
-      <li><b>NAT traversal:</b> AutoNAT + circuit relay + DCUtR hole-punching.</li>
-      <li><b>Pub/sub:</b> gossipsub topics for transactions, blocks, sync, CEP-1 cell signals, and app topics.</li>
-      <li><b>Directed:</b> a request/reply RPC protocol (<code>/ce/rpc/1</code>) and raw streams (<code>tunnel</code>).</li>
-    </ul>
-    <p>Because the sender of every message is cryptographically authenticated, apps get "who said this" for free — the foundation the SDK builds streams and replicated state on.</p>
+<span class="c-cm"># or pick a template explicitly</span>
+ce-app new vite-react my-app
 
-    <h2 id="ledger">Ledger &amp; credits</h2>
-    <p>A proof-of-work chain orders all economic activity. Nodes mine a block roughly every <b>10 seconds</b> and earn an <b>uptime reward</b> in credits.</p>
-    <ul>
-      <li><b>Emission:</b> starts at 1,000 credits/block, halves every 210,000 blocks, hard cap <b>21 billion</b> credits.</li>
-      <li><b>Money is integer base units</b> — never floats. <code>1 credit = 10^18 base units</code> (wei-style). On-chain amounts are <code>u128</code>; the HTTP API carries them as decimal strings.</li>
-      <li><b>Jobs:</b> a <code>JobBid</code> escrows credits from the payer; <code>JobSettle</code> moves the cost to the host once work is delivered. No balance → <code>402</code>.</li>
-      <li><b>Channels:</b> off-chain payment channels meter long-running and data-layer work with signed receipts.</li>
-    </ul>
-    <p>Every settlement burns 1% — a small, constant Sybil tax that makes wash-trading reputation expensive.</p>
+<span class="c-cm"># develop: auto-detect framework, build, upload, print URL, hot-reload on save</span>
+cd my-app &amp;&amp; npx ce-app dev
 
-    <h2 id="capabilities">Capabilities</h2>
-    <p>Authorization is not an allowlist — it's a <b>signed, attenuating capability chain</b> (the <code>ce-cap</code> crate). A resource owner issues a capability to another node; that node may delegate a <em>narrower</em> one onward. Each link can only shrink authority.</p>
-<pre><code><span class="c-cm"># on the DESKTOP — issue a capability to the laptop</span>
-ce grant &lt;laptop-node-id&gt; --can exec,sync,tunnel --expires 90d
-<span class="c-cm"># → prints a capability token the laptop stores and presents</span></code></pre>
-    <p>Abilities are opaque strings (<code>exec</code>, <code>sync</code>, <code>tunnel</code>, <code>deploy</code>…). A node honors any chain rooted at its own key or a configured root. Revocation is on-chain (<code>RevokeCapability</code>) plus expiry — no network lookup on the hot path.</p>
+<span class="c-cm"># one-shot deploy without the watcher</span>
+npx ce-app deploy
 
-    <h2 id="compute">Compute</h2>
-    <p>CE runs two kinds of workload, both sandboxed and metered:</p>
-    <ul>
-      <li><b>Docker</b> (via bollard) — pulled images, CPU/memory limits, <code>network_mode: none</code> (all traffic routes through the mesh), and <b>gVisor</b> (<code>runsc</code>) isolation when available.</li>
-      <li><b>WASM</b> (via wasmtime) — content-addressed modules, fuel-metered, memory-capped, deterministic. Ideal for verifiable redundant execution.</li>
-    </ul>
-    <p>Hosts meter usage and bill in 30-second intervals via heartbeats; you're charged for exactly what you use.</p>
+<span class="c-cm"># attach a custom production domain</span>
+npx ce-app domain add app.acme.com</code></pre>
 
-    <h2 id="sdk">The SDK — <span class="pill">ce-rs</span></h2>
-    <p>A typed, async client for your local node. Point it at <code>127.0.0.1:8844</code> and go.</p>
-<pre><code><span class="c-k">use</span> ce_rs::{<span class="c-ty">CeClient</span>, <span class="c-ty">BidSpec</span>, <span class="c-ty">Amount</span>};
+  <p><code>ce-app dev</code> prints a URL like <code>https://ce-net.com/apps/&lt;your-id&gt;/</code>. Your app id (your public
+    developer id) is generated once and stored at <code>./.ce/app-id</code>, so every later command targets the same app.</p>
 
-<span class="c-k">let</span> ce = <span class="c-ty">CeClient</span>::<span class="c-fn">local</span>();
-<span class="c-k">let</span> me = ce.<span class="c-fn">status</span>().<span class="c-k">await</span>?;
-<span class="c-fn">println!</span>(<span class="c-st">"height {} · balance {}"</span>, me.height, me.balance);
+  <p>Available templates: <code>chat</code>, <code>notes</code>, <code>board</code>, <code>vite-react</code>,
+    <code>svelte</code>, <code>react</code>, <code>next</code>, <code>react-native</code>.</p>
 
-<span class="c-cm">// find a GPU host and deploy a container on it, paid in credits</span>
-<span class="c-k">let</span> host = ce.<span class="c-fn">atlas</span>().<span class="c-k">await</span>?.<span class="c-fn">into_iter</span>().<span class="c-fn">find</span>(|h| h.<span class="c-fn">has_tag</span>(<span class="c-st">"gpu"</span>))?;
-<span class="c-k">let</span> spec = <span class="c-ty">BidSpec</span>{ image:<span class="c-st">"alpine"</span>.<span class="c-fn">into</span>(), cmd:<span class="c-fn">vec!</span>[<span class="c-st">"echo"</span>.<span class="c-fn">into</span>(),<span class="c-st">"hi"</span>.<span class="c-fn">into</span>()],
-                     cpu_cores:<span class="c-pn">1</span>, mem_mb:<span class="c-pn">128</span>, duration_secs:<span class="c-pn">60</span>, bid:<span class="c-ty">Amount</span>::<span class="c-fn">from_credits</span>(<span class="c-pn">10</span>) };
-<span class="c-k">let</span> job = ce.<span class="c-fn">mesh_deploy</span>(&host.node_id, &spec, <span class="c-ty">None</span>).<span class="c-k">await</span>?;</code></pre>
-    <p>What <code>ce-rs</code> covers: <code>status</code> · <code>atlas</code> · <code>transfer</code> · <code>bid</code>/<code>mesh_deploy</code> · jobs · blobs &amp; objects · payment channels · <code>publish</code>/<code>subscribe</code>/<code>request</code>/<code>reply</code> · naming &amp; discovery. Amounts use an <code>Amount</code> type that serializes as a decimal string (JSON can't hold 10^18-scale integers).</p>
-    <div class="note"><b>Add it:</b> <code>ce-rs = { git = "https://github.com/ce-net/ce-rs" }</code></div>
+  <h3>Deploy without the CLI</h3>
+  <p>The CLI is just a wrapper over the HTTP API. You can upload a built site with <code>PUT</code> requests and it goes
+    live immediately. The empty path is your <code>index.html</code>.</p>
 
-    <h2 id="coord">Coordination — <span class="pill">ce-coord</span></h2>
-    <p>The coordination layer CE deliberately keeps <em>out</em> of the node: typed pub/sub streams and replicated collections, built as a library over <code>ce-rs</code>. It's fully decoupled — same client, additive crate.</p>
-<pre><code><span class="c-k">use</span> ce_coord::<span class="c-ty">Coord</span>;
+  <div class="tabs" data-tabs="qs">
+    <button class="active" data-tab="qs-curl">curl</button>
+    <button data-tab="qs-js">JavaScript</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="qs-curl">
+<pre><code><span class="c-cm"># upload index.html — empty path means the app root</span>
+curl -X PUT https://ce-net.com/apps/my-app/ \
+  -H <span class="c-st">"content-type: text/html"</span> \
+  --data-binary <span class="c-st">@dist/index.html</span>
 
-<span class="c-k">let</span> coord = <span class="c-ty">Coord</span>::<span class="c-fn">with_client</span>(ce.<span class="c-fn">clone</span>()).<span class="c-k">await</span>?;  <span class="c-cm">// shares the ce-rs client</span>
+<span class="c-cm"># upload an asset</span>
+curl -X PUT https://ce-net.com/apps/my-app/assets/app.js \
+  -H <span class="c-st">"content-type: application/javascript"</span> \
+  --data-binary <span class="c-st">@dist/assets/app.js</span>
 
-<span class="c-cm">// typed pub/sub: publish on one node, receive on others</span>
-<span class="c-k">let</span> mut s = coord.<span class="c-fn">stream</span>::&lt;<span class="c-ty">Reading</span>&gt;(<span class="c-st">"sensors"</span>).<span class="c-k">await</span>?;
-s.<span class="c-fn">publish</span>(&reading).<span class="c-k">await</span>?;
+<span class="c-cm"># live now</span>
+open https://ce-net.com/apps/my-app/</code></pre>
+  </div>
+  <div class="tabpane" id="qs-js">
+<pre><code><span class="c-k">const</span> base = <span class="c-st">"https://ce-net.com"</span>;
+<span class="c-k">const</span> id = <span class="c-st">"my-app"</span>;
 
-<span class="c-cm">// replicated map: one writer, many readers, versioned convergence</span>
-<span class="c-k">let</span> map = coord.<span class="c-fn">map_writer</span>::&lt;<span class="c-ty">String</span>,<span class="c-ty">i64</span>&gt;(<span class="c-st">"balances"</span>).<span class="c-k">await</span>?;
-<span class="c-k">let</span> v = map.<span class="c-fn">insert</span>(<span class="c-st">"alice"</span>.<span class="c-fn">into</span>(), <span class="c-pn">100</span>).<span class="c-k">await</span>?;
+<span class="c-k">await</span> <span class="c-fn">fetch</span>(<span class="c-st">`${base}/apps/${id}/`</span>, {
+  method: <span class="c-st">"PUT"</span>,
+  headers: { <span class="c-st">"content-type"</span>: <span class="c-st">"text/html"</span> },
+  body: <span class="c-st">"&lt;!doctype html&gt;&lt;h1&gt;hello from CE&lt;/h1&gt;"</span>,
+});
 
-<span class="c-cm">// on a reader node (knows the writer's NodeId):</span>
-<span class="c-k">let</span> map = coord.<span class="c-fn">map_reader</span>::&lt;<span class="c-ty">String</span>,<span class="c-ty">i64</span>&gt;(<span class="c-st">"balances"</span>, writer_id).<span class="c-k">await</span>?;
-map.<span class="c-fn">await_version</span>(v).<span class="c-k">await</span>;            <span class="c-cm">// converged</span>
-<span class="c-fn">assert_eq!</span>(map.<span class="c-fn">get</span>(&<span class="c-st">"alice"</span>.<span class="c-fn">into</span>()), <span class="c-ty">Some</span>(<span class="c-pn">100</span>));</code></pre>
-    <h3>What's in the box</h3>
-    <table>
-      <tr><th>Primitive</th><th>What it is</th></tr>
-      <tr><td><code>Stream&lt;T&gt;</code></td><td>Typed pub/sub channel. At-most-once; for events &amp; telemetry.</td></tr>
-      <tr><td><code>RMap&lt;K,V&gt;</code> · <code>RSet&lt;T&gt;</code> · <code>RVec&lt;T&gt;</code> · <code>RCell&lt;V&gt;</code> · <code>RCounter</code></td><td>Single-writer replicated collections. Versioned; gaps self-repair.</td></tr>
-      <tr><td><code>Replicated&lt;S&gt;</code></td><td>The engine — replicate any <code>StateMachine</code> you define.</td></tr>
-    </table>
-    <h3>How it works &amp; scales</h3>
-    <p>A writer broadcasts versioned operations on a gossip topic; readers apply them in order and repair any gaps with a directed catch-up request to the writer. Integrity is free — a reader only applies entries whose authenticated sender is the writer it follows.</p>
-    <ul>
-      <li><b>Reads scale flat</b> — every reader answers from its own local replica, zero writer load.</li>
-      <li><b>A write is one broadcast</b> — cost independent of reader count.</li>
-      <li><b>Catch-up is O(missed)</b>, not O(log) — steady-state readers never ask.</li>
-    </ul>
-    <div class="note">v0 is single-writer (a fixed leader). Multi-writer <b>Raft</b> leader election, blob-store snapshots, SSE push, and <code>ce-cap</code>-gated membership are the roadmap — and the <code>Replicated</code> engine already isolates the writer role, so collection call sites won't change.</div>
-    <div class="note"><b>Add it:</b> <code>ce-coord = { git = "https://github.com/ce-net/ce-coord" }</code> — depends on <code>ce-rs</code>, never the reverse.</div>
+<span class="c-cm">// -> { id: "my-app", path: "index.html", version: 1, url: "/apps/my-app/" }</span></code></pre>
+  </div>
+  </div>
 
-    <h2 id="apps">Apps: swarm &amp; rdev</h2>
-    <p>Apps are ordinary programs on the SDK — they own policy, CE owns mechanism.</p>
-<pre><code><span class="c-cm"># swarm — fan a command across hosts, gather results</span>
-swarm run alpine -n 8 --select gpu -- nvidia-smi
-swarm verify alpine -k 3 -- sha256sum /etc/os-release   <span class="c-cm"># redundant, compared</span>
+  <!-- ===================== CONCEPTS ===================== -->
+  <h2 id="concepts">Core concepts</h2>
+  <table class="tbl">
+    <tr><th>Term</th><th>What it is</th></tr>
+    <tr><td><strong>App</strong></td><td>A hosted set of static files under an <code>id</code>. Serves at <code>/apps/&lt;id&gt;/</code> and at <code>&lt;id&gt;.ce-net.com</code>. Your app id is also the namespace for its database and rooms.</td></tr>
+    <tr><td><strong>App id</strong></td><td>Your public developer id, stored at <code>./.ce/app-id</code>. The client SDK auto-resolves it from the URL.</td></tr>
+    <tr><td><strong>Database namespace</strong></td><td>A persistent key-value store keyed under an app id. Newest-first listing, prefix scans.</td></tr>
+    <tr><td><strong>Room</strong></td><td>A named WebSocket channel under an app. Any text frame is broadcast to everyone else; the last 50 are replayed on join.</td></tr>
+    <tr><td><strong>Blob</strong></td><td>Content-addressed storage: <code>PUT</code> bytes, get back a hash, <code>GET</code> them anywhere by that hash.</td></tr>
+    <tr><td><strong>Task</strong></td><td>A unit of compute (wasm / js / python) the hub routes to a connected node, returning the value and timing.</td></tr>
+    <tr><td><strong>Node</strong></td><td>A compute peer — a browser tab or a headless worker — that executes tasks and contributes capacity.</td></tr>
+  </table>
 
-<span class="c-cm"># rdev — remote dev over the mesh, gated by capabilities</span>
-rdev exec desktop --image alpine -- uname -a
-rdev watch ~/ce-net desktop:ce-net                       <span class="c-cm"># continuous mirror</span></code></pre>
+  <!-- ===================== HOSTING ===================== -->
+  <h2 id="hosting">Hosting &amp; frontend frameworks</h2>
+  <p>CE hosts static sites and single-page apps. You upload built files; the hub serves them with the right content type,
+    applies SPA fallback, and injects a hot-reload snippet into HTML. There is no build step on the server — you build
+    locally (or the CLI does) and upload the output.</p>
 
-    <h2 id="cli">CLI reference</h2>
-    <table>
-      <tr><th>Command</th><th>What it does</th></tr>
-      <tr><td><code>ce start</code></td><td>Start the node: join mesh, mine, serve the API.</td></tr>
-      <tr><td><code>ce status</code></td><td>Node id, chain height, difficulty, balance.</td></tr>
-      <tr><td><code>ce id</code></td><td>Print this node's NodeId.</td></tr>
-      <tr><td><code>ce grant &lt;node&gt; --can … --expires …</code></td><td>Issue a capability token to another node.</td></tr>
-      <tr><td><code>ce tunnel &lt;node&gt; 2222:22</code></td><td>Tunnel a remote port over the mesh.</td></tr>
-      <tr><td><code>ce fund</code> · <code>ce run</code> · <code>ce ps</code> · <code>ce kill</code></td><td>Funding and job lifecycle helpers.</td></tr>
-      <tr><td><code>coord map-writer / map-reader / stream-pub / stream-sub</code></td><td>The <code>ce-coord</code> demo CLI.</td></tr>
-    </table>
+  <h3>Framework detection</h3>
+  <p><code>ce-app dev</code> and <code>ce-app deploy</code> auto-detect and build these frameworks, then upload the output
+    directory:</p>
+  <table class="tbl">
+    <tr><th>Framework</th><th>Detected build output</th><th>Notes</th></tr>
+    <tr><td>Vite</td><td><code>dist/</code></td><td>React or vanilla; <code>vite-react</code> and <code>vite</code> templates.</td></tr>
+    <tr><td>React</td><td><code>dist/</code> or <code>build/</code></td><td><code>react</code> template.</td></tr>
+    <tr><td>Svelte</td><td><code>dist/</code> / <code>build/</code></td><td><code>svelte</code> template.</td></tr>
+    <tr><td>Next</td><td>static export</td><td><code>next</code> template; export to static, SPA fallback on.</td></tr>
+    <tr><td>Astro</td><td><code>dist/</code></td><td>Static output.</td></tr>
+    <tr><td>Expo / React Native</td><td>web export</td><td><code>react-native</code> template; web build.</td></tr>
+  </table>
 
-    <h2 id="http">HTTP API</h2>
-    <p>Base: <code>http://localhost:8844</code>. A selection — see the full reference in the repo.</p>
-    <table>
-      <tr><th>Method</th><th>Path</th><th>Description</th></tr>
-      <tr><td>GET</td><td><code>/status</code></td><td>Node id, height, balance.</td></tr>
-      <tr><td>GET</td><td><code>/atlas</code></td><td>Peer capacity atlas (with capability tags).</td></tr>
-      <tr><td>POST</td><td><code>/jobs/bid</code></td><td>Broadcast a container job bid.</td></tr>
-      <tr><td>POST</td><td><code>/mesh-deploy</code></td><td>Deploy a cell on a specific host.</td></tr>
-      <tr><td>POST</td><td><code>/transfer</code></td><td>Transfer credits.</td></tr>
-      <tr><td>POST</td><td><code>/mesh/publish</code> · <code>/mesh/subscribe</code></td><td>App pub/sub.</td></tr>
-      <tr><td>POST</td><td><code>/mesh/request</code> · <code>/mesh/reply</code></td><td>Directed app request/reply.</td></tr>
-      <tr><td>GET</td><td><code>/blocks/stream</code> · <code>/signals/stream</code></td><td>SSE push streams.</td></tr>
-      <tr><td>GET</td><td><code>/beacon</code></td><td>Verifiable public randomness from the PoW tip.</td></tr>
-      <tr><td>GET</td><td><code>/health</code> · <code>/bootstrap</code></td><td>Liveness · advertised multiaddrs.</td></tr>
-    </table>
+  <h3>SPA fallback</h3>
+  <p>Client-side routers need any unknown route to return <code>index.html</code>. Turn that on per app:</p>
+  <div class="tabs" data-tabs="spa">
+    <button class="active" data-tab="spa-curl">curl</button>
+    <button data-tab="spa-js">JavaScript</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="spa-curl">
+<pre><code>curl -X PUT https://ce-net.com/apps/my-app/config \
+  -H <span class="c-st">"content-type: application/json"</span> \
+  -d <span class="c-st">'{"spa":true}'</span>
 
-    <h2 id="faq">FAQ</h2>
-    <h3>Is CE Byzantine-fault-tolerant?</h3>
-    <p>Yes — that's the point. The node assumes adversaries and uses proof-of-work, economic escrow, settlement burns, and on-chain reputation for Sybil resistance. (This is the key difference from honest-fleet runtimes like Flashbots' Mosaik, which assume cooperating members and aren't BFT.)</p>
-    <h3>How is this different from Kubernetes or Ray?</h3>
-    <p>Those orchestrate machines <em>you own</em>. CE is a marketplace between parties who <em>don't trust each other</em>, settled in credits, with no central control plane. <code>swarm</code> gives you Ray-like scatter/gather on top.</p>
-    <h3>Do I need credits to start?</h3>
-    <p>No — run a node and mine them. You only need a balance to <em>spend</em> on others' compute.</p>
-    <h3>Where do new device-to-device features go?</h3>
-    <p>In apps/SDK crates over the mesh primitives (pub/sub + request/reply + <code>ce-cap</code>), not as new node RPCs. The node stays small and trustless.</p>
+<span class="c-cm"># inspect</span>
+curl https://ce-net.com/apps/my-app/config
+<span class="c-cm"># -> {"spa":true,"version":4,"domains":["app.acme.com"]}</span></code></pre>
+  </div>
+  <div class="tabpane" id="spa-js">
+<pre><code><span class="c-k">await</span> <span class="c-fn">fetch</span>(<span class="c-st">"https://ce-net.com/apps/my-app/config"</span>, {
+  method: <span class="c-st">"PUT"</span>,
+  headers: { <span class="c-st">"content-type"</span>: <span class="c-st">"application/json"</span> },
+  body: <span class="c-fn">JSON</span>.stringify({ spa: <span class="c-k">true</span> }),
+});</code></pre>
+  </div>
+  </div>
+  <p>With SPA enabled, a route-like miss <em>that has no file extension</em> returns <code>index.html</code> with a
+    <code>200</code> status, so deep links and refreshes work. Requests for real assets (paths with an extension) still
+    <code>404</code> if missing, so a broken script tag is obvious.</p>
 
-    <div class="next">
-      <a href="#quickstart"><div class="s">Get going</div><div class="t">Run a node →</div></a>
-      <a href="#coord"><div class="s">Build</div><div class="t">Coordinate state →</div></a>
-      <a href="https://github.com/ce-net/ce"><div class="s">Source</div><div class="t">Read the code →</div></a>
+  <h3>Content types &amp; the root file</h3>
+  <p>Each <code>PUT /apps/:id/*path</code> stores one file at that path with whatever <code>content-type</code> you send.
+    An empty path stores <code>index.html</code>. The response includes the incremented <code>version</code> and the public
+    <code>url</code>.</p>
+
+  <!-- ===================== DATABASE ===================== -->
+  <h2 id="database">CE database</h2>
+  <p>A persistent key-value store, namespaced per app. Values are arbitrary JSON. Lists come back newest-first and can be
+    filtered by prefix. No schema, no setup — the namespace is your app id.</p>
+
+  <h4>Set, get, delete a key</h4>
+  <div class="tabs" data-tabs="db">
+    <button class="active" data-tab="db-curl">curl</button>
+    <button data-tab="db-js">@ce/client</button>
+    <button data-tab="db-fetch">fetch</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="db-curl">
+<pre><code><span class="c-cm"># write JSON to a key</span>
+curl -X PUT https://ce-net.com/db/my-app/user:42 \
+  -H <span class="c-st">"content-type: application/json"</span> \
+  -d <span class="c-st">'{"name":"Ada","score":9}'</span>
+<span class="c-cm"># -> {"ok":true,"key":"user:42"}</span>
+
+<span class="c-cm"># read it back</span>
+curl https://ce-net.com/db/my-app/user:42
+<span class="c-cm"># -> {"name":"Ada","score":9}   (or 404 if absent)</span>
+
+<span class="c-cm"># list newest-first, filter by prefix, cap the count</span>
+curl <span class="c-st">"https://ce-net.com/db/my-app?prefix=user:&amp;limit=20"</span>
+<span class="c-cm"># -> {"items":[{"key":"user:42","value":{...}}],"n":1}</span>
+
+<span class="c-cm"># delete</span>
+curl -X DELETE https://ce-net.com/db/my-app/user:42</code></pre>
+  </div>
+  <div class="tabpane" id="db-js">
+<pre><code><span class="c-k">import</span> { createClient } <span class="c-k">from</span> <span class="c-st">"@ce/client"</span>;
+<span class="c-k">const</span> ce = <span class="c-fn">createClient</span>();   <span class="c-cm">// appId auto-resolves from the page URL</span>
+
+<span class="c-k">await</span> ce.db.<span class="c-fn">set</span>(<span class="c-st">"user:42"</span>, { name: <span class="c-st">"Ada"</span>, score: <span class="c-nu">9</span> });
+<span class="c-k">const</span> u   = <span class="c-k">await</span> ce.db.<span class="c-fn">get</span>(<span class="c-st">"user:42"</span>);
+<span class="c-k">const</span> all = <span class="c-k">await</span> ce.db.<span class="c-fn">list</span>(<span class="c-st">"user:"</span>, <span class="c-nu">20</span>);
+<span class="c-k">await</span> ce.db.<span class="c-fn">del</span>(<span class="c-st">"user:42"</span>);</code></pre>
+  </div>
+  <div class="tabpane" id="db-fetch">
+<pre><code><span class="c-k">const</span> base = <span class="c-st">"https://ce-net.com"</span>, app = <span class="c-st">"my-app"</span>;
+
+<span class="c-k">await</span> <span class="c-fn">fetch</span>(<span class="c-st">`${base}/db/${app}/user:42`</span>, {
+  method: <span class="c-st">"PUT"</span>,
+  headers: { <span class="c-st">"content-type"</span>: <span class="c-st">"application/json"</span> },
+  body: <span class="c-fn">JSON</span>.stringify({ name: <span class="c-st">"Ada"</span>, score: <span class="c-nu">9</span> }),
+});
+
+<span class="c-k">const</span> u = <span class="c-k">await</span> (<span class="c-k">await</span> <span class="c-fn">fetch</span>(<span class="c-st">`${base}/db/${app}/user:42`</span>)).<span class="c-fn">json</span>();</code></pre>
+  </div>
+  </div>
+
+  <div class="note"><b>Listing semantics.</b> <code>GET /db/:app</code> returns <code>{items:[{key,value}],n}</code>,
+    newest-first. <code>prefix</code> filters keys; <code>limit</code> caps how many come back. Useful for feeds, message
+    logs, and leaderboards where the most recent writes matter most.</div>
+
+  <p>The database is reachable from all three origins for your app — the path origin, your subdomain, and any custom
+    domain — so a page served at <code>app.acme.com</code> can call <code>/db/my-app/&lt;key&gt;</code> on the same host.</p>
+
+  <!-- ===================== REALTIME ===================== -->
+  <h2 id="realtime">Realtime rooms</h2>
+  <p>Rooms are WebSocket channels under an app. Connect to <code>/rt/:app/:room</code>; any text frame you send is
+    broadcast to every other connection in that room. On connect, the last 50 messages are replayed to you, so a client
+    that joins late still sees recent history.</p>
+
+  <div class="tabs" data-tabs="rt">
+    <button class="active" data-tab="rt-js">@ce/client</button>
+    <button data-tab="rt-ws">WebSocket</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="rt-js">
+<pre><code><span class="c-k">import</span> { createClient } <span class="c-k">from</span> <span class="c-st">"@ce/client"</span>;
+<span class="c-k">const</span> ce = <span class="c-fn">createClient</span>();
+
+<span class="c-k">const</span> room = ce.<span class="c-fn">room</span>(<span class="c-st">"lobby"</span>);
+room.<span class="c-fn">onOpen</span>(() =&gt; room.<span class="c-fn">send</span>(<span class="c-fn">JSON</span>.stringify({ join: <span class="c-st">"Ada"</span> })));
+room.<span class="c-fn">on</span>((msg) =&gt; <span class="c-fn">console</span>.<span class="c-fn">log</span>(<span class="c-st">"got"</span>, msg));   <span class="c-cm">// fires for the 50-message replay too</span>
+<span class="c-cm">// room.send(text) -> broadcast to others; room.close() to leave</span></code></pre>
+  </div>
+  <div class="tabpane" id="rt-ws">
+<pre><code><span class="c-cm">// works on ce-net.com, &lt;id&gt;.ce-net.com, and your custom domain</span>
+<span class="c-k">const</span> ws = <span class="c-k">new</span> <span class="c-fn">WebSocket</span>(<span class="c-st">"wss://ce-net.com/rt/my-app/lobby"</span>);
+
+ws.onopen    = () =&gt; ws.<span class="c-fn">send</span>(<span class="c-st">"hello room"</span>);
+ws.onmessage = (e) =&gt; <span class="c-fn">console</span>.<span class="c-fn">log</span>(e.data);   <span class="c-cm">// last 50 replayed first, then live</span></code></pre>
+  </div>
+  </div>
+
+  <p>Messages are opaque text — send plain strings or JSON you stringify yourself. Pair rooms with the database when you
+    want presence-style ephemerality (rooms) plus durable history (database).</p>
+
+  <!-- ===================== TASKS ===================== -->
+  <h2 id="tasks">Compute tasks</h2>
+  <p><code>POST /tasks</code> hands a unit of work to the mesh. The hub picks a connected node, runs it, and returns the
+    result with timing and which node ran it. Two shapes are accepted: a named WebAssembly function, or inline code in a
+    sandboxed language.</p>
+
+  <h4>WASM task</h4>
+  <div class="tabs" data-tabs="tw">
+    <button class="active" data-tab="tw-curl">curl</button>
+    <button data-tab="tw-js">fetch</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="tw-curl">
+<pre><code>curl -X POST https://ce-net.com/tasks \
+  -H <span class="c-st">"content-type: application/json"</span> \
+  -d <span class="c-st">'{"func":"count_primes","args":[200000],"ret":"i32","module":"demo"}'</span>
+<span class="c-cm"># -> {"node":"...","lang":"wasm","func":"count_primes","ok":true,"value":17984,"ms":42}</span></code></pre>
+  </div>
+  <div class="tabpane" id="tw-js">
+<pre><code><span class="c-k">const</span> r = <span class="c-k">await</span> <span class="c-fn">fetch</span>(<span class="c-st">"https://ce-net.com/tasks"</span>, {
+  method: <span class="c-st">"POST"</span>,
+  headers: { <span class="c-st">"content-type"</span>: <span class="c-st">"application/json"</span> },
+  body: <span class="c-fn">JSON</span>.stringify({
+    func: <span class="c-st">"count_primes"</span>, args: [<span class="c-nu">200000</span>], ret: <span class="c-st">"i32"</span>, module: <span class="c-st">"demo"</span>,
+  }),
+});
+<span class="c-fn">console</span>.<span class="c-fn">log</span>(<span class="c-k">await</span> r.<span class="c-fn">json</span>());</code></pre>
+  </div>
+  </div>
+
+  <h4>Code task (js or python)</h4>
+  <div class="tabs" data-tabs="tc">
+    <button class="active" data-tab="tc-curl">curl</button>
+    <button data-tab="tc-js">JavaScript</button>
+    <button data-tab="tc-py">Python (Pyodide)</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="tc-curl">
+<pre><code>curl -X POST https://ce-net.com/tasks \
+  -H <span class="c-st">"content-type: application/json"</span> \
+  -d <span class="c-st">'{"lang":"js","code":"i=&gt;i.a+i.b","input":{"a":2,"b":3},"func":"task"}'</span>
+<span class="c-cm"># -> {"node":"...","lang":"js","func":"task","ok":true,"value":5,"ms":3}</span></code></pre>
+  </div>
+  <div class="tabpane" id="tc-js">
+<pre><code><span class="c-k">const</span> r = <span class="c-k">await</span> <span class="c-fn">fetch</span>(<span class="c-st">"https://ce-net.com/tasks"</span>, {
+  method: <span class="c-st">"POST"</span>,
+  headers: { <span class="c-st">"content-type"</span>: <span class="c-st">"application/json"</span> },
+  body: <span class="c-fn">JSON</span>.stringify({
+    lang: <span class="c-st">"js"</span>,
+    code: <span class="c-st">"i =&gt; i.a + i.b"</span>,   <span class="c-cm">// runs in a sandboxed Worker on a node</span>
+    input: { a: <span class="c-nu">2</span>, b: <span class="c-nu">3</span> },
+    func: <span class="c-st">"task"</span>,
+  }),
+});
+<span class="c-fn">console</span>.<span class="c-fn">log</span>(<span class="c-k">await</span> r.<span class="c-fn">json</span>());   <span class="c-cm">// { ok:true, value:5, ms:3, node:"..." }</span></code></pre>
+  </div>
+  <div class="tabpane" id="tc-py">
+<pre><code><span class="c-cm"># python runs under Pyodide — browser nodes only</span>
+curl -X POST https://ce-net.com/tasks \
+  -H <span class="c-st">"content-type: application/json"</span> \
+  -d <span class="c-st">'{"lang":"python","code":"def task(i):\n    return i[\"a\"] + i[\"b\"]","input":{"a":2,"b":3},"func":"task"}'</span></code></pre>
+  </div>
+  </div>
+
+  <h4>Targeting a specific node</h4>
+  <p>Add an optional <code>"target":"&lt;full node id&gt;"</code> to route a task to one node (find ids via
+    <code>GET /nodes</code>). Without a target the hub chooses.</p>
+
+  <div class="note warn"><b>Status codes.</b> <code>POST /tasks</code> returns <code>503</code> if no nodes are connected,
+    and <code>504</code> if the chosen node did not return a result in time. The success body is always
+    <code>{node, lang, func, ok, value, ms, error}</code> — check <code>ok</code> and read <code>error</code> when it is
+    false.</div>
+
+  <!-- ===================== LANGUAGES & SDKS ===================== -->
+  <h2 id="languages">Languages &amp; SDKs</h2>
+  <h3>Task languages</h3>
+  <table class="tbl">
+    <tr><th>lang</th><th>Runtime</th><th>Where it runs</th></tr>
+    <tr><td><code>wasm</code></td><td>WebAssembly module + named function</td><td>Browser and headless nodes.</td></tr>
+    <tr><td><code>js</code></td><td>Sandboxed Worker</td><td>Browser and headless nodes.</td></tr>
+    <tr><td><code>python</code></td><td>Pyodide</td><td>Browser nodes only.</td></tr>
+  </table>
+  <p>The headless worker (<code>web/site/worker.js</code>) runs <code>wasm</code> and <code>js</code> tasks; Python
+    requires a browser node because it runs under Pyodide.</p>
+
+  <h3>SDKs</h3>
+  <table class="tbl">
+    <tr><th>SDK</th><th>Package</th><th>Surface</th></tr>
+    <tr><td>Browser</td><td><code>@ce/client</code> (ESM, <code>web/ce-app/client</code>)</td><td><code>createClient()</code>: <code>appId</code>, <code>base</code>, <code>db</code>, <code>room()</code>.</td></tr>
+    <tr><td>Python</td><td><code>ce</code> (<code>web/sdks/python</code>)</td><td>tasks + db + room.</td></tr>
+    <tr><td>Go</td><td><code>ce</code> (<code>web/sdks/go</code>)</td><td>tasks + db + room.</td></tr>
+    <tr><td>Rust</td><td><code>ce-rs</code></td><td>The Rust node SDK.</td></tr>
+  </table>
+
+  <div class="tabs" data-tabs="sdk">
+    <button class="active" data-tab="sdk-ts">TypeScript</button>
+    <button data-tab="sdk-py">Python</button>
+    <button data-tab="sdk-go">Go</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="sdk-ts">
+<pre><code><span class="c-k">import</span> { createClient } <span class="c-k">from</span> <span class="c-st">"@ce/client"</span>;
+<span class="c-k">const</span> ce = <span class="c-fn">createClient</span>();
+
+<span class="c-k">await</span> ce.db.<span class="c-fn">set</span>(<span class="c-st">"k"</span>, { hi: <span class="c-nu">1</span> });
+<span class="c-k">const</span> room = ce.<span class="c-fn">room</span>(<span class="c-st">"lobby"</span>);
+room.<span class="c-fn">on</span>((m) =&gt; <span class="c-fn">console</span>.<span class="c-fn">log</span>(m));
+room.<span class="c-fn">send</span>(<span class="c-st">"hello"</span>);</code></pre>
+  </div>
+  <div class="tabpane" id="sdk-py">
+<pre><code><span class="c-cm"># web/sdks/python — tasks + db + room</span>
+<span class="c-k">from</span> ce <span class="c-k">import</span> Client
+
+ce = <span class="c-fn">Client</span>(<span class="c-st">"my-app"</span>)
+ce.db.<span class="c-fn">set</span>(<span class="c-st">"k"</span>, {<span class="c-st">"hi"</span>: <span class="c-nu">1</span>})
+res = ce.<span class="c-fn">run_task</span>(lang=<span class="c-st">"js"</span>, code=<span class="c-st">"i=&gt;i.a+i.b"</span>, input={<span class="c-st">"a"</span>: <span class="c-nu">2</span>, <span class="c-st">"b"</span>: <span class="c-nu">3</span>})</code></pre>
+  </div>
+  <div class="tabpane" id="sdk-go">
+<pre><code><span class="c-cm">// web/sdks/go — tasks + db + room</span>
+<span class="c-k">import</span> <span class="c-st">"ce"</span>
+
+client := ce.<span class="c-fn">New</span>(<span class="c-st">"my-app"</span>)
+client.DB.<span class="c-fn">Set</span>(<span class="c-st">"k"</span>, <span class="c-fn">map</span>[<span class="c-ty">string</span>]<span class="c-fn">any</span>{<span class="c-st">"hi"</span>: <span class="c-nu">1</span>})
+res, _ := client.<span class="c-fn">RunTask</span>(ce.Task{Lang: <span class="c-st">"js"</span>, Code: <span class="c-st">"i=&gt;i.a+i.b"</span>, Input: in})</code></pre>
+  </div>
+  </div>
+
+  <!-- ===================== DOMAINS ===================== -->
+  <h2 id="domains">Custom domains</h2>
+  <p>Point a production domain at your app in three steps: attach the domain, create a CNAME, and you are live with TLS.</p>
+  <ol>
+    <li>Attach the domain to your app (CLI or API). The response tells you the CNAME target — always <code>ce-net.com</code>.</li>
+    <li>At your DNS provider, create a <code>CNAME</code> for the domain pointing to <code>ce-net.com</code>.</li>
+    <li>Load <code>https://&lt;your-domain&gt;/</code>. nginx sets an <code>X-CE-Host</code> header so the hub resolves
+      which app to serve via <code>GET /_host/*path</code>.</li>
+  </ol>
+
+  <div class="tabs" data-tabs="dom">
+    <button class="active" data-tab="dom-cli">CLI</button>
+    <button data-tab="dom-curl">curl</button>
+  </div>
+  <div class="tabwrap">
+  <div class="tabpane show" id="dom-cli">
+<pre><code>npx ce-app domain add app.acme.com
+<span class="c-cm"># prints the CNAME (app.acme.com -> ce-net.com) and the TLS note</span></code></pre>
+  </div>
+  <div class="tabpane" id="dom-curl">
+<pre><code><span class="c-cm"># attach</span>
+curl -X PUT https://ce-net.com/apps/my-app/domain \
+  -H <span class="c-st">"content-type: application/json"</span> \
+  -d <span class="c-st">'{"domain":"app.acme.com"}'</span>
+<span class="c-cm"># -> {"domain":"app.acme.com","id":"my-app","cname":"ce-net.com"}</span>
+
+<span class="c-cm"># list all mapped domains</span>
+curl https://ce-net.com/domains
+<span class="c-cm"># -> [{"domain":"app.acme.com","id":"my-app"}]</span>
+
+<span class="c-cm"># detach</span>
+curl -X DELETE https://ce-net.com/apps/my-app/domain/app.acme.com</code></pre>
+  </div>
+  </div>
+  <p>Your database and rooms work on the custom origin too: <code>https://app.acme.com/db/my-app/&lt;key&gt;</code> and
+    <code>wss://app.acme.com/rt/my-app/&lt;room&gt;</code>.</p>
+
+  <!-- ===================== SUBDOMAIN ===================== -->
+  <h2 id="subdomain">Your subdomain</h2>
+  <p>Every app id also resolves on a wildcard subdomain, live today: <code>https://&lt;id&gt;.ce-net.com/</code>. No setup —
+    deploy to an id and the subdomain serves it. The <code>@ce/client</code> SDK auto-resolves your app id from either the
+    <code>/apps/&lt;id&gt;/</code> path or the <code>&lt;id&gt;.ce-net.com</code> host, so the same client code works on all
+    three origins.</p>
+  <table class="tbl">
+    <tr><th>Origin</th><th>URL</th></tr>
+    <tr><td>Path</td><td><code>https://ce-net.com/apps/&lt;id&gt;/</code></td></tr>
+    <tr><td>Subdomain</td><td><code>https://&lt;id&gt;.ce-net.com/</code></td></tr>
+    <tr><td>Custom</td><td><code>https://&lt;custom-domain&gt;/</code> (CNAME to <code>ce-net.com</code>)</td></tr>
+  </table>
+
+  <!-- ===================== HOT RELOAD ===================== -->
+  <h2 id="hotreload">Hot reload</h2>
+  <p>Every HTML page the hub serves gets a small hot-reload snippet injected. The snippet subscribes to
+    <code>GET /apps/:id/__reload</code>, a Server-Sent Events stream that emits the app's <code>version</code> number on
+    every change. When you upload a new file (the version increments), the page reloads automatically.</p>
+  <p><code>ce-app dev</code> wires this for you: save a file, the CLI rebuilds and re-uploads, the version bumps, and the
+    open tab refreshes. To watch reloads yourself:</p>
+<pre><code>curl -N https://ce-net.com/apps/my-app/__reload
+<span class="c-cm"># SSE stream; emits the new version number on each upload</span></code></pre>
+
+  <!-- ===================== METRICS ===================== -->
+  <h2 id="metrics">Uptime &amp; latency metrics</h2>
+  <p>The mesh reports live aggregate metrics. <code>GET /stats</code> is a one-shot snapshot; <code>GET /stats/stream</code>
+    pushes the same object as SSE roughly every 1.5 seconds. The human view is at
+    <a href="https://ce-net.com/network">ce-net.com/network</a>.</p>
+  <table class="tbl">
+    <tr><th>Field</th><th>Meaning</th></tr>
+    <tr><td><code>nodes</code>, <code>cores</code>, <code>ram_gb</code>, <code>storage_gb</code></td><td>Connected node count and summed capacity.</td></tr>
+    <tr><td><code>gpus[]</code>, <code>gpu_count</code>, <code>gpu_vram_gb</code>, <code>webgpu_nodes</code></td><td>GPU inventory and WebGPU-capable node count.</td></tr>
+    <tr><td><code>perf_score</code>, <code>tasks_run</code></td><td>Aggregate performance score and total tasks executed.</td></tr>
+    <tr><td><code>blobs</code>, <code>blob_bytes</code></td><td>Blob store object count and total size.</td></tr>
+    <tr><td><code>avg_uptime_pct</code>, <code>most_reliable{short,uptime_pct}</code></td><td>Average uptime and the most reliable node.</td></tr>
+    <tr><td><code>by_class{phone,laptop,server,device}</code></td><td>Node counts per device class.</td></tr>
+    <tr><td><code>latency_p50_ms</code>, <code>latency_p95_ms</code>, <code>latency_measured</code></td><td>Round-trip latency percentiles and sample size.</td></tr>
+    <tr><td><code>data_used_bytes</code>, <code>hosted_apps</code>, <code>replicas</code></td><td>Platform storage in use, hosted app count, replica count.</td></tr>
+    <tr><td><code>limits{max_data_bytes,max_apps,max_domains,max_db_namespaces}</code></td><td>The active global limits (see below).</td></tr>
+  </table>
+  <p>Per-node detail is at <code>GET /nodes</code> — each entry carries <code>rtt_ms</code>, <code>uptime_pct</code>,
+    <code>device_class</code>, <code>online_secs</code>, <code>tasks_run</code>, and hardware fields.</p>
+
+  <!-- ===================== LIMITS ===================== -->
+  <h2 id="limits">Storage limits</h2>
+  <p>Limits protect the host disk and are conservative by default; the globals are environment-configurable. Over-budget
+    writes return HTTP <code>507</code>.</p>
+  <h4>Global (env-configurable)</h4>
+  <table class="tbl">
+    <tr><th>Env var</th><th>Default</th><th>Limits</th></tr>
+    <tr><td><code>CE_HUB_MAX_DATA_BYTES</code></td><td>512 MiB</td><td>Total platform data.</td></tr>
+    <tr><td><code>CE_HUB_MAX_APPS</code></td><td>200</td><td>Hosted apps.</td></tr>
+    <tr><td><code>CE_HUB_MAX_DOMAINS</code></td><td>100</td><td>Custom domains.</td></tr>
+    <tr><td><code>CE_HUB_MAX_DB_NAMESPACES</code></td><td>500</td><td>Database namespaces.</td></tr>
+  </table>
+  <h4>Per item</h4>
+  <table class="tbl">
+    <tr><th>Scope</th><th>Limit</th></tr>
+    <tr><td>File</td><td>16 MB</td></tr>
+    <tr><td>App</td><td>64 MB, 200 files</td></tr>
+    <tr><td>Blob</td><td>16 MB per blob, 256 MB store</td></tr>
+    <tr><td>Database</td><td>5000 keys per namespace</td></tr>
+  </table>
+  <h4>Contributor caches</h4>
+  <p>Contributor nodes cap the replicated-file cache they hold, oldest-evicted: a browser node defaults to 32 MiB
+    (tunable via <code>?cache=</code>), a headless worker to 64 MiB (via <code>CE_WORKER_MAX_CACHE_BYTES</code>). Full
+    detail lives in <code>web/deploy/storage-limits.md</code>.</p>
+
+  <!-- ===================== CLIENT ===================== -->
+  <h2 id="client">@ce/client</h2>
+  <p>The browser ESM client (<code>web/ce-app/client</code>) is the recommended way to talk to the hub from a page.
+    <code>createClient()</code> resolves your <code>appId</code> automatically from the <code>/apps/&lt;id&gt;/</code> path
+    or the <code>&lt;id&gt;.ce-net.com</code> host.</p>
+<pre><code><span class="c-k">import</span> { createClient } <span class="c-k">from</span> <span class="c-st">"@ce/client"</span>;
+
+<span class="c-k">const</span> ce = <span class="c-fn">createClient</span>();
+ce.appId;   <span class="c-cm">// resolved app id</span>
+ce.base;    <span class="c-cm">// API base origin</span>
+
+<span class="c-cm">// database</span>
+<span class="c-k">await</span> ce.db.<span class="c-fn">set</span>(key, value);
+<span class="c-k">await</span> ce.db.<span class="c-fn">get</span>(key);
+<span class="c-k">await</span> ce.db.<span class="c-fn">del</span>(key);
+<span class="c-k">await</span> ce.db.<span class="c-fn">list</span>(prefix, limit);
+
+<span class="c-cm">// realtime</span>
+<span class="c-k">const</span> room = ce.<span class="c-fn">room</span>(name);
+room.<span class="c-fn">send</span>(text);
+room.<span class="c-fn">on</span>((msg) =&gt; { });
+room.<span class="c-fn">onOpen</span>(() =&gt; { });
+room.<span class="c-fn">close</span>();</code></pre>
+
+  <!-- ===================== NODES ===================== -->
+  <h2 id="nodes">Run a node</h2>
+  <p>Contribute capacity to the mesh in two ways:</p>
+  <h4>Browser node</h4>
+  <p>Open <a href="https://ce-net.com/node">https://ce-net.com/node</a> — the tab becomes a real WASM/JS compute node and
+    mesh peer. Works on iOS and Android too.</p>
+  <h4>Headless node</h4>
+<pre><code>curl -fsSL https://ce-net.com/worker.js | node - --hub wss://ce-net.com/hub</code></pre>
+  <p>The headless worker runs <code>wasm</code> and <code>js</code> tasks. Nodes connect over the
+    <code>GET /node</code> WebSocket: they send <code>hello</code>, <code>hb</code> (heartbeat), <code>pong</code>, and
+    <code>result</code> frames upstream; the hub sends <code>job</code>, <code>ping</code>, <code>store</code>, and
+    <code>fetch</code> frames downstream.</p>
+
+  <!-- ===================== API ===================== -->
+  <h2 id="api">HTTP API reference</h2>
+  <p>Base origin <code>https://ce-net.com</code>. Every endpoint is also reachable under <code>/hub/&lt;path&gt;</code>.
+    Bodies are JSON unless noted; blob and file uploads take a raw body with a <code>content-type</code>.</p>
+
+  <!-- COMPUTE -->
+  <h3 id="api-compute">Compute</h3>
+
+  <div class="ep">
+    <div class="eph"><span class="pill post">POST</span><span class="path">/tasks</span></div>
+    <div class="epb">
+      <p>Run a compute task on the mesh. WASM shape:
+        <code>{"func":"count_primes","args":[200000],"ret":"i32","module":"demo"}</code>. Code shape:
+        <code>{"lang":"js"|"python","code":"i=&gt;i.a+i.b","input":{...},"func":"task"}</code>. Optional
+        <code>"target":"&lt;full node id&gt;"</code> pins a node.</p>
+      <p>Returns <code>{node, lang, func, ok, value, ms, error}</code>. <code>503</code> if no nodes are connected;
+        <code>504</code> if the chosen node did not return in time.</p>
     </div>
-  </main>
+  </div>
 
-  <nav class="toc" id="toc" aria-label="On this page">
-    <div class="h">On this page</div>
-    <div id="toclinks"></div>
-  </nav>
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/stats</span></div>
+    <div class="epb">
+      <p>Aggregate mesh metrics: <code>nodes, cores, ram_gb, storage_gb, gpus[], gpu_count, gpu_vram_gb, webgpu_nodes,
+        perf_score, tasks_run, blobs, blob_bytes, avg_uptime_pct, by_class{phone,laptop,server,device},
+        most_reliable{short,uptime_pct}, latency_p50_ms, latency_p95_ms, latency_measured, data_used_bytes,
+        hosted_apps, replicas, limits{max_data_bytes,max_apps,max_domains,max_db_namespaces}</code>.</p>
+    </div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/stats/stream</span></div>
+    <div class="epb"><p>Server-Sent Events of the <code>/stats</code> object, roughly every 1.5 seconds.</p></div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/nodes</span></div>
+    <div class="epb">
+      <p>Connected nodes:
+        <code>{nodes:[{id, short, cores, ram_gb, storage_gb, gpu, webgpu, platform, tasks_run, age_s, rtt_ms,
+        uptime_pct, device_class, online_secs, sessions, first_seen_unix}]}</code>.</p>
+    </div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/node</span></div>
+    <div class="epb">
+      <p>WebSocket endpoint for browser and headless nodes. Upstream frames: <code>hello</code>, <code>hb</code>,
+        <code>pong</code>, <code>result</code>. Downstream frames: <code>job</code>, <code>ping</code>,
+        <code>store</code>, <code>fetch</code>.</p>
+    </div>
+  </div>
+
+  <!-- BLOBS -->
+  <h3 id="api-blobs">Content-addressed blobs</h3>
+
+  <div class="ep">
+    <div class="eph"><span class="pill put">PUT</span><span class="path">/blobs/:hash</span></div>
+    <div class="epb">
+      <p>Store a blob. Raw body plus a <code>content-type</code> header. Returns <code>{hash, size}</code>.</p>
+<pre><code>curl -X PUT https://ce-net.com/blobs/&lt;hash&gt; \
+  -H <span class="c-st">"content-type: application/octet-stream"</span> \
+  --data-binary <span class="c-st">@file.bin</span>
+<span class="c-cm"># -> {"hash":"...","size":1234}</span></code></pre>
+    </div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/blobs/:hash</span></div>
+    <div class="epb"><p>Fetch a blob by its content hash.</p></div>
+  </div>
+
+  <!-- APPS -->
+  <h3 id="api-apps">App hosting (static sites + SPAs)</h3>
+
+  <div class="ep">
+    <div class="eph"><span class="pill put">PUT</span><span class="path">/apps/:id/*path</span></div>
+    <div class="epb">
+      <p>Upload a file. Raw body plus <code>content-type</code>. Empty path stores <code>index.html</code>. Returns
+        <code>{id, path, version, url}</code>.</p>
+    </div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/apps/:id</span> &nbsp;<span class="path">/apps/:id/</span> &nbsp;<span class="path">/apps/:id/*path</span></div>
+    <div class="epb">
+      <p>Serve app files. SPA fallback: a route-like miss with no file extension returns <code>index.html</code> with a
+        <code>200</code>. HTML responses get the hot-reload snippet injected.</p>
+    </div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/apps/:id/__reload</span></div>
+    <div class="epb"><p>Server-Sent Events; emits the app's <code>version</code> number on every change.</p></div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill put">PUT</span><span class="path">/apps/:id/config</span> &nbsp;<span class="pill get">GET</span><span class="path">/apps/:id/config</span></div>
+    <div class="epb">
+      <p><code>PUT</code> with <code>{"spa":true}</code> toggles SPA fallback. <code>GET</code> returns
+        <code>{spa, version, domains}</code>.</p>
+    </div>
+  </div>
+
+  <!-- DOMAINS -->
+  <h3 id="api-domains">Custom production domains</h3>
+
+  <div class="ep">
+    <div class="eph"><span class="pill put">PUT</span><span class="path">/apps/:id/domain</span></div>
+    <div class="epb">
+      <p>Attach a domain: <code>{"domain":"app.acme.com"}</code>. Returns
+        <code>{domain, id, cname:"ce-net.com"}</code>. Create the CNAME at your DNS provider.</p>
+    </div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill del">DELETE</span><span class="path">/apps/:id/domain/:domain</span></div>
+    <div class="epb"><p>Detach a domain from an app.</p></div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/domains</span></div>
+    <div class="epb"><p>List all domain mappings: <code>[{domain, id}]</code>.</p></div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/_host/*path</span></div>
+    <div class="epb">
+      <p>Resolves the app from the <code>X-CE-Host</code> header, which nginx sets for CNAME'd custom domains. You do not
+        call this directly; it powers custom-domain serving.</p>
+    </div>
+  </div>
+
+  <!-- DB -->
+  <h3 id="api-db">CE database (persistent KV)</h3>
+
+  <div class="ep">
+    <div class="eph"><span class="pill put">PUT</span><span class="path">/db/:app/:key</span></div>
+    <div class="epb"><p>Store a JSON value at a key. Returns <code>{ok, key}</code>.</p></div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/db/:app/:key</span></div>
+    <div class="epb"><p>Read a value, or <code>404</code> if the key is absent.</p></div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill del">DELETE</span><span class="path">/db/:app/:key</span></div>
+    <div class="epb"><p>Delete a key.</p></div>
+  </div>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/db/:app?prefix=&amp;limit=</span></div>
+    <div class="epb">
+      <p>List keys newest-first: <code>{items:[{key, value}], n}</code>. <code>prefix</code> filters keys;
+        <code>limit</code> caps the count.</p>
+    </div>
+  </div>
+
+  <!-- RT -->
+  <h3 id="api-rt">Realtime rooms</h3>
+
+  <div class="ep">
+    <div class="eph"><span class="pill get">GET</span><span class="path">/rt/:app/:room</span></div>
+    <div class="epb">
+      <p>WebSocket. Any text frame is broadcast to others in the room. The last 50 messages are replayed on connect.
+        Reachable as <code>wss://ce-net.com/rt/:app/:room</code> (and on the subdomain / custom domain origins).</p>
+    </div>
+  </div>
+
+  <h3>Public URLs</h3>
+  <table class="tbl">
+    <tr><th>Pattern</th><th>Purpose</th></tr>
+    <tr><td><code>https://ce-net.com/apps/&lt;id&gt;/</code></td><td>Path hosting.</td></tr>
+    <tr><td><code>https://&lt;id&gt;.ce-net.com/</code></td><td>Per-developer subdomain (wildcard DNS live).</td></tr>
+    <tr><td><code>https://&lt;custom-domain&gt;/</code></td><td>CNAME to <code>ce-net.com</code>, then <code>ce-app domain add</code>.</td></tr>
+  </table>
+  <p><code>/db/&lt;app&gt;/&lt;key&gt;</code> and <code>wss://ce-net.com/rt/&lt;app&gt;/&lt;room&gt;</code> work on all of
+    these origins.</p>
+
+  <footer>
+    CE Platform documentation. Live at <a href="https://ce-net.com">ce-net.com</a> ·
+    <a href="https://ce-net.com/node">Run a node</a> ·
+    <a href="https://ce-net.com/network">Network metrics</a>
+  </footer>
+</main>
 </div>
 
 <script>
-// build "on this page" from h2s, scrollspy both rails
-const heads=[...document.querySelectorAll('main h2[id], main h1[id]')];
-const toc=document.getElementById('toclinks');
-heads.filter(h=>h.tagName==='H2').forEach(h=>{
-  const a=document.createElement('a');a.href='#'+h.id;a.textContent=h.textContent.replace(/—.*/,'').trim();
-  toc.appendChild(a);
+// tabs
+document.querySelectorAll('.tabs').forEach(function(group){
+  group.querySelectorAll('button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      group.querySelectorAll('button').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      var pane = document.getElementById(btn.dataset.tab);
+      var wrap = pane.parentElement;
+      wrap.querySelectorAll('.tabpane').forEach(function(p){ p.classList.remove('show'); });
+      pane.classList.add('show');
+    });
+  });
 });
-const sideLinks=[...document.querySelectorAll('aside a')];
-const tocLinks=[...toc.querySelectorAll('a')];
-const byId=id=>({side:sideLinks.find(a=>a.getAttribute('href')==='#'+id),toc:tocLinks.find(a=>a.getAttribute('href')==='#'+id)});
-const obs=new IntersectionObserver((es)=>{
-  es.forEach(e=>{if(e.isIntersecting){
-    const {side,toc}=byId(e.target.id);
-    sideLinks.forEach(a=>a.classList.remove('active'));tocLinks.forEach(a=>a.classList.remove('active'));
-    if(side)side.classList.add('active');if(toc)toc.classList.add('active');
-  }});
-},{rootMargin:'-70px 0px -75% 0px'});
-[...document.querySelectorAll('main [id]')].forEach(el=>obs.observe(el));
-// mobile sidebar
-document.getElementById('menu').onclick=()=>document.getElementById('side').classList.toggle('open');
-sideLinks.forEach(a=>a.onclick=()=>document.getElementById('side').classList.remove('open'));
+// mobile menu
+var side = document.getElementById('side'), mb = document.getElementById('menuBtn');
+mb && mb.addEventListener('click', function(){ side.classList.toggle('open'); });
+side && side.querySelectorAll('a').forEach(function(a){ a.addEventListener('click', function(){ side.classList.remove('open'); }); });
+// active section in sidebar via scroll spy
+var links = Array.prototype.slice.call(document.querySelectorAll('aside a[href^="#"]'));
+var map = {};
+links.forEach(function(l){ var id = l.getAttribute('href').slice(1); map[id] = l; });
+var obs = new IntersectionObserver(function(entries){
+  entries.forEach(function(e){
+    if(e.isIntersecting){
+      links.forEach(function(l){ l.classList.remove('active'); });
+      var l = map[e.target.id];
+      if(l) l.classList.add('active');
+    }
+  });
+}, { rootMargin: '-60px 0px -75% 0px', threshold: 0 });
+document.querySelectorAll('main h2[id], main h3[id]').forEach(function(h){ if(map[h.id]) obs.observe(h); });
 </script>
 </body>
 </html>

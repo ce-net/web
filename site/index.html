@@ -242,10 +242,11 @@ footer .row{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
     </a>
     <div class="links">
       <a href="/network">Network</a>
+      <a href="#platform">Platform</a>
       <a href="#science">Science</a>
       <a href="#loop">How it works</a>
-      <a href="#sdk">Build</a>
-      <a href="#built">Apps</a>
+      <a href="/deploy">Deploy</a>
+      <a href="/roadmap">Roadmap</a>
       <a href="https://docs.ce-net.com">Docs</a>
     </div>
     <div class="spacer"></div>
@@ -256,17 +257,18 @@ footer .row{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
 
 <header id="top">
   <div class="wrap">
-    <span class="eyebrow rv d1"><span class="ln"></span>An open supercomputer for science &nbsp;·&nbsp; pronounced “Sea”</span>
-    <h1 class="rv d2">Let’s build a global <em>supercomputer,</em> for science.</h1>
-    <p class="lede rv d3">Every idle phone, laptop, and GPU, pooled into one machine that belongs to everyone.
-      <b>Open this page on any device and it becomes a node</b> — running tasks for the mesh in seconds, no install.
-      The goal: fold proteins, train AI, and search the sky — on compute that belongs to everyone.</p>
+    <span class="eyebrow rv d1"><span class="ln"></span>A global compute mesh &amp; app platform &nbsp;·&nbsp; pronounced “Sea”</span>
+    <h1 class="rv d2">A global <em>supercomputer</em> — that ships your <em>apps.</em></h1>
+    <p class="lede rv d3">Every idle phone, laptop, and GPU, pooled into one machine that belongs to everyone — and
+      <b>a one-command app platform</b> on top of it. <b>Open this page on any device and it becomes a node.</b>
+      Then <b>npm create ce-app</b> and you have hosting, a database, realtime, and a custom domain — hot-reloaded on a
+      live dev URL, in one command.</p>
 
     <div class="cta rv d4">
       <a class="btn primary" href="/node">Become a node — one click →</a>
-      <a class="btn" href="#install">Run the full node →</a>
+      <a class="btn" href="/deploy">Deploy an app →</a>
     </div>
-    <p class="rv d4" style="color:var(--faint);font-size:13.5px;margin-top:14px;max-width:52ch">No install, no account, no sign-up. Works on any phone or laptop — the page joins the mesh and starts running tasks on this device.</p>
+    <p class="rv d4" style="color:var(--faint);font-size:13.5px;margin-top:14px;max-width:56ch">No install, no account, no sign-up to run a node. To build, one command scaffolds an app and pushes it live — hosting, database, realtime rooms, and a custom domain, all over the mesh.</p>
 
     <div class="gauges rv d5">
       <span class="sonar"><span class="ping" id="ping"></span><span id="netlabel">sounding network…</span></span>
@@ -281,6 +283,61 @@ footer .row{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
     </div>
   </div>
 </header>
+
+<section id="platform">
+  <div class="wrap">
+    <span class="kicker">The app platform</span>
+    <h2>One command. A live app on the mesh.</h2>
+    <p class="sub">The same network that runs science also hosts what you build. <code style="font-family:var(--mono);color:var(--cyan)">npm create ce-app</code>
+      scaffolds an app; <code style="font-family:var(--mono);color:var(--cyan)">npx ce-app dev</code> auto-detects your framework, builds, uploads, and prints a
+      live URL — hot-reloading on every save. Hosting, a database, realtime rooms, and custom domains, all over the mesh.
+      <a href="/deploy" style="color:var(--cyan)">Deploy an app →</a></p>
+    <div class="sdk">
+      <div class="copy">
+        <span class="badge">create-ce-app · live</span>
+        <h3>Scaffold, run, ship</h3>
+        <p>Templates for chat, notes, board, Vite, React, Svelte, Next, and React Native. <code style="font-family:var(--mono);color:var(--cyan)">ce-app deploy</code> for a one-shot upload; <code style="font-family:var(--mono);color:var(--cyan)">ce-app domain add app.acme.com</code> for a custom production domain.</p>
+        <span class="badge">@ce/client · browser</span>
+        <h3>Database &amp; realtime, built in</h3>
+        <p><code style="font-family:var(--mono);color:var(--cyan)">createClient()</code> gives every app a persistent key-value database and realtime rooms — reachable from <code style="font-family:var(--mono);color:var(--cyan)">/apps/&lt;id&gt;/</code>, your <code style="font-family:var(--mono);color:var(--cyan)">&lt;id&gt;.ce-net.com</code> subdomain, or your own domain.</p>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="bar"><i></i><i></i><i></i><span class="f">terminal</span></div>
+<pre><code><span class="c-cm"># scaffold, then run with hot-reload</span>
+<span class="c-fn">npm</span> create ce-app
+<span class="c-fn">cd</span> my-app &amp;&amp; <span class="c-fn">npx</span> ce-app dev
+<span class="c-cm">→ https://ce-net.com/apps/&lt;your-id&gt;/  (live, hot-reloading)</span>
+
+<span class="c-cm"># bind a custom production domain</span>
+<span class="c-fn">npx</span> ce-app domain add app.acme.com</code></pre>
+        </div>
+        <div class="panel">
+          <div class="bar"><i></i><i></i><i></i><span class="f">app.js · @ce/client</span></div>
+<pre><code><span class="c-k">import</span> { createClient } <span class="c-k">from</span> <span class="c-st">'@ce/client'</span>;
+<span class="c-k">const</span> ce = <span class="c-fn">createClient</span>();
+
+<span class="c-k">await</span> ce.db.<span class="c-fn">set</span>(<span class="c-st">'score'</span>, <span class="c-n">42</span>);        <span class="c-cm">// persistent KV</span>
+<span class="c-k">const</span> room = ce.<span class="c-fn">room</span>(<span class="c-st">'lobby'</span>);     <span class="c-cm">// realtime</span>
+room.<span class="c-fn">on</span>(msg =&gt; <span class="c-fn">render</span>(msg));
+room.<span class="c-fn">send</span>(<span class="c-st">'hello mesh'</span>);</code></pre>
+        </div>
+      </div>
+    </div>
+    <div class="prims" style="margin-top:30px">
+      <div class="prim"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18M8 18v2M16 18v2"/></svg>
+        <h3>Hosting</h3><p>Static sites &amp; SPAs with SPA fallback and a hot-reload stream. Live on a public dev URL.</p></div>
+      <div class="prim"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+        <h3>Database</h3><p>Persistent, namespaced key-value per app — get, set, delete, prefix-list. No setup.</p></div>
+      <div class="prim"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 12a7 7 0 0 1 14 0"/><path d="M2 12a10 10 0 0 1 20 0"/><circle cx="12" cy="13" r="2"/></svg>
+        <h3>Realtime</h3><p>WebSocket rooms with last-50 replay — chat, presence, multiplayer in a few lines.</p></div>
+      <div class="prim"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>
+        <h3>Custom domains</h3><p>CNAME your domain, run one command, and it serves your app. Subdomains are live.</p></div>
+      <div class="prim"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg>
+        <h3>Any language</h3><p>WASM, JavaScript, and Python tasks; TS, Python, Go, and Rust SDKs to drive them.</p></div>
+    </div>
+  </div>
+</section>
 
 <section id="science">
   <div class="wrap">
@@ -436,10 +493,11 @@ map.<span class="c-fn">insert</span>(<span class="c-st">"alice"</span>.<span cla
   <div class="wrap">
     <span class="kicker">The tide is rising</span>
     <h2>Compute should be a <em style="font-family:var(--display);font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent">commons</em>, not a cartel.</h2>
-    <p class="sub">Spin up a node and the network does the rest — discovery, consensus, settlement, and trust, all without a middleman.</p>
+    <p class="sub">Spin up a node and the network does the rest — discovery, consensus, settlement, and trust, all without a middleman. Then ship an app on top of it in one command.</p>
     <div class="cta">
-      <a class="btn primary" href="#install">Run a node</a>
-      <a class="btn" href="https://github.com/ce-net/ce">Read the source →</a>
+      <a class="btn primary" href="/node">Run a node</a>
+      <a class="btn" href="/deploy">Deploy an app →</a>
+      <a class="btn" href="/roadmap">See the roadmap →</a>
     </div>
   </div>
 </section>
@@ -452,9 +510,10 @@ map.<span class="c-fn">insert</span>(<span class="c-st">"alice"</span>.<span cla
       <div class="multi">bootstrap · /ip4/178.105.145.170/tcp/4001/p2p/12D3KooWC6vyMMrtmdWEdpcMx7JZ4Ze5scUhA6BbMdYqnUDC7nr7</div>
     </div>
     <div class="flinks">
+      <a href="/network">network</a>
+      <a href="/deploy">deploy</a>
+      <a href="/roadmap">roadmap</a>
       <a href="https://github.com/ce-net/ce">ce</a>
-      <a href="https://github.com/ce-net/ce-rs">ce-rs</a>
-      <a href="https://github.com/ce-net/ce-coord">ce-coord</a>
       <a href="https://www.npmjs.com/package/@ce-net/sdk">npm</a>
       <a href="/ce-map.html">map</a>
       <a href="https://docs.ce-net.com">docs</a>

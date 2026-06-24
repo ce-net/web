@@ -151,9 +151,9 @@
 </head>
 <body>
 <header class="top"><div class="wrap">
-  <div class="eyebrow">CE · sounding chart · 34 repositories</div>
+  <div class="eyebrow">CE · sounding chart · the mesh & the app platform</div>
   <h1>The shape of <em>the network</em></h1>
-  <p class="lede">A read of the whole system as ocean depth: <b>the surface is what people touch</b>, and everything rests on <b>the node at the bedrock</b>. Depth means foundation — currents flow downward to what each thing depends on. Hover a return to trace its dependencies; open one for the readout.</p>
+  <p class="lede">A read of the whole system as ocean depth: <b>the surface is the app platform people ship on</b> — one-command hosting, a database, realtime rooms, custom domains — and everything rests on <b>the node at the bedrock</b>. Depth means foundation — currents flow downward to what each thing depends on. Hover a return to trace its dependencies; open one for the readout.</p>
   <div class="toolbar">
     <div class="views" role="tablist" aria-label="View">
       <button id="vMap" aria-pressed="true">Map</button>
@@ -179,7 +179,7 @@
   <div id="dBody"></div>
 </aside>
 
-<footer><div class="wrap">CE — "pronounced Sea." Donate compute, earn credits, spend credits on compute. · map generated 2026-06-22</div></footer>
+<footer><div class="wrap">CE — "pronounced Sea." Donate compute, earn credits, spend credits on compute. · the mesh & the app platform · map generated 2026-06-24</div></footer>
 
 <script>
 const STATUS = {
@@ -190,9 +190,10 @@ const STATUS = {
 };
 // bands: surface (top) -> bedrock (bottom)
 const BANDS = [
-  {id:'dx',   depth:'0 m',   name:'Surface · DX & web',     sub:'what you ship to people'},
-  {id:'cloud',depth:'120 m', name:'CE Cloud',               sub:'GCP-shaped services'},
-  {id:'mesh', depth:'400 m', name:'Mesh use-cases',         sub:'compute over the swarm'},
+  {id:'platform',depth:'0 m', name:'Surface · App platform', sub:'one command → live app'},
+  {id:'dx',   depth:'40 m',  name:'DX, SDKs & web',         sub:'languages & what you ship'},
+  {id:'cloud',depth:'160 m', name:'CE Cloud',               sub:'GCP-shaped services'},
+  {id:'mesh', depth:'420 m', name:'Mesh use-cases & distribution', sub:'compute over the swarm'},
   {id:'hosp', depth:'900 m', name:'Hospital suite',         sub:'on-prem inference fleet'},
   {id:'flag', depth:'1.6 km',name:'Flagship apps',          sub:'Drive · Notes · Host'},
   {id:'core', depth:'2.4 km',name:'Core apps',              sub:'sync · pin · ratio · sched'},
@@ -201,9 +202,24 @@ const BANDS = [
   {id:'node', depth:'4.0 km',name:'Bedrock · the node',     sub:'primitives, on-chain'},
 ];
 const REPOS = [
+  // ---- app platform (surface) ----
+  {id:'app-platform',band:'platform',status:'verified',kind:'platform',tasks:[],
+   blurb:'The one-command app platform on top of the mesh: npm create ce-app, npx ce-app dev → a live https://ce-net.com/apps/<id>/ URL with hot-reload on save. Auto-detects Vite/React/Svelte/Next/Astro/Expo, builds, and uploads. Hosting + database + realtime + custom domains in a single flow.',deps:['ce-hub','ce-app-cli']},
+  {id:'ce-hosting',band:'platform',status:'verified',kind:'service',tasks:[],
+   blurb:'Static-site + SPA hosting served by the hub. PUT /apps/:id/*path, SPA fallback for route-like misses, hot-reload snippet injected into HTML, per-app config and versioning. Live at /apps/<id>/ and <id>.ce-net.com.',deps:['ce-hub']},
+  {id:'app-db',band:'platform',status:'verified',kind:'service',tasks:[25],
+   blurb:'Persistent, namespaced key-value database for every app: PUT/GET/DELETE /db/:app/:key plus prefix list, newest-first. Reachable from any app origin (path, subdomain, or custom domain). Backed by ce-db / the Merged CRDT.',deps:['ce-hub','ce-db','ce-coord']},
+  {id:'ce-realtime',band:'platform',status:'verified',kind:'service',tasks:[],
+   blurb:'Realtime rooms over WebSocket: wss://.../rt/:app/:room. Any text frame is broadcast to the room; the last 50 messages replay on connect. The substrate for chat, presence, and multiplayer.',deps:['ce-hub']},
+  {id:'ce-domains',band:'platform',status:'verified',kind:'service',tasks:[],
+   blurb:'Custom production domains: PUT /apps/:id/domain → CNAME to ce-net.com, nginx sets X-CE-Host, the hub resolves the app via /_host. Per-developer subdomains via wildcard DNS are live; automatic TLS for CNAMEs is on the roadmap.',deps:['ce-hub']},
   // node
   {id:'ce',band:'node',status:'verified',kind:'rust · node',tasks:[3,23],
    blurb:'The node. Ed25519 identity, libp2p mesh, PoW chain + credit economy, container/WASM execution, the ce-cap capability verifier, content-addressed blobs, and tunnels. CI now green on Linux, macOS and Windows.',deps:[]},
+  {id:'ce-hub',band:'node',status:'verified',kind:'rust · svc',tasks:[],
+   blurb:'The public hub sidecar (service ce-hub, fronted by nginx at ce-net.com). Routes compute tasks to connected browser/headless nodes, serves hosted apps, the KV database, realtime rooms, content-addressed blobs, and custom domains. Enforces conservative storage limits to protect the host disk.',deps:['ce']},
+  {id:'mesh-distribution',band:'mesh',status:'built',kind:'distribution',tasks:[18],
+   blurb:'Mesh distribution & replicated read-path: app files, blobs, and DB snapshots fan out to contributor nodes (browser ?cache=, headless CE_WORKER_MAX_CACHE_BYTES, oldest-evicted) and are served from the nearest replica. Multi-relay ingress with no single point is on the roadmap.',deps:['ce-pin','ce-hub','ce-rs']},
   // sdk
   {id:'ce-rs',band:'sdk',status:'verified',kind:'rust · sdk',tasks:[15],
    blurb:'Rust SDK over the node HTTP+SSE API. Typed client, Amount (integer base units), the wallet module, SSE streams, and atlas self-tagging. Every app builds on this.',deps:['ce']},
@@ -264,6 +280,16 @@ const REPOS = [
   {id:'ce-expose',band:'mesh',status:'built',kind:'rust · app',tasks:[18],
    blurb:'Capability-gated, ngrok-style tunnels over the CE mesh. Public-relay ingress is designed + threat-modeled but deliberately not yet implemented.',deps:['ce-rs']},
   // dx & web
+  {id:'ce-app-cli',band:'dx',status:'verified',kind:'ts · create-ce-app',tasks:[],
+   blurb:'The developer CLI + scaffolder. npm create ce-app builds from a template (chat, notes, board, vite-react, svelte, react, next, react-native); npx ce-app dev auto-detects the framework, builds, uploads, prints the live URL, and hot-reloads on save; ce-app deploy and ce-app domain add handle one-shot deploys and custom domains.',deps:['ce-client','ce-ts']},
+  {id:'ce-client',band:'dx',status:'verified',kind:'ts · @ce/client',tasks:[],
+   blurb:'Browser ESM client for hosted apps. createClient() resolves the app id from the /apps/<id>/ path or the <id>.ce-net.com host and exposes db:{get,set,del,list} and room(name):{send,on,onOpen,close} — the database and realtime rooms in a few lines.',deps:['ce-ts']},
+  {id:'sdk-python',band:'dx',status:'built',kind:'python · ce',tasks:[],
+   blurb:'Python SDK (web/sdks/python): push compute tasks, read and write the database, and join realtime rooms from any Python program. Python compute tasks themselves run in-browser via Pyodide.',deps:['ce-rs']},
+  {id:'sdk-go',band:'dx',status:'built',kind:'go · ce',tasks:[],
+   blurb:'Go SDK (web/sdks/go): tasks + db + room from Go services and CLIs over the hub HTTP API.',deps:['ce-rs']},
+  {id:'languages',band:'dx',status:'verified',kind:'runtimes',tasks:[],
+   blurb:'Languages & runtimes for compute tasks: WASM and sandboxed JavaScript run on every node (browser and headless worker); Python runs in browser nodes via Pyodide. App code ships in any framework the CLI can build. Broader runtime coverage is on the roadmap.',deps:['ce']},
   {id:'cookbook',band:'dx',status:'verified',kind:'rust+ts',tasks:[17],
    blurb:'Executable API recipes in both Rust and TS that double as contract tests — boot a node, run all of them, assert. Verified 20/20 live. The drift guard.',deps:['ce-rs','ce-ts']},
   {id:'integration',band:'dx',status:'verified',kind:'rust · test',tasks:[],
@@ -280,7 +306,7 @@ const REPOS = [
 const TASKS = [
   [1,'Planning wave: docs + roadmap + critic','done','8 design docs + master roadmap + adversarial critic in PLAN/.'],
   [2,'@ce-net/sdk — typed TS/JS client + OpenAPI','done','Runtime-agnostic client, 30 tests, OpenAPI 3.1.'],
-  [3,'Node Wave-0 enablers','done','CORS, GET /transactions/:id, balance breakdown, ce key backup, CI gates.'],
+  [3,'Node Wave-0 enablers','done','CORS, GET /transactions/:node_id, balance breakdown, ce key backup, CI gates.'],
   [4,'ce-ratio — compute share ratio','done','From NodeStats; ranks, never authorizes.'],
   [5,'CE Host — hosting dashboard','done','Web dashboard + Tauri shell + onboarding.'],
   [6,'rdev chunk/CID delta engine','done','Auto-Sync v2 substrate.'],
@@ -415,7 +441,7 @@ function buildLedger(){
     <div class="lg-stat"><b>${n('done')}</b> shipped</div>
     <div class="lg-stat"><b>${n('prog')}</b> in progress</div>
     <div class="lg-stat"><b>${n('defer')}</b> deferred</div>
-    <div class="lg-stat" style="margin-left:auto">${TASKS.length} tracked tasks · 34 repos</div></div>`;
+    <div class="lg-stat" style="margin-left:auto">${TASKS.length} tracked tasks · ${REPOS.length} nodes mapped</div></div>`;
   groups.forEach(([k,title,c])=>{
     const items=TASKS.filter(t=>t[2]===k); if(!items.length)return;
     html+=`<div class="lg-group"><div class="lg-title"><span class="gd" style="color:${c}"></span>${title} · ${items.length}</div><div class="grid">`;
