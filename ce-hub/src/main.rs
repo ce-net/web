@@ -670,7 +670,7 @@ async fn main() {
         .route("/registry", get(registry_list))
         .layer(DefaultBodyLimit::max(MAX_BLOB))
         .layer(cors)
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();

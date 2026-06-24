@@ -13,15 +13,18 @@ set -euo pipefail
 
 RELAY="root@178.105.145.170"
 KEY="$HOME/.ssh/id_ed25519"
-SSH=(ssh -o BatchMode=yes -o ServerAliveInterval=10 -i "$KEY")
+# Multiplex all SSH/rsync over ONE persistent connection so a multi-step build does not open a dozen
+# sessions (which the relay's sshd was dropping). ControlPersist keeps it warm between commands.
+RSH="ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ControlMaster=auto -o ControlPath=/tmp/ce-ssh-%C -o ControlPersist=180 -i $KEY"
+SSH=($RSH)
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # web/
 REMOTE=/opt/ce-build
 # Never ship build trees or the laptop-absolute .cargo/config (would break cargo on the relay).
-EXC=(--exclude target --exclude node_modules --exclude dist --exclude pkg --exclude .git --exclude .cargo)
+EXC=(--exclude 'target' --exclude 'target-*' --exclude 'node_modules' --exclude 'dist' --exclude 'pkg' --exclude '.git' --exclude '.cargo')
 
 sync() { # <localdir> <name>
   "${SSH[@]}" "$RELAY" "mkdir -p $REMOTE/$2"
-  rsync -az --delete "${EXC[@]}" -e "ssh -o BatchMode=yes -i $KEY" "$1/" "$RELAY:$REMOTE/$2/"
+  rsync -az --delete "${EXC[@]}" -e "$RSH" "$1/" "$RELAY:$REMOTE/$2/"
 }
 
 cmd="${1:-}"; shift || true
@@ -33,7 +36,7 @@ case "$cmd" in
     echo "==> install binary + ensure modules/data + restart service"
     # refresh builtin wasm modules from the repo too
     "${SSH[@]}" "$RELAY" "mkdir -p /opt/ce-hub/modules /opt/ce-hub/data"
-    rsync -az -e "ssh -o BatchMode=yes -i $KEY" "$HERE"/ce-hub/modules/ "$RELAY:/opt/ce-hub/modules/" 2>/dev/null || true
+    rsync -az -e "$RSH" "$HERE"/ce-hub/modules/ "$RELAY:/opt/ce-hub/modules/" 2>/dev/null || true
     "${SSH[@]}" "$RELAY" '
       install -m755 '"$REMOTE"'/ce-hub/target/release/ce-hub /opt/ce-hub/ce-hub.new &&
       mv -f /opt/ce-hub/ce-hub.new /opt/ce-hub/ce-hub &&
