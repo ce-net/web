@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# ce-build — build CE projects ON the relay (Hetzner, x86_64 Linux), not on the dev laptop.
+#
+# Why: the relay is the same target we deploy to, so a native build there IS the deploy artifact
+# (no musl cross-compile), it keeps heavy Rust/wasm build trees off the laptop disk, and it dogfoods
+# the mesh as a build host. Needs the relay key in your ssh-agent.
+#
+#   bash deploy/ce-build.sh hub                         # build ce-hub on the relay, install + restart
+#   bash deploy/ce-build.sh wasm projects/drift drift   # build a Rust->wasm app, deploy to /apps/drift/
+#   bash deploy/ce-build.sh cargo projects/drift/sim test --release   # run any cargo cmd on the relay
+#   bash deploy/ce-build.sh toolchain                   # show wasm-toolchain install progress
+set -euo pipefail
+
+RELAY="root@178.105.145.170"
+KEY="$HOME/.ssh/id_ed25519"
+SSH=(ssh -o BatchMode=yes -o ServerAliveInterval=10 -i "$KEY")
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # web/
+REMOTE=/opt/ce-build
+# Never ship build trees or the laptop-absolute .cargo/config (would break cargo on the relay).
+EXC=(--exclude target --exclude node_modules --exclude dist --exclude pkg --exclude .git --exclude .cargo)
+
+sync() { # <localdir> <name>
+  "${SSH[@]}" "$RELAY" "mkdir -p $REMOTE/$2"
+  rsync -az --delete "${EXC[@]}" -e "ssh -o BatchMode=yes -i $KEY" "$1/" "$RELAY:$REMOTE/$2/"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  hub)
+    echo "==> sync + build ce-hub natively on the relay"
+    sync "$HERE/ce-hub" ce-hub
+    "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE"'/ce-hub && cargo build --release 2>&1 | tail -20'
+    echo "==> install binary + ensure modules/data + restart service"
+    # refresh builtin wasm modules from the repo too
+    "${SSH[@]}" "$RELAY" "mkdir -p /opt/ce-hub/modules /opt/ce-hub/data"
+    rsync -az -e "ssh -o BatchMode=yes -i $KEY" "$HERE"/ce-hub/modules/ "$RELAY:/opt/ce-hub/modules/" 2>/dev/null || true
+    "${SSH[@]}" "$RELAY" '
+      install -m755 '"$REMOTE"'/ce-hub/target/release/ce-hub /opt/ce-hub/ce-hub.new &&
+      mv -f /opt/ce-hub/ce-hub.new /opt/ce-hub/ce-hub &&
+      systemctl restart ce-hub && sleep 1 &&
+      printf "service: " && systemctl is-active ce-hub &&
+      printf "stats:   " && curl -s http://127.0.0.1:8970/stats | head -c 260 && echo'
+    echo "==> ce-hub built on the relay and live on :8970"
+    ;;
+
+  wasm) # ce-build wasm <project-dir-rel-to-web> <app-id>
+    dir="${1:?usage: ce-build wasm <dir> <app-id>}"; app="${2:?missing app id}"
+    name="$(basename "$dir")"
+    echo "==> sync + build wasm app '$name' on the relay (trunk or wasm-pack)"
+    sync "$HERE/$dir" "$name"
+    "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE/$name"' &&
+      if [ -f Trunk.toml ] || [ -f index.html ]; then trunk build --release --public-url ./ ;
+      elif [ -f Cargo.toml ]; then wasm-pack build --release --target web ;
+      else echo "no Trunk.toml/index.html/Cargo.toml" >&2; exit 1; fi 2>&1 | tail -20'
+    echo "==> deploy built assets to /apps/'"$app"'/ from the relay (server-side, no laptop round-trip)"
+    "${SSH[@]}" "$RELAY" '
+      cd '"$REMOTE/$name"'; out=dist; [ -d dist ] || out=pkg
+      ctype(){ case "$1" in *.html) echo "text/html; charset=utf-8";; *.js|*.mjs) echo "text/javascript";; *.css) echo "text/css";; *.wasm) echo "application/wasm";; *.json) echo "application/json";; *.svg) echo "image/svg+xml";; *.png) echo image/png;; *.wgsl) echo "text/plain";; *) echo "application/octet-stream";; esac; }
+      ( cd "$out" && find . -type f | sed "s|^\./||" | while read -r f; do
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "http://127.0.0.1:8970/apps/'"$app"'/$f" -H "content-type: $(ctype "$f")" --data-binary @"$f")
+          echo "    $f -> $code"
+        done )'
+    echo "==> wasm app live: https://ce-net.com/apps/'"$app"'/  and  https://'"$app"'.ce-net.com/"
+    ;;
+
+  cargo) # ce-build cargo <dir-rel-to-web> [cargo args...]   (e.g. test --release)
+    dir="${1:?usage: ce-build cargo <dir> [args]}"; shift || true
+    name="$(basename "$dir")"
+    echo "==> sync + cargo $* on the relay for '$name'"
+    sync "$HERE/$dir" "$name"
+    "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE/$name"' && cargo '"$*"' 2>&1 | tail -40'
+    ;;
+
+  toolchain)
+    "${SSH[@]}" "$RELAY" 'tail -5 /opt/ce-build/toolchain.log 2>/dev/null; echo; for t in trunk wasm-bindgen wasm-pack; do printf "%-14s " $t; (source $HOME/.cargo/env; command -v $t || echo installing...); done'
+    ;;
+
+  *) echo "usage: ce-build {hub | wasm <dir> <app> | cargo <dir> [args] | toolchain}"; exit 2 ;;
+esac
