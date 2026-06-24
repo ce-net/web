@@ -192,3 +192,21 @@ broken by a route collision and the projects gallery page cannot be opened.
    (Blueberry Browser was unreachable at 127.0.0.1:7777 this session) to capture
    actual console output and screenshots for drift/coop/spa, which is the one
    thing pure HTTP/WS checks cannot give.
+
+## Browser verification (confirmed)
+
+Driven in a real browser (Blueberry), 2026-06-24 — resolves the earlier "render unverified" caveat:
+
+- **drift.ce-net.com — WORKS.** The wgpu client loads and cleanly falls back to **WebGL2** (the
+  intended WebGPU-first / WebGL2-fallback path); `pkg/drift_client_bg.wasm` compiles (~884ms); the
+  canvas renders with a live HUD: `drift · WebGL2 · region r:0:0 · host <id> · HOSTING · tick · net
+  online`, and the control legend (WASD fly / Space fire / E mine / B build / wheel zoom /
+  shard-switch). No console errors. Live fetches to `/nodes`, `/db/drift/world:dir`,
+  `/db/drift/snap:r:0:0`, `/db/drift/handoff:r:0:0`, `/stats`. Runtime exposed at `window.__drift`.
+- **coop.ce-net.com — WORKS.** Join screen (handle + color + Enter arena); on entry the netgame host
+  is elected and the HUD shows `AUTHORITATIVE LOGIC · logic running on <id> (this device, host) · N
+  PLAYERS · LEADERBOARD · tick · host · seq`, with a Force-host-failover control. No console errors;
+  `/db/coop/snap:g1`, `/nodes`, `/stats` all 200.
+
+Net: the authoritative-on-the-mesh game stack (drift-sim wasm + wgpu/WebGL2 render + netgame host
+election + /db snapshot failover + region sharding) is confirmed working end to end in a browser.
