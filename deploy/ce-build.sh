@@ -74,6 +74,30 @@ case "$cmd" in
     "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE/$name"' && cargo '"$*"' 2>&1 | tail -40'
     ;;
 
+  drift) # full multi-crate drift build + deploy on the relay
+    echo "==> sync drift + netgame to relay"
+    sync "$HERE/projects/drift" drift
+    "${SSH[@]}" "$RELAY" "mkdir -p $REMOTE/ce-app/client"
+    rsync -az -e "$RSH" "$HERE"/ce-app/client/ "$RELAY:$REMOTE/ce-app/client/"
+    echo "==> build wgpu client + sim wasm + stage + deploy (on the relay)"
+    "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; set -e
+      cd '"$REMOTE"'/drift
+      echo "-- wgpu client (wasm-pack -> ./pkg)"
+      if (cd client && wasm-pack build --release --target web --out-dir ../pkg 2>&1 | tail -10); then
+        echo "   client OK"
+      else echo "   CLIENT BUILD FAILED -> deploying transport-only (renderer probes ./pkg and degrades)"; rm -rf pkg; fi
+      echo "-- sim wasm (for the wasm host)"
+      (cd sim && cargo build --release --target wasm32-unknown-unknown 2>&1 | tail -4)
+      mkdir -p pkg && cp -f sim/target/wasm32-unknown-unknown/release/drift_sim.wasm pkg/ 2>/dev/null || true
+      echo "-- stage browser bundle"
+      node stage.mjs
+      echo "-- deploy out/ -> /apps/drift/"
+      ctype(){ case "$1" in *.html) echo "text/html; charset=utf-8";; *.js|*.mjs) echo "text/javascript";; *.css) echo "text/css";; *.wasm) echo application/wasm;; *.json) echo application/json;; *.svg) echo image/svg+xml;; *) echo application/octet-stream;; esac; }
+      ( cd out && find . -type f | sed "s|^\./||" | while read -r f; do
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X PUT "http://127.0.0.1:8970/apps/drift/$f" -H "content-type: $(ctype "$f")" --data-binary @"$f"); echo "    $f -> $code"; done )'
+    echo "==> drift live: https://drift.ce-net.com/  and  https://ce-net.com/apps/drift/"
+    ;;
+
   toolchain)
     "${SSH[@]}" "$RELAY" 'tail -5 /opt/ce-build/toolchain.log 2>/dev/null; echo; for t in trunk wasm-bindgen wasm-pack; do printf "%-14s " $t; (source $HOME/.cargo/env; command -v $t || echo installing...); done'
     ;;
