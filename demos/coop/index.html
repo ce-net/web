@@ -1,0 +1,1046 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>coop — a server-authoritative CE arena</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="A fully server-authoritative top-down multiplayer arena. The authoritative game logic runs on the best mesh node; clients send only input and render state. Watch host migration live." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M16 4l9 22-9-6-9 6z'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--abyss);color:var(--text);font-family:var(--body);-webkit-font-smoothing:antialiased;overscroll-behavior:none;touch-action:none}
+canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
+
+.hud{position:fixed;inset:0;pointer-events:none;z-index:5;font-family:var(--body)}
+.hud .pane{position:absolute;pointer-events:auto}
+
+/* ---- authoritative-host banner (top-center) ---- */
+.hostbar{top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);max-width:min(94vw,560px);
+  display:flex;align-items:center;gap:11px;background:rgba(7,13,24,.82);border:1px solid var(--line);border-radius:13px;
+  padding:9px 15px;backdrop-filter:blur(8px);box-shadow:0 8px 30px rgba(0,0,0,.4)}
+.hostbar .dot{width:10px;height:10px;border-radius:50%;background:var(--faint);flex:none}
+.hostbar .dot.on{background:var(--ok);box-shadow:0 0 0 0 rgba(67,224,160,.5);animation:p 2s infinite}
+.hostbar .dot.me{background:var(--cyan);box-shadow:0 0 0 0 rgba(55,198,255,.5);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 9px rgba(67,224,160,0)}}
+.hostbar .txt{font-size:13.5px;line-height:1.25;min-width:0}
+.hostbar .txt b{font-family:var(--mono);color:var(--cyan);font-weight:500}
+.hostbar .txt .srv{color:var(--gold)}
+.hostbar .txt .rtt{color:var(--muted);font-family:var(--mono);font-size:12px}
+.hostbar .txt .small{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-bottom:2px}
+
+.topright{top:calc(max(12px,env(safe-area-inset-top)) + 62px);right:max(12px,env(safe-area-inset-right));width:212px;max-width:50vw;display:flex;flex-direction:column;gap:8px;align-items:stretch}
+.online{display:flex;align-items:center;gap:8px;background:rgba(7,13,24,.74);border:1px solid var(--line);border-radius:12px;padding:8px 13px;backdrop-filter:blur(7px)}
+.online .n{font-family:var(--display);font-weight:600;font-size:20px;line-height:1}
+.online .lbl{font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.online .pdot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(67,224,160,.5);animation:p 2s infinite}
+.board{background:rgba(7,13,24,.74);border:1px solid var(--line);border-radius:13px;padding:9px 11px;backdrop-filter:blur(7px)}
+.board h3{margin:0 0 6px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);font-weight:500}
+.board .lr{display:flex;align-items:center;gap:8px;font-size:13px;padding:2px 0}
+.board .lr .sw{width:9px;height:9px;border-radius:2px;flex:none}
+.board .lr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.board .lr .nm.me{color:var(--cyan);font-weight:600}
+.board .lr .kc{font-family:var(--mono);font-size:13px;color:var(--gold);font-weight:500}
+.board .empty{font-size:12px;color:var(--faint)}
+
+/* ---- debug / failover (bottom-left) ---- */
+.dbg{left:max(12px,env(safe-area-inset-left));bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.failbtn{display:flex;align-items:center;gap:8px;font-family:var(--body);font-weight:600;font-size:13.5px;color:var(--text);
+  background:rgba(7,13,24,.82);border:1px solid var(--line);border-radius:11px;padding:9px 14px;cursor:pointer;backdrop-filter:blur(7px);transition:.15s}
+.failbtn:hover{border-color:var(--bad);color:#fff}
+.failbtn:active{transform:translateY(1px)}
+.failbtn svg{width:15px;height:15px;flex:none}
+.failbtn.cool{opacity:.5;pointer-events:none}
+.tickline{font-family:var(--mono);font-size:11px;color:var(--faint);background:rgba(7,13,24,.6);border:1px solid var(--line-2);border-radius:8px;padding:5px 10px}
+.tickline b{color:var(--muted)}
+
+/* ---- touch fire (bottom-right) ---- */
+.firebtn{position:absolute;right:max(16px,env(safe-area-inset-right));bottom:max(22px,env(safe-area-inset-bottom));
+  width:92px;height:92px;border-radius:50%;border:2px solid rgba(55,198,255,.5);background:radial-gradient(circle at 50% 38%,rgba(55,198,255,.28),rgba(7,13,24,.7));
+  display:none;place-items:center;font-family:var(--mono);font-weight:600;font-size:13px;color:var(--cyan);letter-spacing:.05em;pointer-events:auto;user-select:none}
+.firebtn.show{display:grid}
+.firebtn:active{background:radial-gradient(circle at 50% 38%,rgba(55,198,255,.5),rgba(7,13,24,.8))}
+.hint{position:absolute;left:50%;bottom:max(20px,env(safe-area-inset-bottom));transform:translateX(-50%);
+  font-family:var(--mono);font-size:11.5px;color:var(--faint);background:rgba(7,13,24,.6);padding:6px 13px;border-radius:99px;white-space:nowrap;pointer-events:none}
+
+/* ---- migration toast (top) ---- */
+.feed{position:absolute;left:50%;top:calc(max(12px,env(safe-area-inset-top)) + 56px);transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;width:min(94vw,460px)}
+.toast{font-family:var(--mono);font-size:12.5px;background:rgba(7,13,24,.86);border:1px solid var(--line);border-radius:10px;padding:6px 13px;animation:tin .3s ease;backdrop-filter:blur(6px);text-align:center;max-width:100%}
+.toast b{color:var(--cyan)}.toast .vs{color:var(--faint)}
+@keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+/* ---- join overlay ---- */
+.overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:22px;
+  background:radial-gradient(72% 52% at 50% -8%,rgba(55,198,255,.14),transparent 60%),radial-gradient(50% 40% at 88% 112%,rgba(47,107,255,.13),transparent 60%),rgba(3,6,14,.82);
+  backdrop-filter:blur(4px);overflow:auto}
+.overlay.hidden{display:none}
+.card{width:100%;max-width:440px;background:linear-gradient(180deg,var(--panel),var(--deep));border:1px solid var(--line);border-radius:20px;padding:26px 24px;box-shadow:0 22px 70px rgba(0,0,0,.55)}
+.kick{font-family:var(--mono);font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--cyan)}
+.card h1{font-family:var(--display);font-weight:600;font-size:clamp(30px,9vw,42px);letter-spacing:-.02em;line-height:1.02;margin:9px 0 0}
+.card h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.card .lede{color:var(--muted);font-size:14.5px;margin:11px 0 0;line-height:1.55}
+.field{margin-top:18px}
+.field label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-bottom:7px}
+.namerow{display:flex;gap:9px}
+.namerow input{flex:1;min-width:0;background:#060b14;color:#fff;border:1px solid var(--line);border-radius:11px;font-family:var(--body);font-size:16px;padding:12px 14px;outline:none}
+.namerow input:focus{border-color:rgba(55,198,255,.5)}
+.icobtn{flex:none;width:46px;border:1px solid var(--line);background:var(--deep);color:var(--muted);border-radius:11px;cursor:pointer;font-size:18px;display:grid;place-items:center}
+.icobtn:hover{border-color:var(--cyan);color:var(--cyan)}
+.swatches{display:flex;flex-wrap:wrap;gap:9px;margin-top:9px}
+.swatches button{width:30px;height:30px;border-radius:8px;border:2px solid transparent;cursor:pointer;transition:.15s}
+.swatches button.sel{border-color:#fff;transform:scale(1.08)}
+.playrow{display:flex;gap:10px;margin-top:22px}
+.play{flex:1;font-family:var(--body);font-weight:700;font-size:16px;color:#021018;background:var(--grad);border:0;border-radius:12px;padding:14px;cursor:pointer;transition:.15s}
+.play:active{transform:translateY(1px)}
+.copy{flex:none;border:1px solid var(--line);background:var(--deep);color:var(--text);border-radius:12px;padding:0 16px;cursor:pointer;font-family:var(--body);font-weight:600;font-size:14px}
+.copy:hover{border-color:var(--cyan);color:var(--cyan)}
+.copy.done{color:var(--ok);border-color:rgba(67,224,160,.5)}
+.olstat{display:flex;align-items:center;gap:8px;margin-top:18px;font-size:13.5px;color:var(--muted)}
+.olstat .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.olstat .dot.on{background:var(--ok);box-shadow:0 0 0 0 rgba(67,224,160,.5);animation:p 2s infinite}
+.howto{margin-top:16px;border-top:1px solid var(--line-2);padding-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:7px 16px}
+.howto div{font-size:12.5px;color:var(--muted)}
+.howto b{color:var(--text);font-family:var(--mono);font-size:11.5px}
+.foot{margin-top:16px;font-size:11.5px;color:var(--faint);text-align:center;line-height:1.5}
+.foot a{color:var(--cyan)}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div class="hud" id="hud" style="display:none">
+  <!-- authoritative host banner: SEE which node runs the logic -->
+  <div class="hostbar pane" id="hostbar">
+    <span class="dot" id="host-dot"></span>
+    <span class="txt">
+      <span class="small">authoritative logic</span>
+      <span id="host-line">electing host…</span>
+    </span>
+  </div>
+
+  <div class="pane feed" id="feed"></div>
+
+  <div class="pane topright">
+    <div class="online"><span class="pdot"></span><span class="n" id="hud-online">1</span><span class="lbl">players</span></div>
+    <div class="board">
+      <h3>Leaderboard</h3>
+      <div id="board-list"><div class="empty">no score yet</div></div>
+    </div>
+  </div>
+
+  <div class="pane dbg">
+    <button class="failbtn" id="failBtn" title="Drop local host candidacy to force the arena to migrate to another node">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
+      Force host failover
+    </button>
+    <div class="tickline" id="tickline"><b>tick</b> 0 · <b>seq</b> 0</div>
+  </div>
+
+  <div class="firebtn pane" id="fireBtn">FIRE</div>
+  <div class="hint pane" id="hint">drag to steer · tap FIRE to shoot</div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="card">
+    <div class="kick">CE · server-authoritative arena</div>
+    <h1>co<em>op</em></h1>
+    <p class="lede">A top-down arena where the game logic runs on the <b style="color:var(--cyan)">best mesh node</b>, not in your browser. You send only input; an elected host simulates everything and streams back authoritative state. Watch it migrate live.</p>
+
+    <div class="field">
+      <label for="name">Pilot handle</label>
+      <div class="namerow">
+        <input id="name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="your handle" />
+        <button class="icobtn" id="reroll" title="Random handle">&#8635;</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Ship color</label>
+      <div class="swatches" id="swatches"></div>
+    </div>
+
+    <div class="playrow">
+      <button class="play" id="playBtn">Enter arena</button>
+      <button class="copy" id="copyBtn">Copy link</button>
+    </div>
+
+    <div class="olstat"><span class="dot" id="ol-dot"></span><span id="ol-text">connecting to the mesh…</span></div>
+
+    <div class="howto">
+      <div><b>Steer</b> · mouse / WASD / drag</div>
+      <div><b>Fire</b> · space / click / FIRE</div>
+      <div><b>Host</b> · elected by latency+uptime</div>
+      <div><b>Failover</b> · automatic on host loss</div>
+    </div>
+    <div class="foot">Built on <a href="https://ce-net.com" target="_blank" rel="noopener">CE</a> netgame &mdash; realtime room for input/state, <code>/db</code> snapshots for failover. Share the link, friends join the same arena.</div>
+  </div>
+</div>
+
+<script type="module">
+"use strict";
+
+/* ============================================================================
+   CE NETGAME — inline copy of the framework.
+   CANONICAL SOURCE: web/ce-app/client/netgame.js  (keep in sync with this copy).
+   This demo inlines it so the file is self-contained and deployable as one
+   index.html served at ce-net.com/apps/coop/.
+
+   Model: a global authoritative multiplayer framework. The authoritative game
+   logic runs on the best mesh node (lowest latency, highest uptime, strongest
+   benchmark, most trusted). Clients send only input; the elected host simulates
+   in tick() and broadcasts state; clients render in onState(). On host loss the
+   game migrates to the next-best node, restoring from a CE /db snapshot.
+
+   Built ONLY on existing CE primitives, same-origin when served by the hub:
+     - realtime room:  wss://host/rt/<app>/<room>  (broadcasts each frame to all
+                       OTHER clients; you never receive your own frames)
+     - database (KV):  PUT/GET /db/<app>/<key>
+     - node metrics:   GET /nodes  ->  {nodes:[{id,short,rtt_ms,uptime_pct,
+                       device_class,caps:{cpu_mark},platform,...}]}
+                       GET /stats  ->  {latency_p50_ms,...}
+
+   createGame(opts) ->
+     { setInput, sendEvent, state, isHost, hostId, hostShort, online,
+       players, metrics, leave }
+   ============================================================================ */
+function createGame(opts){
+  const O = opts || {};
+  const app   = O.app;
+  const room  = O.room || "g1";
+  const id    = O.id;
+  const hz    = O.hz || 20;
+  const dt    = 1 / hz;
+  const initFn      = O.init     || (()=>({}));
+  const tickFn      = O.tick     || ((s)=>s);
+  const inputFn     = O.input    || null;
+  const onState     = O.onState  || (()=>{});
+  const onHostChange= O.onHostChange || (()=>{});
+  const snapshotEvery = O.snapshotEvery || 40;
+  const canHost     = O.canHost !== false;
+  const hostScoreFn = O.hostScore || null;
+
+  // ---- origin + injections (Node<22 / custom origin) ----
+  const hasLoc = (typeof location !== "undefined");
+  const base = (O.base != null ? String(O.base).replace(/\/+$/,"")
+                : (hasLoc ? location.origin : "")).replace(/\/+$/,"");
+  const WS = O.WebSocket || (typeof WebSocket !== "undefined" ? WebSocket : null);
+  const FETCH = O.fetch || (typeof fetch !== "undefined" ? fetch : null);
+  function wsURL(){
+    if (base.startsWith("https:")) return "wss:" + base.slice(6) + "/rt/" + app + "/" + room;
+    if (base.startsWith("http:"))  return "ws:"  + base.slice(5) + "/rt/" + app + "/" + room;
+    if (hasLoc) return (location.protocol==="https:"?"wss":"ws") + "://" + location.host + "/rt/" + app + "/" + room;
+    return base + "/rt/" + app + "/" + room;
+  }
+  const dbURL  = (k)=> base + "/db/" + app + (k ? "/" + encodeURIComponent(k) : "");
+  const SNAP_KEY = "snap:" + room;
+
+  // ---- timing helpers ----
+  const now = ()=> (typeof performance!=="undefined" && performance.now) ? performance.now() : Date.now();
+
+  // ---- candidate / election state ----
+  const CAND_TTL = 2500;   // a {cand} is live for ~2.5s
+  const HOST_SILENT = 1000;// host considered failed if no {st} for >1s
+  const cands = new Map(); // id -> {score,server,ts}
+  let myScore = canHost ? 0.0001 : 0;  // computed async; tiny non-zero so a lone client can host
+  let myServer = false;
+  let curHost = null;      // elected host id
+  let curHostShort = "";
+  let lastStateTs = 0;     // last time we saw a {st} from the elected host
+  let lastStateTick = 0;
+  let lastStateSeq = 0;
+
+  // ---- per-client input (host side) ----
+  const inputs = new Map();  // pid -> {input, ts}
+  let mySeq = 0;
+  let pendingInput = null;   // set via setInput; or pulled from inputFn()
+
+  // ---- host simulation state ----
+  let state = null;          // authoritative state (host only)
+  let hostTick = 0;
+  let stSeq = 0;
+  let events = [];           // queued sendEvent() payloads for next tick ctx
+  let adoptedSnapshot = false;
+
+  // ---- websocket ----
+  let ws = null, wsOpen = false, backoff = 600, closed = false, reconnectT = null;
+  let alive = true;
+
+  function send(obj){
+    if (ws && wsOpen){ try{ ws.send(JSON.stringify(obj)); }catch(_){} }
+  }
+  function connect(){
+    if (closed || !WS) return;
+    let sock; try{ sock = new WS(wsURL()); }catch(_){ scheduleReconnect(); return; }
+    ws = sock;
+    ws.onopen = ()=>{ wsOpen = true; backoff = 600; announce(); };
+    ws.onmessage = (ev)=>{
+      let m; try{ m = JSON.parse(typeof ev.data==="string"?ev.data:String(ev.data)); }catch(_){ return; }
+      onFrame(m);
+    };
+    ws.onclose = ()=>{ wsOpen = false; if(!closed) scheduleReconnect(); };
+    ws.onerror = ()=>{ try{ ws.close(); }catch(_){} };
+  }
+  function scheduleReconnect(){
+    if (reconnectT || closed) return;
+    reconnectT = setTimeout(()=>{ reconnectT=null; backoff=Math.min(backoff*1.7,8000); connect(); }, backoff);
+  }
+
+  // ---- frame handling (never receive our own frames) ----
+  function onFrame(m){
+    if (!m || !m.t || m.id === id) return;
+    const t = now();
+    switch(m.t){
+      case "cand": {
+        cands.set(m.id, {score: +m.score||0, server: !!m.server, ts: t});
+        recomputeHost();
+        break;
+      }
+      case "in": {
+        // a client's input -> remember the latest per pid (host consumes it)
+        inputs.set(m.id, {input: m.input, ts: t});
+        break;
+      }
+      case "st": {
+        // authoritative state from a host. Accept only from the elected host.
+        if (m.host && curHost && m.host !== curHost) {
+          // a different node claims host — let election arbitrate, but track liveness
+          cands.set(m.host, {score: cands.has(m.host)?cands.get(m.host).score:9e9, server:false, ts:t});
+        }
+        if (!curHost || m.host === curHost) {
+          lastStateTs = t; lastStateTick = m.tick||0; lastStateSeq = m.seq||0;
+          if (m.full || state == null){
+            // adopt authoritative snapshot for rendering (clients keep a mirror)
+            renderState(m.state, m.tick||0);
+          } else {
+            renderState(m.state, m.tick||0);
+          }
+        }
+        break;
+      }
+      case "bye": {
+        cands.delete(m.id); inputs.delete(m.id);
+        recomputeHost();
+        break;
+      }
+    }
+  }
+
+  function renderState(s, tick){
+    try{
+      onState(s, {
+        host: curHost, hostShort: curHostShort, isHost: curHost === id,
+        online: liveCount(), tick, rttToHostMs: rttToHost(),
+      });
+    }catch(_){}
+  }
+
+  // ---- candidacy broadcast (~1/s while eligible) ----
+  function announce(){
+    if (!canHost) return;
+    send({t:"cand", id, score: myScore, server: myServer, ts: Date.now()});
+  }
+
+  // ---- election: deterministic across all clients ----
+  function candidateSet(){
+    const t = now();
+    const set = new Map();
+    for (const [cid,c] of cands){ if (t - c.ts <= CAND_TTL) set.set(cid, c); }
+    if (canHost) set.set(id, {score: myScore, server: myServer, ts: t});
+    return set;
+  }
+  function electFrom(set){
+    let best = null, bestScore = -Infinity, bestServer = false;
+    for (const [cid,c] of set){
+      const sc = c.score, sv = c.server?1:0;
+      if (sv > (bestServer?1:0) ||
+          (sv === (bestServer?1:0) && sc > bestScore) ||
+          (sv === (bestServer?1:0) && sc === bestScore && (best===null || cid < best))){
+        best = cid; bestScore = sc; bestServer = !!c.server;
+      }
+    }
+    return best;
+  }
+  function recomputeHost(){
+    const set = candidateSet();
+    const elected = electFrom(set);
+    if (elected !== curHost){
+      const wasHost = curHost === id;
+      curHost = elected;
+      curHostShort = shortOf(curHost);
+      lastStateTs = now(); // grace period for the new host to start emitting
+      if (curHost === id && !wasHost) becomeHost();
+      if (curHost !== id && wasHost) stepDownHost();
+      try{ onHostChange({host:curHost, hostShort:curHostShort, isHost:curHost===id, online:liveCount()}); }catch(_){}
+    } else if (curHost && !curHostShort){
+      curHostShort = shortOf(curHost);
+    }
+  }
+  function shortOf(cid){
+    if (!cid) return "";
+    if (cid === id && nodeShort) return nodeShort;
+    // browsers: short = last 6 of the id
+    const m = String(cid);
+    return m.length > 6 ? m.slice(-6) : m;
+  }
+
+  // ---- become / step down host ----
+  let hostLoopT = null, snapT = null;
+  async function becomeHost(){
+    // try to restore from the latest snapshot so the game continues seamlessly
+    if (state == null || isEmpty(state)){
+      const snap = await loadSnapshot();
+      if (snap && snap.state && !isEmpty(snap.state)){
+        state = snap.state; hostTick = snap.tick || 0; adoptedSnapshot = true;
+      } else {
+        state = initFn(); hostTick = 0;
+      }
+    }
+    startHostLoop();
+  }
+  function stepDownHost(){
+    if (hostLoopT){ clearInterval(hostLoopT); hostLoopT = null; }
+    if (snapT){ clearInterval(snapT); snapT = null; }
+    // keep `state` as a warm cache so re-election is fast; stop emitting.
+  }
+  function startHostLoop(){
+    if (hostLoopT) return;
+    hostLoopT = setInterval(hostStep, 1000/hz);
+    snapT = setInterval(saveSnapshot, Math.max(1000, (snapshotEvery/hz)*1000));
+  }
+  function hostStep(){
+    if (curHost !== id) return;
+    // collect the latest live input per client (drop inputs older than ~2s)
+    const t = now();
+    const live = {};
+    for (const [pid,rec] of inputs){ if (t - rec.ts <= 2000) live[pid] = rec.input; }
+    // include my own input
+    const myIn = pullInput();
+    if (myIn != null) live[id] = myIn;
+    const ev = events; events = [];
+    try{
+      state = tickFn(state, live, dt, {now:Date.now(), tick:hostTick, events:ev, host:id}) || state;
+    }catch(_){}
+    hostTick++;
+    stSeq++;
+    // broadcast full state each tick (state is small in this framework's demos).
+    send({t:"st", host:id, seq:stSeq, tick:hostTick, full:true, state, ts:Date.now()});
+    // also render locally for the host's own screen
+    lastStateTs = t; lastStateTick = hostTick;
+    renderState(state, hostTick);
+  }
+
+  // ---- snapshots (redundancy / failover) ----
+  async function saveSnapshot(){
+    if (curHost !== id || !FETCH || state == null) return;
+    try{
+      await FETCH(dbURL(SNAP_KEY), {method:"PUT", headers:{"content-type":"application/json"},
+        body: JSON.stringify({tick:hostTick, state, host:id, ts:Date.now()})});
+    }catch(_){ /* tolerate 507 / network */ }
+  }
+  async function loadSnapshot(){
+    if (!FETCH) return null;
+    try{
+      const r = await FETCH(dbURL(SNAP_KEY));
+      if (!r.ok) return null;       // 404 = no snapshot yet
+      let v = await r.json();
+      if (typeof v === "string"){ try{ v = JSON.parse(v); }catch(_){ return null; } }
+      return v;
+    }catch(_){ return null; }
+  }
+
+  // ---- client input loop (send {in} at hz) ----
+  function pullInput(){
+    if (pendingInput != null){ const v = pendingInput; return v; }
+    if (inputFn){ try{ return inputFn(); }catch(_){ return null; } }
+    return null;
+  }
+  let inputLoopT = setInterval(()=>{
+    const inp = pullInput();
+    if (inp == null) return;
+    mySeq++;
+    // send to whoever is host (broadcast; host filters by being host)
+    send({t:"in", id, seq:mySeq, input:inp});
+  }, 1000/hz);
+
+  // ---- liveness watchdog: re-elect if host went silent ----
+  let watchT = setInterval(()=>{
+    announce(); // keep candidacy warm (~1/s effective via the 1000ms interval)
+    if (curHost && curHost !== id){
+      if (now() - lastStateTs > HOST_SILENT){
+        // host failed — drop it and re-elect
+        cands.delete(curHost);
+        recomputeHost();
+      }
+    }
+    // prune dead candidates
+    const t = now();
+    for (const [cid,c] of cands){ if (t - c.ts > CAND_TTL*2) cands.delete(cid); }
+  }, 1000);
+
+  // ---- host scoring ----
+  let nodeShort = "";
+  let scoreReady = false;
+  function defaultLatencyScore(latMs, uptimePct, cpuMark, server){
+    return (1000/(40+latMs)) * (0.5 + uptimePct/100) * (1 + cpuMark/300) * (server ? 1.6 : 1);
+  }
+  async function microBenchCpu(){
+    // ~20ms throughput micro-bench -> a rough "cpu_mark"-like number.
+    const t0 = now(); let x = 0, n = 0;
+    while (now() - t0 < 20){ for (let i=0;i<5000;i++){ x += Math.sqrt(i*1.000001+x%7); } n += 5000; }
+    const ms = Math.max(1, now()-t0);
+    return Math.round(n/ms/50); // arbitrary scale, ~tens..hundreds
+  }
+  async function measureLatency(){
+    if (!FETCH) return 120;
+    const samples = [];
+    for (let i=0;i<3;i++){
+      const t0 = now();
+      try{ await FETCH(base + "/stats", {cache:"no-store"}); }
+      catch(_){ try{ await FETCH(base + "/health", {cache:"no-store"}); }catch(__){ return 200; } }
+      samples.push(now()-t0);
+    }
+    samples.sort((a,b)=>a-b);
+    return samples[Math.floor(samples.length/2)] || 120;
+  }
+  async function fetchNodes(){
+    if (!FETCH) return null;
+    try{
+      const r = await FETCH(base + "/nodes", {cache:"no-store"});
+      if (!r.ok) return null;
+      const d = await r.json();
+      return (d && Array.isArray(d.nodes)) ? d.nodes : null;
+    }catch(_){ return null; }
+  }
+  async function computeScore(){
+    if (!canHost){ myScore = 0; return; }
+    if (hostScoreFn){ try{ myScore = +hostScoreFn() || 0; scoreReady=true; return; }catch(_){} }
+    const nodes = await fetchNodes();
+    let mine = null;
+    if (nodes){ mine = nodes.find(n => n.id === id || (n.short && id && String(id).startsWith(n.short))); }
+    if (mine){
+      // I am a registered mesh node — use authoritative metrics.
+      const lat = (typeof mine.rtt_ms === "number" && mine.rtt_ms>0) ? mine.rtt_ms : 60;
+      const up  = (typeof mine.uptime_pct === "number") ? mine.uptime_pct : 50;
+      const cpu = (mine.caps && typeof mine.caps.cpu_mark==="number") ? mine.caps.cpu_mark : 0;
+      myServer = (mine.device_class === "server");
+      nodeShort = mine.short || nodeShort;
+      myScore = defaultLatencyScore(lat, up, cpu, myServer);
+    } else {
+      // a plain browser — measure latency + cpu; low uptime/trust default.
+      const [lat, cpu] = await Promise.all([measureLatency(), microBenchCpu()]);
+      myServer = false;
+      myScore = defaultLatencyScore(lat, 20 /* uptime% */, cpu, false);
+    }
+    scoreReady = true;
+    announce();
+    recomputeHost();
+  }
+
+  // ---- helpers ----
+  function liveCount(){
+    const t = now();
+    let c = 1; // me
+    for (const [cid,c2] of cands){ if (cid!==id && t-c2.ts <= CAND_TTL) c++; }
+    // also count input-only clients (browsers that can't host still send {in})
+    for (const [pid,rec] of inputs){ if (pid!==id && !cands.has(pid) && t-rec.ts <= 2000) c++; }
+    return c;
+  }
+  function rttToHost(){
+    // best-effort: if I am host, 0; else use my measured latency as a proxy.
+    if (curHost === id) return 0;
+    return Math.round(lastMeasuredLat);
+  }
+  let lastMeasuredLat = 60;
+  function isEmpty(s){ if (s==null) return true; if (typeof s!=="object") return false;
+    for (const k in s){ if (Object.prototype.hasOwnProperty.call(s,k)) return false; } return true; }
+
+  // ---- boot ----
+  connect();
+  computeScore();
+  // refresh score every ~5s (metrics drift; reconnect-safe)
+  let scoreT = setInterval(()=>{ measureLatency().then(l=>{lastMeasuredLat=l;}); computeScore(); }, 5000);
+  measureLatency().then(l=>{lastMeasuredLat=l;});
+
+  // ---- public API ----
+  return {
+    setInput(obj){ pendingInput = obj; },
+    sendEvent(obj){ events.push(obj); },
+    state(){ return state; },
+    isHost(){ return curHost === id; },
+    hostId(){ return curHost; },
+    hostShort(){ return curHostShort; },
+    online(){ return liveCount(); },
+    players(){
+      const t = now(); const out = [];
+      for (const [cid,c] of cands){ if (t-c.ts<=CAND_TTL) out.push(cid); }
+      if (!out.includes(id)) out.push(id);
+      return out;
+    },
+    metrics(){ return {score:myScore, server:myServer, host:curHost, hostShort:curHostShort,
+      tick:lastStateTick, seq:lastStateSeq, rttToHostMs:rttToHost(), online:liveCount()}; },
+    leave(opts2){
+      // Drop local host candidacy (demo host failover). With {hard:true} also
+      // close the socket. Re-elects immediately so another node takes over.
+      const hard = opts2 && opts2.hard;
+      const wasHost = curHost === id;
+      // become ineligible: stop announcing + stop hosting
+      myScore = -1; myServer = false;
+      cands.delete(id);
+      if (wasHost) stepDownHost();
+      send({t:"bye", id});
+      recomputeHost();
+      if (hard){
+        closed = true;
+        try{ ws && ws.close(); }catch(_){}
+      }
+    },
+    // internal: re-enable candidacy (used by the demo to "rejoin" as a candidate)
+    _reenable(){ closed = false; if(!wsOpen) connect(); computeScore(); },
+  };
+}
+
+/* ============================================================================
+   EXAMPLE GAME — coop: a server-authoritative top-down arena.
+   Clients send ONLY input {th:[dx,dy], fire:bool}. The elected HOST simulates
+   movement, projectiles, collisions, score and respawns in tick(); clients just
+   render onState(). Namespace app="coop".
+
+   --- MINIMAL VERSION (the "simple as fuck" proof, ~30 lines) ---
+   import { createGame } from "./netgame.js";
+   const id = crypto.randomUUID();
+   const keys = {};
+   addEventListener("keydown", e => keys[e.key] = true);
+   addEventListener("keyup",   e => keys[e.key] = false);
+   const W = 800, H = 600;
+   const game = createGame({
+     app: "coop", room: "g1", id, hz: 20,
+     init: () => ({ p: {} }),                              // authoritative state
+     input: () => ({ x: (keys.d?1:0)-(keys.a?1:0), y: (keys.s?1:0)-(keys.w?1:0) }),
+     tick: (s, inputs) => {                                // runs on the host
+       for (const pid in inputs) {
+         const me = s.p[pid] || (s.p[pid] = { x: W/2, y: H/2 });
+         me.x = Math.max(0, Math.min(W, me.x + inputs[pid].x * 6));
+         me.y = Math.max(0, Math.min(H, me.y + inputs[pid].y * 6));
+       }
+       return s;
+     },
+     onState: (s, meta) => {                               // every client renders
+       const c = canvas.getContext("2d"); c.clearRect(0,0,W,H);
+       for (const pid in s.p){ c.fillStyle = pid===id?"#37c6ff":"#fff";
+         c.fillRect(s.p[pid].x-6, s.p[pid].y-6, 12, 12); }
+       label.textContent = "host: " + meta.hostShort + " (" + meta.rttToHostMs + "ms)";
+     },
+   });
+   ============================================================================ */
+
+const APP = "coop", ROOM = "g1";
+const ARENA = 2200;                 // square world 0..ARENA
+const HZ = 20;
+const COLORS = ["#37c6ff","#7af0e6","#43e0a0","#ffd166","#ff5d72","#c98bff","#ff9f43","#5aa0ff","#ff6fc1","#9be15d"];
+const TAU = Math.PI*2;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const rand=(a,b)=>a+Math.random()*(b-a);
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---- stable per-browser id ---- */
+function genId(){ return "p_"+Math.random().toString(36).slice(2,8)+Date.now().toString(36).slice(-4); }
+let ID = localStorage.getItem("coop_id");
+if(!ID){ ID = genId(); localStorage.setItem("coop_id", ID); }
+
+/* ---- profile ---- */
+const HANDLE_A=["Void","Nova","Astro","Quasar","Comet","Lunar","Solar","Ion","Photon","Pulsar","Cosmo","Orbit","Hyper","Vega","Drift","Zenith","Echo"];
+const HANDLE_B=["runner","blade","wing","hawk","fox","spark","ghost","ranger","striker","pilot","nomad","scout","ace","viper","raven","flare","wolf"];
+function randomHandle(){ return HANDLE_A[Math.floor(Math.random()*HANDLE_A.length)]+HANDLE_B[Math.floor(Math.random()*HANDLE_B.length)]+(Math.random()<.5?Math.floor(Math.random()*90+10):""); }
+const me = {
+  name: localStorage.getItem("coop_name") || randomHandle(),
+  color: localStorage.getItem("coop_color") || COLORS[Math.floor(Math.random()*COLORS.length)],
+};
+
+/* ============================================================================
+   CANVAS / CAMERA
+   ============================================================================ */
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = Math.floor(W*DPR); cv.height = Math.floor(H*DPR);
+  cv.style.width=W+"px"; cv.style.height=H+"px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener("resize", resize); resize();
+const cam = {x:ARENA/2, y:ARENA/2};
+const VIEW = 0.62;
+
+const stars=[];
+for(let i=0;i<320;i++) stars.push({x:Math.random(),y:Math.random(),z:rand(.25,1),s:rand(.5,1.6)});
+
+/* ============================================================================
+   INPUT (client side only — we NEVER simulate locally)
+   ============================================================================ */
+const keys={};
+const pointer={x:W/2,y:H/2,active:false,down:false};
+let firing=false;
+let touchSteer=null;
+
+addEventListener("keydown",e=>{
+  if(e.target && (e.target.tagName==="INPUT")) return;
+  if(!playing) return;
+  keys[e.key.toLowerCase()]=true;
+  if(e.key===" "){ firing=true; e.preventDefault(); }
+});
+addEventListener("keyup",e=>{ keys[e.key.toLowerCase()]=false; if(e.key===" ") firing=false; });
+cv.addEventListener("mousemove",e=>{ pointer.x=e.clientX; pointer.y=e.clientY; pointer.active=true; });
+cv.addEventListener("mousedown",e=>{ if(!playing)return; pointer.down=true; firing=true; pointer.x=e.clientX; pointer.y=e.clientY; });
+addEventListener("mouseup",()=>{ pointer.down=false; if(!keys[" "]) firing=false; });
+
+const fireBtn=document.getElementById("fireBtn");
+const isTouch = matchMedia("(pointer:coarse)").matches || "ontouchstart" in window;
+cv.addEventListener("touchstart",e=>{ if(!playing)return; const t=e.changedTouches[0]; touchSteer={x:t.clientX,y:t.clientY,id:t.identifier}; e.preventDefault(); },{passive:false});
+cv.addEventListener("touchmove",e=>{ if(!touchSteer)return; for(const t of e.changedTouches){ if(t.identifier===touchSteer.id){ touchSteer.x=t.clientX; touchSteer.y=t.clientY; } } e.preventDefault(); },{passive:false});
+cv.addEventListener("touchend",e=>{ for(const t of e.changedTouches){ if(touchSteer && t.identifier===touchSteer.id) touchSteer=null; } e.preventDefault(); },{passive:false});
+fireBtn.addEventListener("touchstart",e=>{ firing=true; e.preventDefault(); },{passive:false});
+fireBtn.addEventListener("touchend",e=>{ firing=false; e.preventDefault(); },{passive:false});
+
+/* Build this client's input each tick. Aim = direction toward pointer/touch
+   from screen center; thrust on hold; fire flag. Pure intent, no physics. */
+function buildInput(){
+  let dx=0, dy=0, thrust=false, aim=0;
+  if(touchSteer){
+    dx = touchSteer.x - W/2; dy = touchSteer.y - H/2;
+    aim = Math.atan2(dy,dx); thrust=true;
+  } else {
+    dx = pointer.x - W/2; dy = pointer.y - H/2;
+    if(pointer.active && (Math.abs(dx)+Math.abs(dy))>4) aim = Math.atan2(dy,dx);
+    if(pointer.down) thrust=true;
+  }
+  let kx=0,ky=0;
+  if(keys["w"]||keys["arrowup"])ky-=1;
+  if(keys["s"]||keys["arrowdown"])ky+=1;
+  if(keys["a"]||keys["arrowleft"])kx-=1;
+  if(keys["d"]||keys["arrowright"])kx+=1;
+  if(kx||ky){ aim=Math.atan2(ky,kx); thrust=true; }
+  return { a:+aim.toFixed(3), th:thrust?1:0, fire:firing?1:0, name:me.name, color:me.color };
+}
+
+/* ============================================================================
+   AUTHORITATIVE SIMULATION — runs ONLY on the elected host, in tick().
+   inputs = { pid: {a,th,fire,name,color} }.  state holds all ships/bullets.
+   ============================================================================ */
+function initState(){
+  return { ships:{}, bullets:[], t:0 };
+}
+function spawnShip(s, pid, inp){
+  s.ships[pid] = {
+    x:rand(ARENA*0.3,ARENA*0.7), y:rand(ARENA*0.3,ARENA*0.7),
+    vx:0, vy:0, a:(inp&&inp.a)||0, hp:100,
+    name:(inp&&inp.name)||"pilot", color:(inp&&inp.color)||"#5aa0ff",
+    score:0, alive:true, deadUntil:0, lastShot:0, seen:0,
+  };
+}
+function tickSim(s, inputs, dt, ctx2){
+  s.t = ctx2.tick;
+  const nowMs = ctx2.now;
+  // ensure a ship per active input; mark liveness
+  for(const pid in inputs){
+    if(!s.ships[pid]) spawnShip(s, pid, inputs[pid]);
+    const sh=s.ships[pid]; sh.seen=nowMs;
+    if(inputs[pid].name) sh.name=inputs[pid].name;
+    if(inputs[pid].color) sh.color=inputs[pid].color;
+  }
+  // advance ships
+  for(const pid in s.ships){
+    const sh=s.ships[pid]; const inp=inputs[pid];
+    // cull ships whose client has been silent for >6s
+    if(nowMs - (sh.seen||0) > 6000){ delete s.ships[pid]; continue; }
+    if(!sh.alive){
+      if(nowMs >= sh.deadUntil){ sh.alive=true; sh.hp=100; sh.x=rand(ARENA*0.3,ARENA*0.7); sh.y=rand(ARENA*0.3,ARENA*0.7); sh.vx=0; sh.vy=0; }
+      continue;
+    }
+    if(inp){
+      sh.a = inp.a;
+      if(inp.th){
+        const accel=620;
+        sh.vx += Math.cos(sh.a)*accel*dt;
+        sh.vy += Math.sin(sh.a)*accel*dt;
+      }
+      // fire
+      if(inp.fire && (nowMs - sh.lastShot) > 230){
+        sh.lastShot = nowMs;
+        const spd=760;
+        s.bullets.push({
+          x:sh.x+Math.cos(sh.a)*22, y:sh.y+Math.sin(sh.a)*22,
+          vx:Math.cos(sh.a)*spd+sh.vx, vy:Math.sin(sh.a)*spd+sh.vy,
+          life:1.5, owner:pid, dmg:12, color:sh.color,
+        });
+      }
+    }
+    // physics
+    const maxv=420; const sp=Math.hypot(sh.vx,sh.vy);
+    if(sp>maxv){ sh.vx*=maxv/sp; sh.vy*=maxv/sp; }
+    sh.vx*=0.992; sh.vy*=0.992;
+    sh.x+=sh.vx*dt; sh.y+=sh.vy*dt;
+    if(sh.x<16){sh.x=16;sh.vx=Math.abs(sh.vx)*.4;} if(sh.x>ARENA-16){sh.x=ARENA-16;sh.vx=-Math.abs(sh.vx)*.4;}
+    if(sh.y<16){sh.y=16;sh.vy=Math.abs(sh.vy)*.4;} if(sh.y>ARENA-16){sh.y=ARENA-16;sh.vy=-Math.abs(sh.vy)*.4;}
+    if(sh.hp<100) sh.hp=Math.min(100, sh.hp+3*dt);
+  }
+  // advance bullets + collisions (authoritative)
+  for(let i=s.bullets.length-1;i>=0;i--){
+    const b=s.bullets[i];
+    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
+    if(b.life<=0 || b.x<0||b.y<0||b.x>ARENA||b.y>ARENA){ s.bullets.splice(i,1); continue; }
+    let hit=false;
+    for(const pid in s.ships){
+      if(pid===b.owner) continue;
+      const sh=s.ships[pid]; if(!sh.alive) continue;
+      if((b.x-sh.x)**2+(b.y-sh.y)**2 < 18*18){
+        sh.hp -= b.dmg;
+        if(sh.hp<=0){
+          sh.alive=false; sh.hp=0; sh.deadUntil=nowMs+2600;
+          const k=s.ships[b.owner]; if(k){ k.score+=1; }
+        }
+        hit=true; break;
+      }
+    }
+    if(hit){ s.bullets.splice(i,1); }
+  }
+  // cap bullets for frame size
+  if(s.bullets.length>240) s.bullets.splice(0, s.bullets.length-240);
+  return s;
+}
+
+/* ============================================================================
+   RENDER — every client renders the authoritative state it last received.
+   We interpolate ship positions between snapshots for smoothness.
+   ============================================================================ */
+let lastState = null;       // last authoritative snapshot
+let prevPos = new Map();    // pid -> {x,y,a} interpolation source
+let renderPos = new Map();  // pid -> {x,y,a} smoothed
+let lastMeta = null;
+
+function onStateFromHost(s, meta){
+  lastState = s; lastMeta = meta;
+  // seed interpolation
+  if(s && s.ships){
+    for(const pid in s.ships){
+      const sh=s.ships[pid];
+      if(!renderPos.has(pid)) renderPos.set(pid, {x:sh.x,y:sh.y,a:sh.a});
+    }
+    // drop gone
+    for(const pid of [...renderPos.keys()]) if(!s.ships[pid]) renderPos.delete(pid);
+  }
+  refreshHud(meta, s);
+}
+
+function draw(){
+  requestAnimationFrame(draw);
+  ctx.clearRect(0,0,W,H);
+  const s = lastState;
+  // camera follows my ship if present, else arena center
+  let target = {x:ARENA/2,y:ARENA/2};
+  if(s && s.ships && s.ships[ID]){ const r=renderPos.get(ID)||s.ships[ID]; target={x:r.x,y:r.y}; }
+  cam.x += (target.x-cam.x)*0.12; cam.y += (target.y-cam.y)*0.12;
+
+  // interpolate render positions toward authoritative
+  if(s && s.ships){
+    for(const pid in s.ships){
+      const sh=s.ships[pid]; let r=renderPos.get(pid);
+      if(!r){ r={x:sh.x,y:sh.y,a:sh.a}; renderPos.set(pid,r); }
+      r.x += (sh.x-r.x)*0.35; r.y += (sh.y-r.y)*0.35;
+      let da=((sh.a-r.a+Math.PI)%TAU)-Math.PI; if(da<-Math.PI)da+=TAU; r.a += da*0.35;
+    }
+  }
+
+  const w2v=(x,y)=>({ x:(x-cam.x)*VIEW+W/2, y:(y-cam.y)*VIEW+H/2 });
+
+  // starfield
+  ctx.save();
+  for(const st of stars){
+    const px=((st.x*ARENA - cam.x*st.z)%ARENA+ARENA)%ARENA;
+    const py=((st.y*ARENA - cam.y*st.z)%ARENA+ARENA)%ARENA;
+    const v=w2v(px,py);
+    if(v.x<-10||v.x>W+10||v.y<-10||v.y>H+10) continue;
+    ctx.globalAlpha=0.25+st.z*0.5; ctx.fillStyle="#9fc4ff";
+    ctx.fillRect(v.x,v.y,st.s,st.s);
+  }
+  ctx.restore();
+
+  // arena border
+  const tl=w2v(0,0), br=w2v(ARENA,ARENA);
+  ctx.strokeStyle="rgba(116,176,255,.18)"; ctx.lineWidth=2;
+  ctx.strokeRect(tl.x,tl.y,br.x-tl.x,br.y-tl.y);
+
+  if(!s){ return; }
+
+  // bullets
+  for(const b of s.bullets){
+    const v=w2v(b.x,b.y);
+    ctx.globalAlpha=0.95; ctx.fillStyle=b.color;
+    ctx.beginPath(); ctx.arc(v.x,v.y,2.6*VIEW+1.4,0,TAU); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  // ships
+  for(const pid in s.ships){
+    const sh=s.ships[pid]; const r=renderPos.get(pid)||sh;
+    const v=w2v(r.x,r.y);
+    if(!sh.alive){
+      // faint wreck
+      ctx.globalAlpha=0.25;
+    } else ctx.globalAlpha=1;
+    ctx.save();
+    ctx.translate(v.x,v.y); ctx.rotate(r.a);
+    const sc=VIEW*1.15;
+    // hull
+    ctx.beginPath();
+    ctx.moveTo(16*sc,0); ctx.lineTo(-12*sc,9*sc); ctx.lineTo(-7*sc,0); ctx.lineTo(-12*sc,-9*sc); ctx.closePath();
+    ctx.fillStyle=sh.color; ctx.globalAlpha = sh.alive?0.92:0.22; ctx.fill();
+    ctx.lineWidth=1.4; ctx.strokeStyle="rgba(255,255,255,.6)"; ctx.stroke();
+    ctx.restore();
+    ctx.globalAlpha=1;
+    // name + hp + crown for host's nothing; mark me
+    const isMe = pid===ID;
+    ctx.font="600 12px "+`"JetBrains Mono",monospace`;
+    ctx.textAlign="center";
+    ctx.fillStyle = isMe? "#37c6ff" : "rgba(233,241,251,.85)";
+    ctx.fillText(esc(sh.name)+(isMe?" (you)":""), v.x, v.y-22);
+    // hp bar
+    if(sh.alive){
+      const bw=34, bx=v.x-bw/2, by=v.y+18;
+      ctx.fillStyle="rgba(255,93,114,.25)"; ctx.fillRect(bx,by,bw,3);
+      ctx.fillStyle="#43e0a0"; ctx.fillRect(bx,by,bw*clamp(sh.hp/100,0,1),3);
+    }
+  }
+}
+requestAnimationFrame(draw);
+
+/* ============================================================================
+   HUD — host banner, player count, authoritative leaderboard, tick line.
+   ============================================================================ */
+const hostLineEl=document.getElementById("host-line");
+const hostDotEl=document.getElementById("host-dot");
+const onlineEl=document.getElementById("hud-online");
+const boardEl=document.getElementById("board-list");
+const tickEl=document.getElementById("tickline");
+const feedEl=document.getElementById("feed");
+
+function refreshHud(meta, s){
+  if(meta){
+    const short = meta.hostShort || "—";
+    const isMe = meta.isHost;
+    const rtt = isMe ? 0 : meta.rttToHostMs;
+    const srv = (game && game.metrics && game.metrics().server) ? '<span class="srv">server</span>' : 'node';
+    hostLineEl.innerHTML = isMe
+      ? `logic running on <b>${esc(short)}</b> (this device, host) <span class="rtt">0ms</span>`
+      : `logic running on node <b>${esc(short)}</b> (${srv}, <span class="rtt">${rtt}ms</span>)`;
+    hostDotEl.className = "dot " + (isMe ? "me" : "on");
+    onlineEl.textContent = meta.online;
+    tickEl.innerHTML = `<b>tick</b> ${meta.tick||0} · <b>host</b> ${esc(short)} · <b>seq</b> ${(game&&game.metrics?game.metrics().seq:0)||0}`;
+  }
+  // leaderboard from authoritative state
+  if(s && s.ships){
+    const rows = Object.keys(s.ships).map(pid=>({
+      pid, name:s.ships[pid].name, color:s.ships[pid].color, score:s.ships[pid].score|0,
+    })).sort((a,b)=>b.score-a.score).slice(0,8);
+    if(!rows.length){ boardEl.innerHTML='<div class="empty">no players yet</div>'; }
+    else boardEl.innerHTML = rows.map(r=>{
+      const meRow=r.pid===ID;
+      return `<div class="lr"><span class="sw" style="background:${esc(r.color)}"></span><span class="nm${meRow?' me':''}">${esc(r.name)}${meRow?' (you)':''}</span><span class="kc">${r.score}</span></div>`;
+    }).join("");
+  }
+}
+function onHostChanged(meta){
+  const t=document.createElement("div"); t.className="toast";
+  const who = meta.isHost ? "this device" : ("node "+esc(meta.hostShort||"—"));
+  t.innerHTML = `<b>host migrated</b> <span class="vs">&rarr;</span> ${who}`;
+  feedEl.appendChild(t);
+  setTimeout(()=>{ t.style.transition="opacity .4s,transform .4s"; t.style.opacity="0"; t.style.transform="translateY(-8px)"; setTimeout(()=>t.remove(),420); }, 3000);
+  while(feedEl.children.length>3) feedEl.removeChild(feedEl.firstChild);
+}
+
+/* ============================================================================
+   GAME WIRING — input() drives the host; onState() drives the screen.
+   ============================================================================ */
+let game = null;
+let playing = false;
+
+function startGame(){
+  game = createGame({
+    app: APP, room: ROOM, id: ID, hz: HZ,
+    init: initState,
+    tick: tickSim,
+    input: ()=> playing ? buildInput() : null,
+    onState: onStateFromHost,
+    onHostChange: onHostChanged,
+    snapshotEvery: 40,
+    canHost: true,
+  });
+}
+
+/* ---- force-failover button: drop local candidacy, re-elect elsewhere ---- */
+const failBtn=document.getElementById("failBtn");
+failBtn.addEventListener("click",()=>{
+  if(!game) return;
+  game.leave();               // drop candidacy (and step down if hosting)
+  failBtn.classList.add("cool");
+  const t=document.createElement("div"); t.className="toast";
+  t.innerHTML=`<b>dropped candidacy</b> <span class="vs">·</span> migrating…`;
+  feedEl.appendChild(t);
+  setTimeout(()=>{ t.style.opacity="0"; setTimeout(()=>t.remove(),420); }, 2600);
+  // re-enable candidacy shortly so we keep playing as a normal client/candidate
+  setTimeout(()=>{ if(game && game._reenable) game._reenable(); failBtn.classList.remove("cool"); }, 4000);
+});
+
+/* ============================================================================
+   JOIN OVERLAY
+   ============================================================================ */
+const overlay=document.getElementById("overlay");
+const hud=document.getElementById("hud");
+const nameInput=document.getElementById("name");
+const swatchEl=document.getElementById("swatches");
+nameInput.value=me.name;
+COLORS.forEach(c=>{
+  const b=document.createElement("button"); b.style.background=c;
+  if(c===me.color) b.classList.add("sel");
+  b.addEventListener("click",()=>{ me.color=c; localStorage.setItem("coop_color",c);
+    swatchEl.querySelectorAll("button").forEach(x=>x.classList.remove("sel")); b.classList.add("sel"); });
+  swatchEl.appendChild(b);
+});
+document.getElementById("reroll").addEventListener("click",()=>{ nameInput.value=randomHandle(); });
+
+document.getElementById("playBtn").addEventListener("click",()=>{
+  me.name=(nameInput.value||"").trim().slice(0,16) || randomHandle();
+  localStorage.setItem("coop_name",me.name);
+  overlay.classList.add("hidden");
+  hud.style.display="block";
+  if(isTouch){ fireBtn.classList.add("show"); }
+  else { document.getElementById("hint").style.display="none"; }
+  playing=true;
+  startGame();
+});
+
+const copyBtn=document.getElementById("copyBtn");
+copyBtn.addEventListener("click",async()=>{
+  try{ await navigator.clipboard.writeText(location.href); copyBtn.textContent="Copied"; copyBtn.classList.add("done");
+    setTimeout(()=>{ copyBtn.textContent="Copy link"; copyBtn.classList.remove("done"); },1500); }catch(_){}
+});
+
+/* connection indicator on the overlay — light up once a socket can reach the hub */
+(function probe(){
+  const dot=document.getElementById("ol-dot"), txt=document.getElementById("ol-text");
+  try{
+    const url=(location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+APP+"/"+ROOM;
+    const w=new WebSocket(url);
+    w.onopen=()=>{ dot.classList.add("on"); txt.textContent="connected to the mesh — ready"; try{w.close();}catch(_){} };
+    w.onerror=()=>{ txt.textContent="offline — serve via the CE hub to play"; };
+  }catch(_){ txt.textContent="offline — serve via the CE hub to play"; }
+})();
+</script>
+</body>
+</html>

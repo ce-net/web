@@ -128,7 +128,8 @@ const ICONS={
   cursor:'<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l6.5 15 2.2-6.3L20 10.5 5 4z"/></svg>',
   draw:'<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20s1-4 4-7 8-9 11-6-3 8-6 11-7 4-7 4z"/><path d="M14 6l4 4"/></svg>',
   poll:'<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V10M12 20V4M18 20v-7"/></svg>',
-  wall:'<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>'
+  wall:'<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>',
+  coop:'<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l4 7-4 3-4-3 4-7z"/><circle cx="5" cy="18" r="2.4"/><circle cx="19" cy="18" r="2.4"/><path d="M12 12v4M9.6 16.4 6.8 17.4M14.4 16.4l2.8 1"/></svg>'
 };
 
 // the gallery — slug must match the deployed app's APP namespace + URL path
@@ -144,7 +145,9 @@ const DEMOS=[
   {slug:'poll', name:'Live Poll', icon:'poll', tag:'durable',
    desc:'Ask a question, watch the bars climb as votes pour in. Tallies persist in the app’s KV store across sessions.'},
   {slug:'wall', name:'Message Wall', icon:'wall', tag:'durable',
-   desc:'A public guestbook. Post a short message and it lands instantly for everyone, then sticks around on the mesh.'}
+   desc:'A public guestbook. Post a short message and it lands instantly for everyone, then sticks around on the mesh.'},
+  {slug:'coop', name:'Co-op Arena', icon:'coop', tag:'authoritative', live:true,
+   desc:'A server-authoritative ship arena. Clients send only input; the best mesh node simulates everything and fails over to another node from a /db snapshot if it drops.'}
 ];
 
 function appUrl(slug){return 'https://ce-net.com/apps/'+slug+'/';}

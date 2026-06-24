@@ -9,7 +9,7 @@ HUB="${CE_HUB:-https://ce-net.com}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # dir:appid  (spacegame is served as app "spa" so it lives at spa.ce-net.com/game)
-PAIRS="arena:arena place:place cursors:cursors draw:draw poll:poll wall:wall spacegame:spa"
+PAIRS="arena:arena place:place cursors:cursors draw:draw poll:poll wall:wall spacegame:spa coop:coop"
 
 ctype() {
   case "$1" in
