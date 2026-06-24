@@ -39,6 +39,17 @@ import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
+// Standalone sibling modules wired in as first-class subcommands. Each is also a
+// runnable script on its own (node bin/<mod>.mjs ...); here we import the exported
+// argv-accepting dispatchers so `slug`, `publish`/`unpublish`/`project`, and
+// `doctor`/`logs`/`trace` route through ce-app's command dispatch. Their behavior
+// is unchanged; they resolve the SAME single CE identity ce-app does (identical
+// logic), so they sign with ce-app's working identity. We forward --hub (and any
+// explicit --app/--project the user passed) into their argv.
+import { runSlug } from "./slug.mjs";
+import { runRegistry } from "./registry.mjs";
+import { runDebugCli } from "./debug.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_HUB = "https://ce-net.com";
 
@@ -474,7 +485,7 @@ async function signedHeaders(method, urlOrPath, body) {
     /* already a path */
   }
 
-  const ts = String(Date.now());
+  const ts = String(Math.floor(Date.now() / 1000)); // UNIX SECONDS — the hub (SIG_TTL_SECS) compares in seconds
   const nonce = crypto.randomBytes(12).toString("hex");
   const bodyBuf = body == null ? Buffer.alloc(0) : Buffer.isBuffer(body) ? body : Buffer.from(String(body));
   const canonical = [method.toUpperCase(), pathOnly, ts, nonce, sha256Hex(bodyBuf)].join("\n");
@@ -1967,6 +1978,58 @@ async function cmdSmoke() {
 }
 
 // ---------------------------------------------------------------------------
+// wired-in sibling modules: slug / registry / debug
+//
+// slug.mjs, registry.mjs and debug.mjs are standalone, but each exports an
+// argv-accepting dispatcher. We forward the raw args that follow the subcommand,
+// and guarantee the resolved hub is present so the sibling hits the SAME hub
+// ce-app does. The user's explicit --app / --project pass straight through (they
+// are already in `rawArgs`); we never inject those — the modules derive them with
+// the same logic ce-app uses, so the resolved identity drives the (working)
+// signing. Their behavior is otherwise untouched.
+// ---------------------------------------------------------------------------
+
+// All of process.argv after the leading subcommand token (e.g. for
+// `ce-app slug claim foo --json`, returns ["claim","foo","--json"]). Index 2 is
+// the subcommand; everything after it is the sibling's own argv.
+function rawArgsAfterCommand() {
+  return process.argv.slice(3);
+}
+
+// Ensure --hub is present in an argv list; if not, append the resolved hub so the
+// sibling module talks to the same hub ce-app resolved (default, $CE_HUB, or
+// --hub). Does not touch an explicit --hub the user already passed.
+function withHub(argv, hub) {
+  const hasHub = argv.some((a) => a === "--hub" || a.startsWith("--hub="));
+  return hasHub ? argv.slice() : [...argv, "--hub", hub];
+}
+
+// Print whatever a sibling dispatcher returns (string -> as-is; object -> JSON).
+// runSlug / runRegistry return a value to print; runDebugCli prints itself and
+// returns nothing.
+function printResult(out) {
+  if (out == null) return;
+  console.log(typeof out === "string" ? out : JSON.stringify(out, null, 2));
+}
+
+async function cmdSlug(opts) {
+  // args after "slug" -> the slug subcommand + its args.
+  printResult(await runSlug(withHub(rawArgsAfterCommand(), opts.hub)));
+}
+
+// publish / unpublish / project all live in registry.mjs. `verb` is the ce-app
+// command; the args after it are the verb's own argv.
+async function cmdRegistry(verb, opts) {
+  printResult(await runRegistry(verb, withHub(rawArgsAfterCommand(), opts.hub)));
+}
+
+// doctor / logs / trace live in debug.mjs. runDebugCli expects the verb as the
+// first argv element, so we prepend it to the forwarded args.
+async function cmdDebug(verb, opts) {
+  await runDebugCli(withHub([verb, ...rawArgsAfterCommand()], opts.hub));
+}
+
+// ---------------------------------------------------------------------------
 // help + dispatch
 // ---------------------------------------------------------------------------
 
@@ -1981,8 +2044,18 @@ Usage:
   ce-app domain add <domain>    Register a custom production domain for this app
   ce-app domain rm <domain>     Unregister a custom domain
   ce-app domain ls              List this app's custom domains
+  ce-app slug <cmd> [name]      Human-readable names: claim/renew/release/ls/status
+  ce-app publish                Publish this project to the public CE registry
+  ce-app unpublish [id]         Remove a published project (owner only)
+  ce-app project ls             List the public registry (GET /registry)
+  ce-app doctor                 Health check: identity, hub, app, rooms, limits
+  ce-app logs <app>             Stream the app's /rt/<app>/__debug room frames
+  ce-app trace <app>            Time a deploy-shaped round-trip (--write for full)
   ce-app detect                 Print the detected framework + output dir (no network)
   ce-app smoke                  Build a fixture + run detection self-checks (no network)
+
+  Run any of slug/publish/unpublish/project/doctor/logs/trace with --help for its
+  own usage and flags.
 
 Options:
   --hub <base>      Hub base URL (default: ${DEFAULT_HUB}, or $CE_HUB)
@@ -2020,11 +2093,19 @@ Domains:
   Bring your own domain: CNAME it to ce-net.com, then \`ce-app domain add <domain>\`.
 `;
 
+// Commands delegated to the sibling modules. For these, a trailing --help means
+// "show THIS subcommand's help", so we must NOT let the top-level --help guard
+// swallow it — the sibling prints its own usage from the forwarded argv.
+const DELEGATED = new Set(["slug", "publish", "unpublish", "project", "doctor", "logs", "trace"]);
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const cmd = opts._[0];
 
-  if (opts.help || cmd === "help" || !cmd) {
+  // Only fall through to the top-level help when the command is NOT a delegated
+  // subcommand (those route --help to their own module). `ce-app --help` and a
+  // bare `ce-app` still print the top-level help.
+  if ((opts.help && !DELEGATED.has(cmd)) || cmd === "help" || !cmd) {
     console.log(HELP);
     return;
   }
@@ -2047,6 +2128,19 @@ async function main() {
       break;
     case "domain":
       await cmdDomain(opts);
+      break;
+    case "slug":
+      await cmdSlug(opts);
+      break;
+    case "publish":
+    case "unpublish":
+    case "project":
+      await cmdRegistry(cmd, opts);
+      break;
+    case "doctor":
+    case "logs":
+    case "trace":
+      await cmdDebug(cmd, opts);
       break;
     case "detect":
       await cmdDetect(opts);

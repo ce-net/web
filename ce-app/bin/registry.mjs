@@ -34,6 +34,7 @@ import {
   resolveIdentity,
   signedHeaders,
   signedJson,
+  apiBase,
   resolveAppId,
   resolveSlug,
   readCeConfig,
@@ -84,7 +85,7 @@ async function uploadScreenshot(hub, file) {
     // No key -> anonymous blob PUT is fine (blobs are open). Keep going.
     headers = { "content-type": shotContentType(file) };
   }
-  const res = await fetch(`${hub}${p}`, { method: "PUT", headers, body: buf });
+  const res = await fetch(`${apiBase(hub)}${p}`, { method: "PUT", headers, body: buf });
   const text = await res.text().catch(() => "");
   if (!res.ok) {
     let msg = text;
@@ -189,7 +190,7 @@ async function cmdUnpublish(opts) {
   // DELETE /projects/:id is signed over an EMPTY body (no JSON body sent).
   const p = `/projects/${encodeURIComponent(id)}`;
   const headers = await signedHeaders("DELETE", p, Buffer.alloc(0), {});
-  const res = await fetch(`${opts.hub}${p}`, { method: "DELETE", headers });
+  const res = await fetch(`${apiBase(opts.hub)}${p}`, { method: "DELETE", headers });
   const text = await res.text().catch(() => "");
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch (_) { data = { raw: text }; }
@@ -202,7 +203,7 @@ async function cmdUnpublish(opts) {
 
 // GET /registry is public (unsigned).
 async function fetchRegistry(hub) {
-  const res = await fetch(`${hub}/registry`);
+  const res = await fetch(`${apiBase(hub)}/registry`);
   if (!res.ok) throw new Error(`GET /registry -> ${res.status}`);
   const data = await res.json();
   return Array.isArray(data.projects) ? data.projects : [];

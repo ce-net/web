@@ -47,6 +47,13 @@ await fetch(`${base}/db/${app}/user:42`, {
 const u = await (await fetch(`${base}/db/${app}/user:42`)).json();
 ```
 
+## Compare-and-set (If-Match)
+
+A `PUT` may carry an `If-Match: <term>` header. The write applies only if the stored value's `term`
+field currently equals `<term>`; otherwise the hub returns `412` with `{error, current}`. This gives
+optimistic concurrency for a single contested key — for example two would-be hosts racing to write a
+[netgame](netgame.md) snapshot after a partition cannot clobber each other.
+
 ## Listing semantics
 
 `GET /db/:app` returns `{items:[{key,value}],n}`, newest-first. `prefix` filters keys; `limit` caps
@@ -62,7 +69,7 @@ any custom domain — so a page served at `app.acme.com` can call `/db/my-app/<k
 
 | Method | Path | Returns |
 | --- | --- | --- |
-| PUT | `/db/:app/:key` | `{ok, key}` |
+| PUT | `/db/:app/:key` | `{ok, key}` (optional `If-Match: <term>` CAS; `412` on mismatch) |
 | GET | `/db/:app/:key` | value, or `404` |
 | DELETE | `/db/:app/:key` | deletes the key |
 | GET | `/db/:app?prefix=&limit=` | `{items:[{key,value}], n}` (newest-first) |

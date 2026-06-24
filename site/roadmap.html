@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>CE Roadmap — from a workstation to a supercomputer</title>
 <meta name="theme-color" content="#03060e" />
-<meta name="description" content="Two roadmaps: the compute we unlock as nodes join (a workstation, a rack, a datacenter, a top-500 supercomputer) and the platform we are building (durable database, mesh replication, custom-domain TLS, more runtimes, GPU, paid hosting, capability auth, economic security)." />
+<meta name="description" content="Two roadmaps: the compute we unlock as nodes join (a workstation, a rack, a datacenter, a top-500 supercomputer) and the platform we are building (one-identity signing, the authoritative game framework, slugs and the projects registry, durable database, mesh replication, custom-domain TLS, more runtimes, GPU, paid hosting, capability auth, economic security)." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3Cpath d='M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3C/g%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -192,8 +192,9 @@ footer .frow{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px}
     <span class="sectkick">Track 2 &middot; Platform</span>
     <h2>What we are building.</h2>
     <p class="sub">CE is a global compute mesh that is also a one-command app platform: hosting, a database, realtime rooms,
-      and custom domains, hot-reloaded on a public dev domain. Here is where that platform is going — grouped by horizon,
-      concrete but not over-promised.</p>
+      custom domains, one-identity signing, an authoritative game framework (netgame + drift), and a public projects
+      registry, hot-reloaded on a public dev domain. Here is where that platform is going — grouped by horizon, concrete
+      but not over-promised.</p>
 
     <div class="horizons">
       <!-- NEAR -->
@@ -201,8 +202,12 @@ footer .frow{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px}
         <div class="hh"><span class="when">Short term</span><span class="tag">shipping now</span></div>
         <div class="items">
           <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">One-command app platform</div><div class="d">npm create ce-app, npx ce-app dev &rarr; live URL with hosting, KV database, realtime rooms, and hot-reload on save. Live today.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">One-identity signing, verified</div><div class="d">ce-app resolves one Ed25519 identity (the CE node key, found cross-platform) and signs every mutating write. The hub now verifies it: signed writes are attributed to an owner and earn identity-scoped quotas; unsigned stays anonymous on conservative caps.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Authoritative game framework (netgame + drift)</div><div class="d">netgame elects an authoritative host over live mesh metrics with /db-snapshot failover. drift &mdash; a wasm + wgpu open world &mdash; is live at drift.ce-net.com with region sharding and host failover; coop.ce-net.com is the worked example.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Slugs, registry &amp; feedback</div><div class="d">Claim a human slug (/apps/&lt;slug&gt;/), publish to the public projects registry (ce-net.com/projects and /play render it), and collect feedback at feedback.ce-net.com. Signed, owner-scoped; identity-based admin moderation.</div></div></div>
           <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Custom production domains</div><div class="d">CNAME a domain to ce-net.com and ce-app domain add binds it to your app. Per-developer subdomains via wildcard DNS are live.</div></div></div>
-          <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">Database durability</div><div class="d">Persisted, content-addressed snapshots so the KV store survives restarts and grows past a single host's memory. Conservative per-namespace limits today; durable backing next.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Build on the relay</div><div class="d">deploy/ce-build.sh builds ce-hub and Rust&rarr;wasm apps (drift) natively on the relay &mdash; the same target we deploy to &mdash; and PUTs assets straight to /apps/&lt;id&gt;/. No laptop cross-compile.</div></div></div>
+          <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">Database durability</div><div class="d">Persisted, content-addressed snapshots so the KV store survives restarts and grows past a single host's memory. Compare-and-set (If-Match) is live; durable backing next.</div></div></div>
           <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">Custom-domain TLS automation</div><div class="d">Automatic certificate issuance and renewal for CNAME'd domains, so a custom domain is one command end to end.</div></div></div>
           <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">More languages &amp; runtimes</div><div class="d">Compute tasks run WASM, JavaScript, and Python today. Broadening the sandboxed runtime set and the task SDK surface.</div></div></div>
         </div>
@@ -213,6 +218,7 @@ footer .frow{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px}
         <div class="hh"><span class="when">Medium term</span><span class="tag">in design</span></div>
         <div class="items">
           <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">Mesh replication &amp; read-path</div><div class="d">App files, blobs, and database snapshots replicated across contributor nodes, served from the nearest replica — a real distributed read-path, not a single origin.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Scheduler-placed game hosting</div><div class="d">Today netgame elects the authoritative host from emergent mesh metrics. A future hub scheduler could place hosting on a chosen node by trust, region, or capacity and hand clients the host id directly — the wire protocol already leaves room for it.</div></div></div>
           <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Multi-relay, no single point</div><div class="d">More than one public relay and ingress, so no one machine is the chokepoint. The mesh stays reachable if any single relay goes down.</div></div></div>
           <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">GPU compute via WebGPU</div><div class="d">Browser and headless nodes that expose WebGPU run GPU tasks directly — inference and parallel kernels on donated graphics hardware, dispatched like any other task.</div></div></div>
           <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Capability-based auth across the platform</div><div class="d">App data, databases, and rooms gated by signed, attenuating capabilities &mdash; delegate, narrow, and revoke access without an account system.</div></div></div>

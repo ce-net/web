@@ -29,6 +29,10 @@ ws.onmessage = (e) => console.log(e.data);   // last 50 replayed first, then liv
 - Any text frame is broadcast to others in the room (not echoed back to the sender).
 - The last 50 messages are replayed to a client on connect.
 - Messages are opaque text — send plain strings or JSON you stringify yourself.
+- **Ephemeral rooms:** add `?ephemeral=1` to skip the 50-message history replay, for high-rate
+  authoritative state (e.g. a game's per-tick frames). Binary frames are broadcast but never
+  buffered in history. The [netgame](netgame.md) framework and [drift](program.md) use an ephemeral
+  room for state and a normal room for control.
 
 Pair rooms with the database when you want presence-style ephemerality (rooms) plus durable history
 (database).
@@ -38,5 +42,6 @@ Pair rooms with the database when you want presence-style ephemerality (rooms) p
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/rt/:app/:room` | WebSocket; broadcast text frames; replays last 50. |
+| GET | `/rt/:app/:room?ephemeral=1` | high-rate room; no history replay. |
 
 Reachable as `wss://ce-net.com/rt/:app/:room` and on the subdomain and custom-domain origins.

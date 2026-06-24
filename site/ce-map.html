@@ -153,7 +153,7 @@
 <header class="top"><div class="wrap">
   <div class="eyebrow">CE · sounding chart · the mesh & the app platform</div>
   <h1>The shape of <em>the network</em></h1>
-  <p class="lede">A read of the whole system as ocean depth: <b>the surface is the app platform people ship on</b> — one-command hosting, a database, realtime rooms, custom domains — and everything rests on <b>the node at the bedrock</b>. Depth means foundation — currents flow downward to what each thing depends on. Hover a return to trace its dependencies; open one for the readout.</p>
+  <p class="lede">A read of the whole system as ocean depth: <b>the surface is the app platform people ship on</b> — one-command hosting, a database, realtime rooms, custom domains, one-identity signing, the authoritative game framework (netgame + drift), and the public projects registry — and everything rests on <b>the node at the bedrock</b>. Depth means foundation — currents flow downward to what each thing depends on. Hover a return to trace its dependencies; open one for the readout.</p>
   <div class="toolbar">
     <div class="views" role="tablist" aria-label="View">
       <button id="vMap" aria-pressed="true">Map</button>
@@ -179,7 +179,7 @@
   <div id="dBody"></div>
 </aside>
 
-<footer><div class="wrap">CE — "pronounced Sea." Donate compute, earn credits, spend credits on compute. · the mesh & the app platform · map generated 2026-06-24</div></footer>
+<footer><div class="wrap">CE — "pronounced Sea." Donate compute, earn credits, spend credits on compute. · the mesh, the app platform & the game framework · map generated 2026-06-24</div></footer>
 
 <script>
 const STATUS = {
@@ -190,7 +190,7 @@ const STATUS = {
 };
 // bands: surface (top) -> bedrock (bottom)
 const BANDS = [
-  {id:'platform',depth:'0 m', name:'Surface · App platform', sub:'one command → live app'},
+  {id:'platform',depth:'0 m', name:'Surface · App platform', sub:'one command → live app · games · registry'},
   {id:'dx',   depth:'40 m',  name:'DX, SDKs & web',         sub:'languages & what you ship'},
   {id:'cloud',depth:'160 m', name:'CE Cloud',               sub:'GCP-shaped services'},
   {id:'mesh', depth:'420 m', name:'Mesh use-cases & distribution', sub:'compute over the swarm'},
@@ -213,11 +213,21 @@ const REPOS = [
    blurb:'Realtime rooms over WebSocket: wss://.../rt/:app/:room. Any text frame is broadcast to the room; the last 50 messages replay on connect. The substrate for chat, presence, and multiplayer.',deps:['ce-hub']},
   {id:'ce-domains',band:'platform',status:'verified',kind:'service',tasks:[],
    blurb:'Custom production domains: PUT /apps/:id/domain → CNAME to ce-net.com, nginx sets X-CE-Host, the hub resolves the app via /_host. Per-developer subdomains via wildcard DNS are live; automatic TLS for CNAMEs is on the roadmap.',deps:['ce-hub']},
+  {id:'ce-identity',band:'platform',status:'verified',kind:'service',tasks:[],
+   blurb:'One Ed25519 identity reused everywhere (the CE node key, resolved cross-platform; pubkey == node id). ce-app signs every mutating write — x-ce-id / x-ce-sig / x-ce-ts / x-ce-nonce over METHOD\\nPATH\\nts\\nnonce\\nsha256(body). Signing is now VERIFIED by the hub: signed writes are attributed to an owner (sha256(pubkey)[..16]) and earn identity-scoped quotas; bad signatures are 401.',deps:['ce-hub','ce']},
+  {id:'netgame',band:'platform',status:'verified',kind:'framework · js',tasks:[],
+   blurb:'The authoritative distributed game framework — one dependency-free ESM file on hub primitives. Coordinator-free deterministic host election over /nodes metrics (highest score, ties → smallest id, server beats browser); the elected host runs the tick loop and streams state; /db snapshots give failover with at most snapshotEvery/hz seconds of loss. Powers coop and drift.',deps:['ce-realtime','app-db','ce-hub']},
+  {id:'drift',band:'platform',status:'verified',kind:'game · wasm+wgpu',tasks:[],
+   blurb:'Flagship open-world game at drift.ce-net.com: a wgpu wasm renderer + a deterministic wasm sim host. Region-sharded (r:<gx>:<gy> grid + /db world directory + cross-shard handoff), authoritative state as binary StateFrames over an ephemeral /rt room, area-of-interest per viewer, CAS-guarded (If-Match) /db snapshot failover, hybrid pinned-node-preferred + browser-fallback hosting.',deps:['netgame','ce-realtime','app-db']},
+  {id:'slugs-registry',band:'platform',status:'verified',kind:'service',tasks:[],
+   blurb:'Human slugs (ce-app slug claim → /apps/<slug>/ via the not-found fallback) + the public projects registry (ce-app publish → /projects, pinned content-addressed screenshot blobs, GET /registry). Writes are signed/owner-scoped; ce-net.com/projects and /play render the registry dynamically. Reports and owner/admin delete included.',deps:['ce-hub','ce-identity']},
+  {id:'feedback',band:'platform',status:'verified',kind:'app',tasks:[],
+   blurb:'Realtime feedback board at feedback.ce-net.com — one board per project, durable in /db/feedback, live over a /rt room, with a shadow-DOM embed.js widget and soft community moderation. Paired with the hub per-namespace IP rate limiter (CE_HUB_RATELIMIT_NS=feedback).',deps:['ce-realtime','app-db','ce-hub']},
   // node
   {id:'ce',band:'node',status:'verified',kind:'rust · node',tasks:[3,23],
    blurb:'The node. Ed25519 identity, libp2p mesh, PoW chain + credit economy, container/WASM execution, the ce-cap capability verifier, content-addressed blobs, and tunnels. CI now green on Linux, macOS and Windows.',deps:[]},
   {id:'ce-hub',band:'node',status:'verified',kind:'rust · svc',tasks:[],
-   blurb:'The public hub sidecar (service ce-hub, fronted by nginx at ce-net.com). Routes compute tasks to connected browser/headless nodes, serves hosted apps, the KV database, realtime rooms, content-addressed blobs, and custom domains. Enforces conservative storage limits to protect the host disk.',deps:['ce']},
+   blurb:'The public hub sidecar (service ce-hub, fronted by nginx at ce-net.com). Routes compute tasks to connected browser/headless nodes; serves hosted apps, the KV database (with If-Match CAS), realtime rooms (incl. ephemeral), content-addressed blobs, custom domains, slugs, and the projects registry. Verifies signed writes and applies identity-scoped quotas; admin is identity-based (CE_HUB_ADMIN_OWNER), not a shared token. Conservative anonymous storage limits + per-namespace IP rate limits protect the host disk.',deps:['ce']},
   {id:'mesh-distribution',band:'mesh',status:'built',kind:'distribution',tasks:[18],
    blurb:'Mesh distribution & replicated read-path: app files, blobs, and DB snapshots fan out to contributor nodes (browser ?cache=, headless CE_WORKER_MAX_CACHE_BYTES, oldest-evicted) and are served from the nearest replica. Multi-relay ingress with no single point is on the roadmap.',deps:['ce-pin','ce-hub','ce-rs']},
   // sdk
@@ -296,6 +306,8 @@ const REPOS = [
    blurb:'Two-node mesh end-to-end harness — request/reply, pubsub, blob-by-CID, discovery, capability-gated tunnel. 6/6 passing live across two real nodes.',deps:['ce-rs']},
   {id:'web',band:'dx',status:'legacy',kind:'web · site',tasks:[11],
    blurb:'ce-hub sidecar + the public site: browser node, the live network dashboard, and the interactive playground (runnable SDK cards).',deps:['ce-ts']},
+  {id:'relay-build',band:'dx',status:'verified',kind:'scripts · deploy',tasks:[],
+   blurb:'Build on the relay, not the laptop: deploy/ce-build.sh {hub | wasm <dir> <app> | cargo <dir> [args] | drift} rsyncs to the Hetzner relay, builds ce-hub / Rust→wasm apps / drift natively there (same target we deploy to → no musl cross-compile), and PUTs the built assets straight to /apps/<id>/. Keeps multi-GB build trees off the laptop and dogfoods the mesh as a build host.',deps:['ce-hub']},
   {id:'homebrew-ce',band:'dx',status:'legacy',kind:'packaging',tasks:[],
    blurb:'Homebrew tap. brew install ce-net/ce/ce.',deps:['ce']},
   {id:'scoop-ce',band:'dx',status:'legacy',kind:'packaging',tasks:[],

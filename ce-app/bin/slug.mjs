@@ -35,6 +35,15 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_HUB = "https://ce-net.com";
 const NODEPREFIX_LEN = 10;
 
+// The hub's write/registry API is reached via the /hub proxy on the apex: POST /projects at the apex
+// would collide with the static /projects gallery page, so API calls go to /hub/<path>. The SIGNED
+// path stays the bare path (nginx strips /hub before the hub verifies the signature). Display URLs
+// (an app's public address) are NOT routed through here — they stay on the bare host.
+export function apiBase(hub) {
+  const h = (hub || DEFAULT_HUB).replace(/\/+$/, "");
+  return /\/hub$/.test(h) ? h : h + "/hub";
+}
+
 // ---------------------------------------------------------------------------
 // identity — the SAME single-identity resolution ce-app.mjs uses. Reused (not
 // re-minted): CE node id (`ce id` + ~/.local/share/ce/identity/node.key) first,
@@ -204,7 +213,7 @@ async function signedHeaders(method, urlOrPath, body, base = {}) {
 }
 
 async function signedJson(hub, method, p, obj) {
-  const url = `${hub}${p}`;
+  const url = `${apiBase(hub)}${p}`;
   const body = Buffer.from(JSON.stringify(obj));
   const headers = await signedHeaders(method, p, body, { "content-type": "application/json" });
   const res = await fetch(url, { method, headers, body });
@@ -366,7 +375,7 @@ async function cmdRelease(opts) {
 
 // GET /slugs/:slug is public (unsigned).
 async function getSlug(hub, slug) {
-  const res = await fetch(`${hub}/slugs/${encodeURIComponent(slug)}`);
+  const res = await fetch(`${apiBase(hub)}/slugs/${encodeURIComponent(slug)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`GET /slugs/${slug} -> ${res.status}`);
   return res.json();

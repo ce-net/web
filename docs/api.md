@@ -4,6 +4,15 @@ Base origin `https://ce-net.com` (service `ce-hub`, exposed publicly via nginx).
 also reachable under the `/hub/<path>` prefix. Bodies are JSON unless noted; blob and file uploads
 take a raw body with a `content-type`.
 
+## Signing
+
+Mutating requests may be **signed** with your one CE identity (see [identity](identity.md)):
+headers `x-ce-id` / `x-ce-sig` / `x-ce-ts` / `x-ce-nonce`, signing
+`METHOD\nPATH\nts\nnonce\nsha256(body)-hex`. A valid signature attributes the write to its owner
+(`sha256(pubkey)[..16]`) and grants identity-scoped quotas ([limits](limits.md)); no signature is
+anonymous on the conservative caps; a bad signature is `401`. App/db/blob writes accept anonymous;
+**slug and project writes require a signature**.
+
 ## Compute
 
 ### POST /tasks
@@ -103,6 +112,11 @@ custom-domain serving; you do not call it directly.
 
 Store a JSON value at a key. Returns `{ok, key}`.
 
+Optional **compare-and-set**: an `If-Match: <term>` header requires the stored value's `term` field
+to equal `<term>` before the write applies. A mismatch returns `412` with `{error, current}`. This
+is how `netgame` / `drift` guard a snapshot so two hosts racing after a partition cannot clobber
+each other.
+
 ### GET /db/:app/:key
 
 Read a value, or `404` if the key is absent.
@@ -123,12 +137,58 @@ WebSocket. Any text frame is broadcast to others in the room. The last 50 messag
 connect. Reachable as `wss://ce-net.com/rt/:app/:room` (and on the subdomain / custom-domain
 origins).
 
+Add `?ephemeral=1` to mark a high-rate room that **skips** the 50-deep history replay — used for
+authoritative state frames (`drift` streams binary StateFrames over an ephemeral room). Binary
+frames are broadcast but never buffered in history.
+
+## App debug
+
+### GET /apps/:id/debug
+
+Read-only counters for a hosted app: `{version, bytes, requests, errors, last_error, rooms,
+owner}`. Powers the [debug](debug.md) dashboard and `ce-app doctor`.
+
+## Slug registry
+
+### POST /slugs/claim, /slugs/renew, /slugs/release
+
+**Signed** (owner-scoped). `claim {slug, app_id}` maps a human name to your app; `renew {slug}`
+extends the expiry; `release {slug}` gives it back. A claimed slug serves at `/apps/<slug>/` via the
+not-found fallback. See [registry](registry.md).
+
+### GET /slugs/:slug
+
+Public. Resolve a slug: `{app_id, owner, expires_unix, alive}`, or `404` if unclaimed.
+
+## Projects registry
+
+### POST /projects
+
+**Signed**. Publish or update a project record `{title, slug, app_id, desc, tags, screenshots,
+site, public}`. `screenshots` are blob hashes (`PUT /blobs/<sha256>`), pinned by the record.
+Returns `{id, owner}`.
+
+### DELETE /projects/:id
+
+**Signed**. Unpublish — succeeds for the project's owner, or for an admin (`CE_HUB_ADMIN_OWNER`;
+see [admin](admin.md)).
+
+### POST /projects/:id/report
+
+Flag a project (per-IP rate-limited; `429` over budget).
+
+### GET /registry
+
+Public list of published projects: `{projects:[{id, title, app_id, owner, tags, screenshots,
+hosted, rooms, reports, …}]}`. Rendered by `ce-net.com/projects` and `ce-net.com/play`.
+
 ## Public URLs
 
 | Pattern | Purpose |
 | --- | --- |
 | `https://ce-net.com/apps/<id>/` | Path hosting. |
 | `https://<id>.ce-net.com/` | Per-developer subdomain (wildcard DNS live). |
+| `https://ce-net.com/apps/<slug>/` | Human slug claimed via `ce-app slug claim` (not-found fallback). |
 | `https://<custom-domain>/` | CNAME to `ce-net.com`, then `ce-app domain add`. |
 
 `/db/<app>/<key>` and `wss://ce-net.com/rt/<app>/<room>` work on all of these origins.

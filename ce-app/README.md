@@ -35,8 +35,21 @@ the static output, uploads it, and turns on client-side-routing fallback for the
 | `ce-app domain add <domain>` | Register a custom production domain and print the CNAME + TLS steps. |
 | `ce-app domain rm <domain>` | Unregister a custom domain. |
 | `ce-app domain ls` | List this app's custom domains. |
+| `ce-app slug <cmd> [name]` | Human-readable names for your app: `claim` / `renew` / `release` / `ls` / `status`. |
+| `ce-app publish` | Publish this project to the public CE registry (uploads screenshots, `POST /projects`). |
+| `ce-app unpublish [id]` | Remove a published project (owner only). |
+| `ce-app project ls` | List the public registry (`GET /registry`). |
+| `ce-app doctor` | Health check: identity, hub reachability, app deployed, rooms, limits headroom. |
+| `ce-app logs <app>` | Stream the app's `/rt/<app>/__debug` room frames (read-only). |
+| `ce-app trace <app>` | Time a deploy-shaped round-trip; `--write` adds a signed PUT/GET probe. |
 | `ce-app detect` | Print the detected framework + output dir (no network). For Rust projects, also audits the wasm toolchain. |
 | `ce-app smoke` | Build a fixture and run framework-detection + signing self-checks (no network). |
+
+`slug`, `publish` / `unpublish` / `project`, and `doctor` / `logs` / `trace` are
+first-class subcommands backed by the `slug.mjs`, `registry.mjs`, and `debug.mjs`
+modules (each also runnable standalone as `node bin/<module>.mjs …`). They reuse
+ce-app's single resolved identity and signing, and honor `--hub` (or `$CE_HUB`).
+Run any of them with `--help` for its own usage and flags.
 
 Flags: `--hub <base>` (default `https://ce-net.com`, or `$CE_HUB`), `--app <id>`
 (default `./.ce/app-id`), `--help`.
@@ -93,6 +106,58 @@ ce-app domain rm app.example.com      # unregister
 **Cloudflare for SaaS** custom hostnames (CE terminates TLS for your domain), or an
 **origin certificate** installed on the relay. Once DNS propagates the app is live at
 `https://app.example.com/` with the same SPA-fallback behavior as `/apps/<id>/`.
+
+## Slugs — human-readable names
+
+Claim a memorable name that resolves to your app id at the hub's not-found
+fallback, so `https://ce-net.com/apps/<slug>/…` serves your app with no nginx
+change. Writes are signed; a usable secret key is required.
+
+```bash
+ce-app slug claim chat        # claim "chat" (or ce.json "slug") -> this app id
+ce-app slug status chat       # resolve a slug -> app id / owner / expiry
+ce-app slug renew chat        # extend the expiry (owner only)
+ce-app slug release chat      # give the slug back (owner only)
+ce-app slug ls [names...]     # show known slugs owned by this identity
+```
+
+The slug defaults to the positional name, then `--slug`, then `ce.json` `"slug"`,
+then the project name. `--json` prints machine-readable output.
+
+## Publish to the registry
+
+Publish your project to the public CE registry so the site (`/projects`, `/play`)
+can render it. Screenshots are uploaded to the content-addressed blob store and
+pinned by the project record.
+
+```bash
+ce-app publish                # read ce.json, upload screenshots, POST /projects
+ce-app unpublish [id]         # remove a project (owner only)
+ce-app project ls             # list the public registry
+```
+
+`publish` reads `ce.json` (or `ce-app.json`): `project`/`name`/`slug`, `title`,
+`desc`/`description`, `tags[]`, `site`, `screenshots[]` (local files, uploaded to
+`/blobs`), `public`, `app_id`, `id`. CLI flags (`--title`, `--desc`, `--tags`,
+`--site`, `--shot`, `--id`, `--private`, `--json`) override config. Writes are
+signed with your one identity.
+
+## Debug — doctor / logs / trace
+
+Read-only observability against the live hub.
+
+```bash
+ce-app doctor                 # identity, hub, app deployed, rooms, limits headroom
+ce-app logs <app>             # stream the app's /rt/<app>/__debug room frames
+ce-app logs <app> --once      # drain recent history, then exit
+ce-app trace <app>            # time a deploy-shaped read round-trip
+ce-app trace <app> --write    # also PUT/GET/clean a tiny signed probe under __trace/
+```
+
+`doctor` and `logs`/`trace` default to the derived app id (or the positional
+`<app>` / `--app`). `trace` touches nothing unless you pass `--write`. The
+`__debug` room convention: apps publish JSON text frames like
+`{"t":"log","level":"info","msg":"started"}` — see `web/docs/debug.md`.
 
 ## Client library — `@ce/client`
 

@@ -11,8 +11,12 @@ An identity is an Ed25519 keypair. The public key (and a hash of it) is your **i
 signs your writes. ce-app resolves the single identity in a fixed order and stops at the first hit:
 
 1. **The CE node identity.** If the `ce` CLI is installed, `ce id` prints your node id. The matching
-   secret key lives at `~/.local/share/ce/identity/node.key` when this machine runs a real CE node.
-   This is the canonical "1 person = 1 id": your app identity *is* your node identity.
+   secret key lives in the CE data directory, which is **platform-specific**: macOS
+   `~/Library/Application Support/ce/identity/node.key`, Linux `~/.local/share/ce/identity/node.key`,
+   Windows `%APPDATA%\ce\identity\node.key` (and `CE_DATA_DIR` overrides all of these). `ce-app`,
+   `slug.mjs`, and `registry.mjs` probe these candidates in order and use the first that exists. The
+   pubkey **is** the node id, so this is the canonical "1 person = 1 id": your app identity *is* your
+   node identity.
 2. **One local app keypair.** With no CE node present, ce-app uses a single Ed25519 keypair at
    `~/.ce/identity/node.key`, created once on first use and reused forever. Its id is
    `sha256(pubkey)` in hex, so it is shaped exactly like a node id and is stable across runs.
@@ -51,9 +55,10 @@ https://ce-net.com/apps/<project>-<nodeprefix>/
 ## The signing scheme
 
 Every mutating request ce-app makes is signed with the identity's secret key. This is invisible — you
-do nothing — and it is **forward-compatible**: the live hub ignores the headers today (so anonymous
-PUTs keep working), and a later hub will verify them to grant identity-scoped quotas (see
-[limits](limits.md)). The scheme is fixed now so both sides agree on it:
+do nothing — and the hub now **verifies** it: a valid signature attributes the write to your owner
+id (`sha256(pubkey)[..16]`) and grants identity-scoped quotas (see [limits](limits.md)); a request
+with no signature stays anonymous on the conservative caps; a request with a bad signature is
+rejected `401`. Slug and project writes **require** a valid signature. The scheme:
 
 Headers on every `PUT` / `POST` / `DELETE` / `PATCH`:
 
@@ -82,7 +87,14 @@ A verifier recomputes the canonical string from the request it received, checks 
 digest is in the signed string, a tampered body invalidates the signature.
 
 When no secret key is available, ce-app sends the request **without** these headers (a valid
-anonymous request) rather than sending a broken signature. Signing is all-or-nothing per request.
+anonymous request, accepted on the anonymous caps) rather than sending a broken signature. Signing
+is all-or-nothing per request. The owner-scoped registries — slugs and projects — reject an
+unsigned write (`401 signature required`), so those need a usable secret key.
+
+`x-ce-ts` is a unix timestamp the hub checks against a tolerance window; `ce-app` sends
+milliseconds, while `slug.mjs` / `registry.mjs` send **seconds** to match the hub's seconds-based
+window. Either way the timestamp and the per-request `x-ce-nonce` are folded into the signed
+canonical string, so a stale or replayed request is rejected.
 
 ## Device linking
 
@@ -108,7 +120,10 @@ second id.
 
 | Path | What |
 | --- | --- |
-| `~/.local/share/ce/identity/node.key` | CE node secret key (when a real node runs here). Back this up. |
+| `~/Library/Application Support/ce/identity/node.key` (macOS) | CE node secret key. Back this up. |
+| `~/.local/share/ce/identity/node.key` (Linux) | CE node secret key. Back this up. |
+| `%APPDATA%\ce\identity\node.key` (Windows) | CE node secret key. Back this up. |
+| `$CE_DATA_DIR/identity/node.key` | overrides the per-platform default above. |
 | `~/.ce/identity/node.key` | the single local app keypair, created once when no CE node is present. |
 | `~/.ce/id` | cached id string; migrates to the one id. Not the source of truth. |
 | `./.ce/app-id` | optional per-project app-id pin; wins for that checkout. |

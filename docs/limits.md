@@ -15,27 +15,29 @@ its app cap returns the same.
 
 ## Anonymous vs identity-scoped (the model)
 
-Every mutating request ce-app sends is already **signed** with your one identity (`x-ce-id` /
-`x-ce-sig` / `x-ce-ts` / `x-ce-nonce` — see [identity](identity.md)). The live hub ignores these
-headers today, so today everyone shares the anonymous caps below. The signing is forward-compatible
-on purpose: a later hub verifies the signature and applies a **larger, identity-scoped** quota to
-writes it can attribute to you.
+Every mutating request ce-app sends is **signed** with your one identity (`x-ce-id` / `x-ce-sig` /
+`x-ce-ts` / `x-ce-nonce` — see [identity](identity.md)), and the hub now **verifies** it. A request
+with a valid signature is attributed to its **owner** (`owner = sha256(pubkey)[..16]`) and earns a
+larger, identity-scoped quota; a request with **no** signature stays anonymous on the conservative
+caps below; a request with a signature that fails any check is rejected `401`.
 
 | Writer | Quota | Rationale |
 | --- | --- | --- |
-| **Anonymous** (no valid signature) | today's small caps | bounded blast radius for unattributable writes. |
+| **Anonymous** (no signature) | the small caps below | bounded blast radius for unattributable writes. |
 | **Signed / owned** (valid `x-ce-id`) | generous, per-identity | attributable, revocable, and rate-limited per id. |
 | **Trusted** (uptime / on-chain trust) | grows over time | a node that contributes uptime earns headroom. |
 
 The principle behind the gradient is CE's trust model: trust is **earned, non-sellable**, and it
 gates how much of the shared resource you may consume. An owned app is one with a non-empty owner id;
-the hub already tracks ownership and surfaces an `owner_*` budget block in `/stats.limits` as the
-substrate for this. Raising your quota is therefore not a purchase — you raise it by running a node
-and accumulating uptime/trust, the same currency CE uses everywhere.
+the hub tracks ownership and surfaces an `owner_*` budget block in `/stats.limits` as the substrate
+for this. Raising your quota is therefore not a purchase — you raise it by running a node and
+accumulating uptime/trust, the same currency CE uses everywhere. The per-owner app budget scales
+from `owner_app_bytes` toward `owner_app_bytes * owner_trust_max` as a node mapped to your owner id
+accrues uptime.
 
-> Wave-1 status: signing is shipped and forward-compatible, but the hub does **not** verify it yet,
-> so identity-scoped quotas are documented intent, not yet enforced. Wave-2 turns on verification.
-> No hub limits change in wave 1.
+> Signed owners get generous, identity-scoped quotas; admin is identity-based too (a request signed
+> by an operator identity in `CE_HUB_ADMIN_OWNER`). See [admin](admin.md). Slug and project writes
+> **require** a signature; ordinary app/db/blob writes accept anonymous on the smaller caps.
 
 ## Anonymous / global caps (today)
 
@@ -56,6 +58,14 @@ These are the conservative defaults; the globals are environment-configurable by
 | App | 64 MB, 200 files |
 | Blob | 16 MB per blob, 256 MB store |
 | Database | 5000 keys per namespace |
+| Slugs | `owner_slug_cap` per owner (default 25) |
+
+## Per-namespace IP rate limit
+
+Namespaces named in `CE_HUB_RATELIMIT_NS` (comma-separated, e.g. `feedback`) are token-bucketed
+per client IP. Over-budget writes return `429`. This is anti-spam for high-write public apps like
+the [feedback](registry.md#feedback) board, separate from the storage caps above. Project reports
+(`POST /projects/:id/report`) are rate-limited the same way.
 
 ## Contributor caches
 
