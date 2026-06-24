@@ -148,9 +148,21 @@ function ceHomeDir() {
   return path.join(os.homedir(), ".ce");
 }
 
-// Where a real CE node keeps its Ed25519 secret key (see root CLAUDE.md).
+// Where a real CE node keeps its Ed25519 secret key. The data dir is platform-specific (the `dirs`
+// crate: ~/Library/Application Support/ce on macOS, ~/.local/share/ce on Linux, %APPDATA%\ce on
+// Windows), and CE_DATA_DIR / `ce --data-dir` can override it. Return the first that exists, else a
+// sensible per-platform default.
 function ceNodeKeyPath() {
-  return path.join(os.homedir(), ".local", "share", "ce", "identity", "node.key");
+  const home = os.homedir();
+  const cands = [];
+  if (process.env.CE_DATA_DIR) cands.push(path.join(process.env.CE_DATA_DIR, "identity", "node.key"));
+  cands.push(path.join(home, "Library", "Application Support", "ce", "identity", "node.key")); // macOS
+  cands.push(path.join(home, ".local", "share", "ce", "identity", "node.key")); // Linux / XDG
+  if (process.env.APPDATA) cands.push(path.join(process.env.APPDATA, "ce", "identity", "node.key")); // Windows
+  for (const c of cands) {
+    try { if (fssync.existsSync(c)) return c; } catch (_) { /* keep looking */ }
+  }
+  return process.platform === "darwin" ? cands[process.env.CE_DATA_DIR ? 1 : 0] : cands[cands.length - 1];
 }
 
 function ceIdentityDir() {
