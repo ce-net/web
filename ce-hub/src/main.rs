@@ -17,6 +17,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand::RngCore;
 
+mod git_http;
+mod instances;
+mod mirror;
+mod pulls;
+mod repo_read;
+mod repos;
+
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
@@ -196,11 +203,11 @@ struct AppDebug {
 }
 
 /// Identity of a verified signed write: the caller's public key + the derived owner id.
-struct Signer {
-    owner: String,
+pub(crate) struct Signer {
+    pub(crate) owner: String,
 }
 
-struct AppState {
+pub(crate) struct AppState {
     nodes: Mutex<HashMap<String, NodeEntry>>,
     pending: Mutex<HashMap<String, oneshot::Sender<JobResult>>>,
     modules: HashMap<String, String>, // builtin name -> base64 wasm
@@ -265,8 +272,21 @@ struct AppState {
     // ce-watch push target + ingest token (env CE_WATCH_URL / CE_WATCH_INGEST_TOKEN).
     watch_url: String,
     watch_token: String,
+    // --- hub git layer (hub.ce-net.com) ---
+    // repo registry: "<owner>/<repo>" -> RepoEntry, persisted to repos.json (atomic write + lock).
+    pub(crate) repos: Mutex<HashMap<String, repos::RepoEntry>>,
+    // root directory for bare git repos: CE_HUB_DATA/git (GIT_PROJECT_ROOT for git-http-backend).
+    pub(crate) git_root: PathBuf,
+    // total git on-disk byte budget (env CE_HUB_MAX_GIT_BYTES, default 2 GiB); pushes over it 507.
+    pub(crate) max_git_bytes: u64,
+    // per-repo on-disk byte budget (env CE_HUB_MAX_REPO_BYTES, default 1 GiB); a push that makes a
+    // single repo exceed this is rejected and the newly-written objects best-effort cleaned.
+    pub(crate) max_repo_bytes: u64,
+    // bounds concurrent `git http-backend` CGI children so a burst of clones/pushes cannot fork-bomb
+    // the relay. Acquire a permit before spawning; the permit is held for the child's lifetime.
+    pub(crate) git_sem: Arc<tokio::sync::Semaphore>,
 }
-type Shared = Arc<AppState>;
+pub(crate) type Shared = Arc<AppState>;
 
 /// Durable lifetime counters persisted to <data>/counters.json. `tasks_run` counts every completed
 /// job result; `compute_distributed_ms` accumulates each job's self-reported wall-clock ms (the
@@ -386,6 +406,15 @@ const ROOM_CAP_DEFAULT: usize = 256; // default broadcast channel capacity (CE_H
 /// the hub's clock is rejected (with single-use nonces this bounds the replay window).
 const SIG_TTL_SECS: u64 = 300;
 
+/// Server-side max lifetime for a git push capability token. The minting CLI may request any
+/// (ts, exp) pair, but the hub refuses tokens whose declared lifetime (exp - ts) exceeds this, and
+/// refuses tokens that expire more than this far in the future, so a leaked token's replay window is
+/// bounded regardless of what the client put in `exp`.
+pub(crate) const MAX_PUSH_TOKEN_TTL: u64 = 600;
+
+/// Max number of concurrent `git http-backend` CGI children.
+const GIT_CGI_CONCURRENCY: usize = 8;
+
 /// Reserved app/slug names that may never be claimed as slugs (they are hub-owned namespaces).
 const RESERVED_NAMES: &[&str] = &[
     "registry", "apps", "db", "rt", "blobs", "domains", "slugs", "projects", "stats", "nodes",
@@ -471,13 +500,13 @@ fn db_bytes_total(db: &HashMap<String, HashMap<String, DbEntry>>) -> u64 {
     db.values().map(|t| t.values().map(|e| e.value.to_string().len() as u64).sum::<u64>()).sum()
 }
 
-fn unix_now() -> u64 {
+pub(crate) fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 /// Unix time in milliseconds — used to stamp latency pings (RTT is measured on the hub's own
 /// clock via the echoed timestamp, so there is no client clock-skew error).
-fn unix_millis() -> u64 {
+pub(crate) fn unix_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
@@ -501,6 +530,9 @@ async fn main() {
     let slugs = load_slugs(&data_dir);
     let projects = load_projects(&data_dir);
     let counters = load_counters(&data_dir);
+    let repos = repos::load_repos(&data_dir);
+    let git_root = data_dir.join("git");
+    ensure_dir(&git_root);
     // Re-pin every screenshot blob referenced by a persisted project so eviction skips them.
     let mut pinned: std::collections::HashSet<String> = std::collections::HashSet::new();
     for p in projects.values() {
@@ -566,6 +598,11 @@ async fn main() {
         flagged_total: AtomicU64::new(0),
         watch_url: env_string("CE_WATCH_URL").unwrap_or_else(|| "http://127.0.0.1:8971".into()),
         watch_token: env_string("CE_WATCH_INGEST_TOKEN").unwrap_or_default(),
+        repos: Mutex::new(repos),
+        git_root,
+        max_git_bytes: env_u64("CE_HUB_MAX_GIT_BYTES", 2 * 1024 * 1024 * 1024),
+        max_repo_bytes: env_u64("CE_HUB_MAX_REPO_BYTES", 1024 * 1024 * 1024),
+        git_sem: Arc::new(tokio::sync::Semaphore::new(GIT_CGI_CONCURRENCY)),
     });
     eprintln!(
         "ce-hub: storage limits — {} MiB global budget, {} apps, {} domains, {} db namespaces",
@@ -675,6 +712,43 @@ async fn main() {
         .route("/projects/:id", axum::routing::delete(project_delete))
         .route("/projects/:id/report", post(project_report))
         .route("/registry", get(registry_list))
+        // --- hub git layer (hub.ce-net.com) ---
+        // Git smart-HTTP wire protocol (proxied to the system `git http-backend`).
+        .route("/git/:owner/:repo/info/refs", get(git_http::info_refs))
+        .route(
+            "/git/:owner/:repo/git-upload-pack",
+            post(git_http::upload_pack).layer(DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/git/:owner/:repo/git-receive-pack",
+            post(git_http::receive_pack).layer(DefaultBodyLimit::disable()),
+        )
+        // Repo registry (JSON).
+        .route("/repos", post(repos::create_repo).get(repos::list_repos))
+        .route(
+            "/repos/:owner/:repo",
+            get(repos::get_repo).delete(repos::delete_repo),
+        )
+        // gix-powered read API.
+        .route("/repos/:owner/:repo/tree/:rref", get(repo_read::tree_root))
+        .route("/repos/:owner/:repo/tree/:rref/*path", get(repo_read::tree))
+        .route("/repos/:owner/:repo/blob/:rref/*path", get(repo_read::blob))
+        .route("/repos/:owner/:repo/commits/:rref", get(repo_read::commits))
+        .route("/repos/:owner/:repo/commit/:sha", get(repo_read::commit))
+        .route("/repos/:owner/:repo/compare/:base/:head", get(repo_read::compare))
+        .route("/repos/:owner/:repo/releases", get(repo_read::releases))
+        // Pull requests.
+        .route(
+            "/repos/:owner/:repo/pulls",
+            post(pulls::open_pull).get(pulls::list_pulls),
+        )
+        .route("/repos/:owner/:repo/pulls/:n", get(pulls::get_pull))
+        .route("/repos/:owner/:repo/pulls/:n/comments", post(pulls::comment))
+        .route("/repos/:owner/:repo/pulls/:n/merge", post(pulls::merge_pull))
+        // Live instances (a view over /apps + /nodes data).
+        .route("/repos/:owner/:repo/instances", get(instances::list_instances))
+        // GitHub/GitLab two-way mirror.
+        .route("/repos/:owner/:repo/mirror", post(mirror::configure_mirror))
         .layer(DefaultBodyLimit::max(MAX_BLOB))
         .layer(cors)
         .with_state(state.clone());
@@ -1895,21 +1969,105 @@ fn verify_node_hello(id_hex: &str, sig_hex: &str, nonce: &[u8]) -> Result<(), &'
 }
 
 /// Build the canonical string a client signs (and the hub re-derives) for one mutating request.
-fn canonical_string(method: &str, path: &str, ts: &str, nonce: &str, body: &[u8]) -> String {
+pub(crate) fn canonical_string(method: &str, path: &str, ts: &str, nonce: &str, body: &[u8]) -> String {
     let body_hex = hex::encode(Sha256::digest(body));
     format!("{method}\n{path}\n{ts}\n{nonce}\n{body_hex}")
 }
 
 /// Derive the stable owner id for a public key: sha256(pubkey-bytes)[..16] as hex (32 hex chars).
-fn owner_id_from_pubkey(pubkey: &[u8]) -> String {
+pub(crate) fn owner_id_from_pubkey(pubkey: &[u8]) -> String {
     hex::encode(&Sha256::digest(pubkey)[..16])
+}
+
+impl AppState {
+    /// True when `owner` is a configured operator identity (CE_HUB_ADMIN_OWNER).
+    pub(crate) fn is_admin(&self, owner: &str) -> bool {
+        self.admin_owners.iter().any(|o| o == owner)
+    }
+}
+
+/// One hosted-app summary for the instances view: id, owner, replica node ids, byte size.
+pub(crate) struct AppSummary {
+    pub(crate) id: String,
+    pub(crate) owner: String,
+    pub(crate) replicas: Vec<String>,
+}
+
+/// Snapshot the hosted-app map as lightweight summaries (avoids exposing the internal HostedApp).
+pub(crate) fn app_summaries(st: &Shared) -> Vec<AppSummary> {
+    st.apps
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, a)| AppSummary {
+            id: id.clone(),
+            owner: a.owner.clone(),
+            replicas: a.replicas.iter().cloned().collect(),
+        })
+        .collect()
+}
+
+/// One live-node summary for the instances view (only currently-connected nodes).
+pub(crate) struct NodeSummary {
+    pub(crate) id: String,
+    pub(crate) uptime_pct: u64,
+    pub(crate) rtt_ms: f64,
+    pub(crate) healthy: bool,
+}
+
+/// Snapshot live nodes (last_seen within STALE) with uptime/latency for the instances view.
+pub(crate) fn node_summaries(st: &Shared) -> HashMap<String, NodeSummary> {
+    let nodes = st.nodes.lock().unwrap();
+    let records = st.records.lock().unwrap();
+    let mut out = HashMap::new();
+    for (id, n) in nodes.iter() {
+        if n.last_seen.elapsed() >= STALE {
+            continue;
+        }
+        let rec = records.get(id).cloned().unwrap_or_default();
+        let online = n.session_start.elapsed().map(|d| d.as_secs()).unwrap_or(0);
+        out.insert(
+            id.clone(),
+            NodeSummary {
+                id: id.clone(),
+                uptime_pct: uptime_pct(&rec, online),
+                rtt_ms: (n.rtt_ms * 10.0).round() / 10.0,
+                healthy: n.last_seen.elapsed() < STALE,
+            },
+        );
+    }
+    out
+}
+
+/// Broadcast a JSON text frame to an `/rt` room (creating it if absent), buffering it in the room's
+/// history so late joiners replay it. Used by the git layer to push live PR/comment events. The
+/// `from` tag is 0 (server-originated), which never matches a real client's id, so it is delivered
+/// to every connected client. Best-effort: a send to a room with no receivers is a no-op.
+pub(crate) fn broadcast_room(st: &Shared, app: &str, room: &str, payload: Value) {
+    let key = (app.to_string(), room.to_string());
+    let msg = RoomMsg { from: 0, payload: RoomPayload::Text(payload.to_string()) };
+    let room_cap = st.room_cap;
+    let room_history = st.room_history;
+    let mut rooms = st.rooms.lock().unwrap();
+    let r = rooms.entry(key).or_insert_with(|| Room {
+        tx: broadcast::channel::<RoomMsg>(room_cap).0,
+        history: VecDeque::new(),
+        ephemeral: false,
+    });
+    if !r.ephemeral {
+        r.history.push_back(msg.clone());
+        while r.history.len() > room_history {
+            r.history.pop_front();
+        }
+    }
+    let _ = r.tx.send(msg);
 }
 
 /// Verify the optional signature on a mutating request.
 /// - No x-ce-sig header  -> Ok(None)  (anonymous; stays open).
 /// - Present and valid   -> Ok(Some(Signer { owner })).
 /// - Present and invalid -> Err(reason)  (caller returns 401).
-fn verify_signed(st: &Shared, method: &str, path: &str, headers: &HeaderMap, body: &[u8]) -> Result<Option<Signer>, String> {
+pub(crate) fn verify_signed(st: &Shared, method: &str, path: &str, headers: &HeaderMap, body: &[u8]) -> Result<Option<Signer>, String> {
     let h = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
     let sig_hex = match h("x-ce-sig") {
         Some(s) => s,
@@ -1947,9 +2105,24 @@ fn verify_signed(st: &Shared, method: &str, path: &str, headers: &HeaderMap, bod
     Ok(Some(Signer { owner: owner_id_from_pubkey(&pubkey) }))
 }
 
+/// Consume a single-use nonce in the same store `verify_signed` uses (replay protection). Returns
+/// false if the nonce was already used (still live). Callers MUST namespace their key (e.g.
+/// "gitpush:<nonce>") so different token schemes cannot collide with each other or with the raw
+/// x-ce-nonce values used by signed writes. `expiry` is the absolute unix time the entry is dropped.
+pub(crate) fn consume_nonce(st: &Shared, key: &str, expiry: u64) -> bool {
+    let now = unix_now();
+    let mut nonces = st.nonces.lock().unwrap();
+    nonces.retain(|_, exp| *exp > now);
+    if nonces.contains_key(key) {
+        return false;
+    }
+    nonces.insert(key.to_string(), expiry);
+    true
+}
+
 /// Verify a signed request body that is itself a JSON object (slug/project ops). Returns the owner
 /// plus the parsed JSON. A signature is REQUIRED here (these registries are owner-scoped).
-fn verify_signed_json(st: &Shared, method: &str, path: &str, headers: &HeaderMap, body: &[u8]) -> Result<(String, Value), (StatusCode, String)> {
+pub(crate) fn verify_signed_json(st: &Shared, method: &str, path: &str, headers: &HeaderMap, body: &[u8]) -> Result<(String, Value), (StatusCode, String)> {
     match verify_signed(st, method, path, headers, body) {
         Ok(Some(s)) => {
             let v: Value = serde_json::from_slice(body).map_err(|_| (StatusCode::BAD_REQUEST, "body is not valid JSON".into()))?;
@@ -2005,7 +2178,7 @@ fn rate_allow<K: std::hash::Hash + Eq + Clone>(buckets: &Mutex<HashMap<K, RateBu
 }
 
 /// Client IP for rate limiting: honor X-Real-IP (set by nginx), else X-Forwarded-For's first hop.
-fn client_ip(headers: &HeaderMap) -> String {
+pub(crate) fn client_ip(headers: &HeaderMap) -> String {
     if let Some(ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
         return ip.trim().to_string();
     }
@@ -2728,7 +2901,7 @@ fn repin_blobs(st: &Shared, old: &[String], new: &[String]) {
 //   <data>/slugs.json              { slug: SlugEntry } slug registry
 //   <data>/projects.json           { id: ProjectEntry } projects registry
 
-fn ensure_dir(p: &std::path::Path) {
+pub(crate) fn ensure_dir(p: &std::path::Path) {
     if let Err(e) = std::fs::create_dir_all(p) {
         eprintln!("ce-hub: mkdir {} failed: {e}", p.display());
     }
@@ -2984,6 +3157,51 @@ fn load_db(data_dir: &std::path::Path) -> HashMap<String, HashMap<String, DbEntr
         out.insert(app, tbl);
     }
     out
+}
+
+// ---- KV helpers for the git layer (reuse the existing per-app `db` store + persistence) ----
+//
+// The git layer stores PR records and comments in the SAME KV the hub already persists per
+// namespace, keyed by `repo:<owner>/<repo>`. These helpers expose minimal get/put/list/next-seq
+// so the pulls module never has to reach into the internal DbEntry/seq machinery.
+
+/// Put a JSON value at (namespace, key) and persist the namespace. Returns the assigned seq.
+pub(crate) fn kv_put(st: &Shared, namespace: &str, key: &str, value: Value) -> u64 {
+    let seq = st.db_seq.fetch_add(1, Ordering::Relaxed);
+    {
+        let mut db = st.db.lock().unwrap();
+        let tbl = db.entry(namespace.to_string()).or_default();
+        tbl.insert(key.to_string(), DbEntry { value, seq });
+        while tbl.len() > MAX_DB_KEYS {
+            if let Some(oldest) = tbl.iter().min_by_key(|(_, e)| e.seq).map(|(k, _)| k.clone()) {
+                tbl.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+    save_db(st, namespace);
+    seq
+}
+
+/// Read the JSON value at (namespace, key), if present.
+pub(crate) fn kv_get(st: &Shared, namespace: &str, key: &str) -> Option<Value> {
+    st.db.lock().unwrap().get(namespace).and_then(|t| t.get(key)).map(|e| e.value.clone())
+}
+
+/// List all (key, value) under a namespace whose key starts with `prefix`, newest-first by seq.
+pub(crate) fn kv_list(st: &Shared, namespace: &str, prefix: &str) -> Vec<(String, Value)> {
+    let db = st.db.lock().unwrap();
+    let mut entries: Vec<(String, Value, u64)> = match db.get(namespace) {
+        Some(tbl) => tbl
+            .iter()
+            .filter(|(k, _)| k.starts_with(prefix))
+            .map(|(k, e)| (k.clone(), e.value.clone(), e.seq))
+            .collect(),
+        None => Vec::new(),
+    };
+    entries.sort_by(|a, b| b.2.cmp(&a.2));
+    entries.into_iter().map(|(k, v, _)| (k, v)).collect()
 }
 
 /// Save one db namespace to <data>/db/<app>.json (best-effort, full rewrite).
@@ -3337,6 +3555,11 @@ mod tests {
             // Point ce-watch at a closed port: the fire-and-forget push fails silently (best-effort).
             watch_url: "http://127.0.0.1:1".into(),
             watch_token: String::new(),
+            repos: Mutex::new(HashMap::new()),
+            git_root: std::env::temp_dir().join("ce-hub-test-git"),
+            max_git_bytes: 2 * 1024 * 1024 * 1024,
+            max_repo_bytes: 1024 * 1024 * 1024,
+            git_sem: Arc::new(tokio::sync::Semaphore::new(GIT_CGI_CONCURRENCY)),
         })
     }
 

@@ -16,6 +16,11 @@ Environment=CE_HUB_MAX_DATA_BYTES=1073741824
 Environment=CE_HUB_MAX_APPS=500
 Environment=CE_HUB_MAX_DOMAINS=200
 Environment=CE_HUB_MAX_DB_NAMESPACES=1000
+# Git layer (hub.ce-net.com) storage caps. Relay disk is small, so keep these conservative; an
+# unauthorized push is already rejected upstream (authorize_push), these bound an authorized
+# owner's on-disk footprint: 2 GiB total across all repos, 512 MiB per repo.
+Environment=CE_HUB_MAX_GIT_BYTES=2147483648
+Environment=CE_HUB_MAX_REPO_BYTES=536870912
 # Per-namespace IP rate limit (anti-spam) for the feedback app.
 Environment=CE_HUB_RATELIMIT_NS=feedback
 # Admin/moderation is IDENTITY-based, not a shared token: a request signed by one of these operator

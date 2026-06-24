@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 axum = { version = "0.7", features = ["ws", "macros"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal", "process", "io-util"] }
 tower-http = { version = "0.5", features = ["cors"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,6 +22,15 @@ hex = "0.4"
 rand = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+# gix (gitoxide): pure-Rust git object/tree/commit reads for the hub git layer (SHA-1 objects).
+# CONSERVATIVE CHOICE: we use gix DEFAULT features (no default-features=false). A narrow feature set
+# (e.g. just "revision") risks failing to compile the read path we depend on — rev_parse_single,
+# Object::try_into_commit/try_into_tree/try_into_blob, Commit::tree, Tree::lookup_entry_by_path,
+# Tree::iter, Blob::data — because those APIs are gated behind several features whose names drift
+# across releases. Defaults guarantee every API used in repo_read.rs is present. This is a heavier
+# build, which the relay can absorb (it has swap); correctness/compilability wins over build size.
+gix = "0.69"
 
 [profile.release]
 opt-level = 2
