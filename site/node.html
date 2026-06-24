@@ -171,11 +171,11 @@ footer{border-top:1px solid var(--line-2);padding:24px 0 50px;margin-top:40px;co
   </div>
 
   <div class="jump">
-    <a href="#run">⚡ Run work</a>
-    <a href="#code">⌨ Write a task</a>
-    <a href="#store">📦 Storage</a>
-    <a href="#llm">🧠 Run an LLM</a>
-    <a href="#setup">⌘ One-line setup</a>
+    <a href="#run">Run work</a>
+    <a href="#code">Write a task</a>
+    <a href="#store">Storage</a>
+    <a href="#llm">Run an LLM</a>
+    <a href="#setup">One-line setup</a>
   </div>
 
   <!-- ============ RUN WORK ============ -->
@@ -188,7 +188,7 @@ footer{border-top:1px solid var(--line-2);padding:24px 0 50px;margin-top:40px;co
       <button class="chip" data-fn="count_primes" data-args="1000000" data-ret="i32">count primes below <b>1,000,000</b></button>
       <button class="chip" data-fn="fib" data-args="90" data-ret="i64">fibonacci(<b>90</b>)</button>
       <button class="chip" data-fn="sum_squares" data-args="50000000" data-ret="i64">sum of squares to <b>50M</b></button>
-      <button class="chip" id="burst">🔥 burst: <b>12</b> in parallel</button>
+      <button class="chip" id="burst">burst: <b>12</b> in parallel</button>
     </div>
     <div class="res" id="run-res"></div>
   </section>
@@ -224,7 +224,7 @@ footer{border-top:1px solid var(--line-2);padding:24px 0 50px;margin-top:40px;co
     <textarea class="code" id="blobtext" style="min-height:84px" spellcheck="false" placeholder="type anything to store…">hello from the CE mesh — this text is about to become a content hash.</textarea>
     <div class="fldrow">
       <button class="btn primary sm" id="storebtn">Store on the mesh ▸</button>
-      <label style="cursor:pointer" class="btn sm">📎 file… <input type="file" id="blobfile" hidden /></label>
+      <label style="cursor:pointer" class="btn sm">file… <input type="file" id="blobfile" hidden /></label>
       <span class="note" id="store-note" style="margin-top:0"></span>
     </div>
     <div class="store-list" id="objs"></div>

@@ -145,7 +145,7 @@ footer a{color:var(--muted)}
   <p class="sub">Both ship in the <code style="font-family:var(--mono);color:#cfe9ff">@ce/client</code> ESM lib, namespaced to your app automatically. No setup, no keys.</p>
   <div class="feats">
     <div class="feat">
-      <div class="ic">🗄️</div>
+      <div class="ic"><svg width="26" height="26" viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg></div>
       <h3>CE database</h3>
       <p>A persistent, namespaced key–value store — read, write, delete, and list keys newest-first for histories and feeds. Survives restarts.</p>
       <code>const { db } = createClient();
@@ -153,7 +153,7 @@ await db.set('msg:42', { text: 'hi' });
 const recent = await db.list('msg:', 50);</code>
     </div>
     <div class="feat">
-      <div class="ic">⚡</div>
+      <div class="ic"><svg width="26" height="26" viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg></div>
       <h3>Realtime rooms</h3>
       <p>Pub/sub over a websocket: join a room, anything you send is broadcast to everyone else in it, with the last 50 messages replayed on connect.</p>
       <code>const r = createClient().room('lobby');
@@ -167,25 +167,25 @@ r.send({ text: 'hello mesh' });</code>
   <p class="sub">Each template scaffolds in one command, runs with <code style="font-family:var(--mono);color:#cfe9ff">npx ce-app dev</code>, and shows the database + realtime working end to end.</p>
   <div class="gallery">
     <a class="tpl" href="https://github.com/ce-net/ce-app/tree/main/templates/chat">
-      <div class="emoji">💬</div>
+      <div class="emoji"><svg width="26" height="26" viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg></div>
       <h3>Chat</h3>
       <p>A live room with persistent history — realtime + db together.</p>
       <span class="run">ce-app new chat</span>
     </a>
     <a class="tpl" href="https://github.com/ce-net/ce-app/tree/main/templates/notes">
-      <div class="emoji">📝</div>
+      <div class="emoji"><svg width="26" height="26" viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg></div>
       <h3>Notes</h3>
       <p>A synced notebook backed by the CE database. Open it anywhere.</p>
       <span class="run">ce-app new notes</span>
     </a>
     <a class="tpl" href="https://github.com/ce-net/ce-app/tree/main/templates/board">
-      <div class="emoji">🟦</div>
+      <div class="emoji"><svg width="26" height="26" viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg></div>
       <h3>Board</h3>
       <p>A shared whiteboard — every cursor and tile broadcast in realtime.</p>
       <span class="run">ce-app new board</span>
     </a>
     <a class="tpl" href="https://github.com/ce-net/ce-app/tree/main/templates/vite-react">
-      <div class="emoji">⚛️</div>
+      <div class="emoji"><svg width="26" height="26" viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg></div>
       <h3>Vite + React</h3>
       <p>A full SPA build pipeline — Vite passthrough, hot-reloaded on the mesh.</p>
       <span class="run">ce-app new vite-react</span>
