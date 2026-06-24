@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ce"
+version = "0.1.0"
+description = "Python client for the CE App Platform (tasks, database, realtime rooms)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Leif Rydenfalk", email = "ledamecrydenfalk@gmail.com" }]
+keywords = ["ce", "ce-net", "compute", "mesh", "realtime", "kv"]
+dependencies = ["websockets>=12.0"]
+
+[project.urls]
+Homepage = "https://ce-net.com"
+Documentation = "https://docs.ce-net.com"
+
+[tool.setuptools]
+packages = ["ce"]

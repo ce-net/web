@@ -1,0 +1,3 @@
+# React Router on CE
+
+A Vite + React + React Router + TypeScript single-page app with three client-side routes (`/`, `/counter`, `/about`) that exists to prove the CE hub's SPA fallback: navigate to any route, hard-refresh, and the hub serves `index.html` so the router resumes — extensionless deep links never 404. The `/counter` route persists to the CE database via `ce.db`. The router basename is derived at runtime from the mount path so it works under `/apps/<id>/` and at a custom-domain root; assets use a relative base. Run `npm i && npm run build` for a static `dist/`, then `ce-app deploy` (which sets `spa=true`). The local `src/ce.ts` implements the `@ce/client` contract — swap it for the published package if you prefer.

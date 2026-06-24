@@ -108,6 +108,10 @@ struct HostedApp {
     version: u64,
     bytes: u64,
     reload: broadcast::Sender<u64>,
+    /// When true (default) unmatched route-like GETs fall back to index.html (SPA client routing).
+    spa: bool,
+    /// Node ids currently holding a replica of this app (best-effort redundancy; in-memory only).
+    replicas: std::collections::HashSet<String>,
 }
 
 /// One namespaced KV entry in the CE database (value + insertion order for newest-first lists).
@@ -144,6 +148,10 @@ struct AppState {
     rooms: Mutex<HashMap<(String, String), Room>>,
     // persistent per-node reliability records (uptime/reliability), persisted to nodes.json.
     records: Mutex<HashMap<String, NodeRecord>>,
+    // custom-domain registry: lowercased hostname -> app id, persisted to domains.json.
+    domains: Mutex<HashMap<String, String>>,
+    // operator-set storage limits (global byte budget + count caps) read from env at startup.
+    limits: Limits,
 }
 type Shared = Arc<AppState>;
 
@@ -156,6 +164,49 @@ const MAX_APP_BYTES: u64 = 64 * 1024 * 1024; // 64 MB total per app
 const MAX_DB_KEYS: usize = 5000; // per-app key cap (evict oldest on overflow)
 const ROOM_HISTORY: usize = 50; // buffered messages replayed to late joiners
 const ROOM_CAP: usize = 256; // broadcast channel capacity per room
+
+/// Operator-set storage limits. These stop an anonymous caller from filling the host's disk:
+/// the per-item caps above bound a single object, while these bound the TOTAL and the COUNTS.
+/// Defaults are deliberately conservative (a low bound) — raise them per host via env vars.
+#[derive(Clone, Serialize)]
+struct Limits {
+    /// global on-disk budget shared by hosted apps + the KV database + blobs (CE_HUB_MAX_DATA_BYTES).
+    max_data_bytes: u64,
+    /// max number of distinct hosted apps (CE_HUB_MAX_APPS).
+    max_apps: usize,
+    /// max number of registered custom domains (CE_HUB_MAX_DOMAINS).
+    max_domains: usize,
+    /// max number of distinct database namespaces (CE_HUB_MAX_DB_NAMESPACES).
+    max_db_namespaces: usize,
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+impl Limits {
+    fn from_env() -> Self {
+        Limits {
+            // 512 MiB: enough for many small apps, far below filling a disk. Raise per host.
+            max_data_bytes: env_u64("CE_HUB_MAX_DATA_BYTES", 512 * 1024 * 1024),
+            max_apps: env_usize("CE_HUB_MAX_APPS", 200),
+            max_domains: env_usize("CE_HUB_MAX_DOMAINS", 100),
+            max_db_namespaces: env_usize("CE_HUB_MAX_DB_NAMESPACES", 500),
+        }
+    }
+}
+
+/// Total bytes currently held by hosted apps (sum of each app's tracked size).
+fn app_bytes_total(apps: &HashMap<String, HostedApp>) -> u64 {
+    apps.values().map(|a| a.bytes).sum()
+}
+/// Approximate bytes held by the KV database (serialized value length per entry).
+fn db_bytes_total(db: &HashMap<String, HashMap<String, DbEntry>>) -> u64 {
+    db.values().map(|t| t.values().map(|e| e.value.to_string().len() as u64).sum::<u64>()).sum()
+}
 
 fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -177,6 +228,7 @@ async fn main() {
     let apps = load_apps(&data_dir);
     let db = load_db(&data_dir);
     let records = load_records(&data_dir);
+    let domains = load_domains(&data_dir);
     // Seed db_seq above any persisted seq so newest-first ordering survives restart.
     let mut max_seq = 0u64;
     for tbl in db.values() {
@@ -207,7 +259,16 @@ async fn main() {
         db_seq: AtomicU64::new(max_seq + 1),
         rooms: Mutex::new(HashMap::new()),
         records: Mutex::new(records),
+        domains: Mutex::new(domains),
+        limits: Limits::from_env(),
     });
+    eprintln!(
+        "ce-hub: storage limits — {} MiB global budget, {} apps, {} domains, {} db namespaces",
+        state.limits.max_data_bytes / (1024 * 1024),
+        state.limits.max_apps,
+        state.limits.max_domains,
+        state.limits.max_db_namespaces,
+    );
 
     // prune stale nodes periodically — close their session (accrue uptime) before removal.
     {
@@ -246,9 +307,17 @@ async fn main() {
         .route("/blobs/:hash", put(put_blob).get(get_blob))
         // --- app hosting (multi-file static sites + SPAs) ---
         .route("/apps/:id/__reload", get(app_reload))
+        .route("/apps/:id/config", get(get_app_config).put(put_app_config))
+        .route("/apps/:id/domain", put(put_app_domain))
+        .route("/apps/:id/domain/:domain", axum::routing::delete(del_app_domain))
         .route("/apps/:id", get(get_app_root).put(put_app_root))
         .route("/apps/:id/", get(get_app_root))
         .route("/apps/:id/*path", get(get_app_path).put(put_app_path))
+        // --- custom domains (production): host registry + host-routed serving ---
+        .route("/domains", get(list_domains))
+        .route("/_host", get(get_host_root))
+        .route("/_host/", get(get_host_root))
+        .route("/_host/*path", get(get_host_path))
         // --- CE database (persistent KV, namespaced per app) ---
         .route("/db/:app", get(db_list))
         .route("/db/:app/:key", get(db_get).put(db_put).delete(db_del))
@@ -397,6 +466,15 @@ async fn handle_node(socket: WebSocket, st: Shared) {
                     }
                 }
             }
+            "stored" => {
+                // Ack for a replication push: best-effort, refresh liveness. Replica tracking is
+                // done optimistically at push time; unknown/extra acks are ignored gracefully.
+                if let Some(id) = &node_id {
+                    if let Some(n) = st.nodes.lock().unwrap().get_mut(id) {
+                        n.last_seen = Instant::now();
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -470,12 +548,15 @@ async fn submit_task(State(st): State<Shared>, Json(req): Json<TaskReq>) -> impl
     // Build the job payload for the chosen language.
     let mut job = json!({ "t": "job" });
     let func: String;
-    if lang == "js" {
+    if lang != "wasm" {
+        // Generalized source-code task: ANY non-wasm lang (js, python, ...) is forwarded to the
+        // node unchanged as {t:"job",jid,lang,code,func,input}. The "js" wire shape is byte-
+        // identical to before; nodes opt into new languages with no per-lang hub change.
         let Some(code) = req.code.clone() else {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error":"js task requires `code`"}))).into_response();
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{lang} task requires `code`")}))).into_response();
         };
         func = req.func.clone().unwrap_or_else(|| "task".into());
-        job["lang"] = json!("js");
+        job["lang"] = json!(lang);
         job["code"] = json!(code);
         job["func"] = json!(func);
         job["input"] = req.input.clone().unwrap_or(Value::Null);
@@ -560,9 +641,18 @@ async fn put_blob(
         .unwrap_or("application/octet-stream")
         .to_string();
     let size = body.len();
+    // Read apps + db usage first (locks released before the blob lock) for the global budget check.
+    let app_b = app_bytes_total(&st.apps.lock().unwrap());
+    let db_b = db_bytes_total(&st.db.lock().unwrap());
     {
         let mut blobs = st.blobs.lock().unwrap();
         let mut order = st.blob_order.lock().unwrap();
+        // Global storage budget: reject a genuinely new blob that would push the host over budget.
+        if !blobs.contains_key(&hash)
+            && app_b + db_b + st.blob_bytes.load(Ordering::Relaxed) + size as u64 > st.limits.max_data_bytes
+        {
+            return (StatusCode::INSUFFICIENT_STORAGE, Json(json!({"error":"global storage budget reached (CE_HUB_MAX_DATA_BYTES)"}))).into_response();
+        }
         if !blobs.contains_key(&hash) {
             order.push_back(hash.clone());
             st.blob_bytes.fetch_add(size as u64, Ordering::Relaxed);
@@ -683,11 +773,22 @@ async fn store_app_file(st: &Shared, id: &str, raw_path: &str, headers: &HeaderM
         .map(|s| s.to_string())
         .unwrap_or_else(|| mime_for(&key).to_string());
 
+    let new_size = body.len() as u64;
     let version = {
         let mut apps = st.apps.lock().unwrap();
+        // Global app-count cap: only a genuinely new app id counts against it.
+        if !apps.contains_key(id) && apps.len() >= st.limits.max_apps {
+            return (StatusCode::INSUFFICIENT_STORAGE, Json(json!({"error":"app limit reached (CE_HUB_MAX_APPS)"}))).into_response();
+        }
+        // Global storage budget across apps + db + blobs (protects the host disk from a stranger).
+        let prev = apps.get(id).and_then(|a| a.files.get(&key)).map(|f| f.bytes.len() as u64).unwrap_or(0);
+        let db_b = db_bytes_total(&st.db.lock().unwrap());
+        let blob_b = st.blob_bytes.load(Ordering::Relaxed);
+        let projected = app_bytes_total(&apps).saturating_sub(prev) + new_size + db_b + blob_b;
+        if projected > st.limits.max_data_bytes {
+            return (StatusCode::INSUFFICIENT_STORAGE, Json(json!({"error":"global storage budget reached (CE_HUB_MAX_DATA_BYTES)"}))).into_response();
+        }
         let app = apps.entry(id.to_string()).or_insert_with(new_hosted_app);
-        let new_size = body.len() as u64;
-        let prev = app.files.get(&key).map(|f| f.bytes.len() as u64).unwrap_or(0);
         // enforce per-app caps (file count + total bytes); reject overflow on genuinely new files.
         if !app.files.contains_key(&key) && app.files.len() >= MAX_APP_FILES {
             return (StatusCode::INSUFFICIENT_STORAGE, Json(json!({"error":"too many files for app (200 max)"}))).into_response();
@@ -703,30 +804,107 @@ async fn store_app_file(st: &Shared, id: &str, raw_path: &str, headers: &HeaderM
         v
     };
     persist_app_file(st, id, &key, &body, version);
+    // Best-effort mesh replication: push a copy to up to K live nodes. The relay remains the
+    // source of truth for reads; this only adds redundancy and never blocks the PUT response.
+    replicate_app_file(st, id, &key, &body, version);
     Json(json!({ "id": id, "path": key, "version": version, "url": format!("/apps/{id}/") })).into_response()
+}
+
+/// K — number of live nodes a hosted-app file is replicated to (best-effort).
+const REPLICA_K: usize = 3;
+
+/// Push a copy of an app file to up to REPLICA_K live nodes over their WS as
+/// {t:"store",kind:"app",id,path,b64,ct,version}. Records the targeted node ids as replicas for
+/// the app. Fire-and-forget: a failed send just means that node holds no replica, which is fine.
+fn replicate_app_file(st: &Shared, id: &str, key: &str, bytes: &[u8], version: u64) {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let ct = mime_for(key).to_string();
+    let msg = json!({
+        "t": "store", "kind": "app", "id": id, "path": key,
+        "b64": b64, "ct": ct, "version": version,
+    })
+    .to_string();
+
+    // Choose up to K fresh nodes (least-loaded first), grab their senders under one lock.
+    let targets: Vec<(String, mpsc::UnboundedSender<String>)> = {
+        let nodes = st.nodes.lock().unwrap();
+        let mut live: Vec<(&String, &NodeEntry)> =
+            nodes.iter().filter(|(_, n)| n.last_seen.elapsed() < STALE).collect();
+        live.sort_by_key(|(_, n)| n.tasks_run);
+        live.into_iter().take(REPLICA_K).map(|(k, n)| (k.clone(), n.tx.clone())).collect()
+    };
+
+    let mut placed: Vec<String> = Vec::new();
+    for (nid, tx) in targets {
+        if tx.send(msg.clone()).is_ok() {
+            placed.push(nid);
+        }
+    }
+    if !placed.is_empty() {
+        let mut apps = st.apps.lock().unwrap();
+        if let Some(app) = apps.get_mut(id) {
+            for nid in placed {
+                app.replicas.insert(nid);
+            }
+            // Drop replica ids that are no longer live so the counter reflects reality.
+        }
+    }
 }
 
 fn new_hosted_app() -> HostedApp {
     let (tx, _rx) = broadcast::channel::<u64>(16);
-    HostedApp { files: HashMap::new(), version: 0, bytes: 0, reload: tx }
+    HostedApp {
+        files: HashMap::new(),
+        version: 0,
+        bytes: 0,
+        reload: tx,
+        spa: true,
+        replicas: std::collections::HashSet::new(),
+    }
 }
 
-async fn get_app_root(Path(id): Path<String>, State(st): State<Shared>) -> impl IntoResponse {
-    serve_app_file(&st, &id, "index.html")
+async fn get_app_root(Path(id): Path<String>, headers: HeaderMap, State(st): State<Shared>) -> impl IntoResponse {
+    serve_app_file(&st, &id, "index.html", &headers)
 }
 
-async fn get_app_path(Path((id, path)): Path<(String, String)>, State(st): State<Shared>) -> impl IntoResponse {
+async fn get_app_path(Path((id, path)): Path<(String, String)>, headers: HeaderMap, State(st): State<Shared>) -> impl IntoResponse {
     let key = norm_app_path(&path).unwrap_or_else(|| "index.html".to_string());
-    serve_app_file(&st, &id, &key)
+    serve_app_file(&st, &id, &key, &headers)
 }
 
-fn serve_app_file(st: &Shared, id: &str, key: &str) -> axum::response::Response {
+/// Does this request look like a client-side route (vs an asset)? True when the final path
+/// segment has no "." OR the Accept header asks for HTML. Such requests get SPA-fallback to
+/// index.html; a missing path WITH a file extension stays a 404.
+fn looks_like_route(key: &str, headers: &HeaderMap) -> bool {
+    let last = key.rsplit('/').next().unwrap_or(key);
+    if !last.contains('.') {
+        return true;
+    }
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(|a| a.contains("text/html"))
+        .unwrap_or(false)
+}
+
+fn serve_app_file(st: &Shared, id: &str, key: &str, headers: &HeaderMap) -> axum::response::Response {
     let apps = st.apps.lock().unwrap();
     let Some(app) = apps.get(id) else {
         return (StatusCode::NOT_FOUND, Json(json!({"error":"app not found"}))).into_response();
     };
-    let Some(file) = app.files.get(key) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error":"file not found"}))).into_response();
+    // Exact match first; else SPA fallback to index.html for route-like requests.
+    let file = match app.files.get(key) {
+        Some(f) => f,
+        None => {
+            if app.spa && key != "index.html" && looks_like_route(key, headers) {
+                match app.files.get("index.html") {
+                    Some(f) => f,
+                    None => return (StatusCode::NOT_FOUND, Json(json!({"error":"file not found"}))).into_response(),
+                }
+            } else {
+                return (StatusCode::NOT_FOUND, Json(json!({"error":"file not found"}))).into_response();
+            }
+        }
     };
     let ct = if file.ct.is_empty() { mime_for(key).to_string() } else { file.ct.clone() };
     if ct.starts_with("text/html") {
@@ -759,6 +937,151 @@ async fn app_reload(Path(id): Path<String>, State(st): State<Shared>) -> impl In
     Sse::new(initial.chain(updates)).keep_alive(axum::response::sse::KeepAlive::default())
 }
 
+// ---- app config (spa flag, version, domains) ----
+
+#[derive(Deserialize)]
+struct AppConfigReq {
+    #[serde(default)]
+    spa: Option<bool>,
+}
+
+async fn put_app_config(
+    Path(id): Path<String>,
+    State(st): State<Shared>,
+    Json(req): Json<AppConfigReq>,
+) -> impl IntoResponse {
+    if id.is_empty() || id.contains('/') {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"bad app id"}))).into_response();
+    }
+    let (spa, version) = {
+        let mut apps = st.apps.lock().unwrap();
+        let app = apps.entry(id.clone()).or_insert_with(new_hosted_app);
+        if let Some(s) = req.spa {
+            app.spa = s;
+        }
+        (app.spa, app.version)
+    };
+    persist_app_config(&st, &id, spa);
+    Json(json!({ "ok": true, "id": id, "spa": spa, "version": version })).into_response()
+}
+
+async fn get_app_config(Path(id): Path<String>, State(st): State<Shared>) -> impl IntoResponse {
+    let apps = st.apps.lock().unwrap();
+    let Some(app) = apps.get(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error":"app not found"}))).into_response();
+    };
+    let spa = app.spa;
+    let version = app.version;
+    drop(apps);
+    let domains: Vec<String> = {
+        let d = st.domains.lock().unwrap();
+        d.iter().filter(|(_, v)| **v == id).map(|(k, _)| k.clone()).collect()
+    };
+    Json(json!({ "spa": spa, "version": version, "domains": domains })).into_response()
+}
+
+// ---- custom domains (production): host registry + host-routed serving ----
+
+#[derive(Deserialize)]
+struct DomainReq {
+    domain: String,
+}
+
+/// Normalize a hostname for the registry: lowercase, strip any port and surrounding whitespace.
+fn norm_host(raw: &str) -> String {
+    let h = raw.trim().to_ascii_lowercase();
+    match h.split_once(':') {
+        Some((host, _port)) => host.to_string(),
+        None => h,
+    }
+}
+
+async fn put_app_domain(
+    Path(id): Path<String>,
+    State(st): State<Shared>,
+    Json(req): Json<DomainReq>,
+) -> impl IntoResponse {
+    if id.is_empty() || id.contains('/') {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"bad app id"}))).into_response();
+    }
+    let domain = norm_host(&req.domain);
+    if domain.is_empty() || !domain.contains('.') {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"invalid domain"}))).into_response();
+    }
+    {
+        let mut d = st.domains.lock().unwrap();
+        // Global domain-count cap: only a genuinely new domain counts against it.
+        if !d.contains_key(&domain) && d.len() >= st.limits.max_domains {
+            return (StatusCode::INSUFFICIENT_STORAGE, Json(json!({"error":"domain limit reached (CE_HUB_MAX_DOMAINS)"}))).into_response();
+        }
+        d.insert(domain.clone(), id.clone());
+    }
+    save_domains(&st);
+    Json(json!({ "domain": domain, "id": id, "cname": "ce-net.com" })).into_response()
+}
+
+async fn del_app_domain(Path((id, domain)): Path<(String, String)>, State(st): State<Shared>) -> impl IntoResponse {
+    let domain = norm_host(&domain);
+    let removed = {
+        let mut d = st.domains.lock().unwrap();
+        // Only remove if this domain maps to the given app (avoid cross-app deletes).
+        if d.get(&domain).map(|v| *v == id).unwrap_or(false) {
+            d.remove(&domain);
+            true
+        } else {
+            false
+        }
+    };
+    if removed {
+        save_domains(&st);
+        Json(json!({ "ok": true, "domain": domain })).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, Json(json!({"error":"domain not registered for this app"}))).into_response()
+    }
+}
+
+async fn list_domains(State(st): State<Shared>) -> impl IntoResponse {
+    let d = st.domains.lock().unwrap();
+    let mut list: Vec<Value> = d.iter().map(|(k, v)| json!({ "domain": k, "id": v })).collect();
+    list.sort_by(|a, b| a["domain"].as_str().unwrap_or("").cmp(b["domain"].as_str().unwrap_or("")));
+    Json(list).into_response()
+}
+
+/// Resolve the app id for a custom-domain request from the X-CE-Host header (set by nginx to the
+/// original Host). Returns a JSON 404 when the host is unregistered.
+fn resolve_host(st: &Shared, headers: &HeaderMap) -> Result<String, axum::response::Response> {
+    let host = headers
+        .get("x-ce-host")
+        .and_then(|v| v.to_str().ok())
+        .map(norm_host)
+        .unwrap_or_default();
+    if host.is_empty() {
+        return Err((StatusCode::NOT_FOUND, Json(json!({"error":"no host"}))).into_response());
+    }
+    let d = st.domains.lock().unwrap();
+    match d.get(&host) {
+        Some(id) => Ok(id.clone()),
+        None => Err((StatusCode::NOT_FOUND, Json(json!({"error":"host not registered","host":host}))).into_response()),
+    }
+}
+
+async fn get_host_root(headers: HeaderMap, State(st): State<Shared>) -> impl IntoResponse {
+    match resolve_host(&st, &headers) {
+        Ok(id) => serve_app_file(&st, &id, "index.html", &headers),
+        Err(r) => r,
+    }
+}
+
+async fn get_host_path(Path(path): Path<String>, headers: HeaderMap, State(st): State<Shared>) -> impl IntoResponse {
+    match resolve_host(&st, &headers) {
+        Ok(id) => {
+            let key = norm_app_path(&path).unwrap_or_else(|| "index.html".to_string());
+            serve_app_file(&st, &id, &key, &headers)
+        }
+        Err(r) => r,
+    }
+}
+
 // ---- CE database (persistent KV, namespaced per app) ----
 
 async fn db_put(
@@ -766,8 +1089,24 @@ async fn db_put(
     State(st): State<Shared>,
     Json(value): Json<Value>,
 ) -> impl IntoResponse {
+    // Size of the incoming value; computed before `value` is moved into the entry.
+    let new_size = value.to_string().len() as u64;
+    // Read non-db usage first (apps + blobs), releasing those locks before taking the db lock so
+    // the lock order stays apps -> db and never deadlocks against store_app_file.
+    let app_b = app_bytes_total(&st.apps.lock().unwrap());
+    let blob_b = st.blob_bytes.load(Ordering::Relaxed);
     {
         let mut db = st.db.lock().unwrap();
+        // Global namespace-count cap: only a genuinely new namespace counts against it.
+        if !db.contains_key(&app) && db.len() >= st.limits.max_db_namespaces {
+            return (StatusCode::INSUFFICIENT_STORAGE, Json(json!({"error":"db namespace limit reached (CE_HUB_MAX_DB_NAMESPACES)"}))).into_response();
+        }
+        // Global storage budget across apps + db + blobs.
+        let prev = db.get(&app).and_then(|t| t.get(&key)).map(|e| e.value.to_string().len() as u64).unwrap_or(0);
+        let projected = app_b + blob_b + db_bytes_total(&db).saturating_sub(prev) + new_size;
+        if projected > st.limits.max_data_bytes {
+            return (StatusCode::INSUFFICIENT_STORAGE, Json(json!({"error":"global storage budget reached (CE_HUB_MAX_DATA_BYTES)"}))).into_response();
+        }
         let tbl = db.entry(app.clone()).or_default();
         let seq = st.db_seq.fetch_add(1, Ordering::Relaxed);
         tbl.insert(key.clone(), DbEntry { value, seq });
@@ -949,6 +1288,52 @@ fn persist_app_file(st: &Shared, id: &str, key: &str, bytes: &[u8], version: u64
     }
 }
 
+/// Persist an app's config marker (<data>/apps/<id>/.config), best-effort.
+fn persist_app_config(st: &Shared, id: &str, spa: bool) {
+    let base = st.data_dir.join("apps").join(id);
+    ensure_dir(&base);
+    let path = base.join(".config");
+    match serde_json::to_vec(&json!({ "spa": spa })) {
+        Ok(bytes) => {
+            if let Err(e) = std::fs::write(&path, bytes) {
+                eprintln!("ce-hub: write {} failed: {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("ce-hub: serialize app config {id} failed: {e}"),
+    }
+}
+
+/// Load the custom-domain registry from <data>/domains.json: { hostname: app_id }.
+fn load_domains(data_dir: &std::path::Path) -> HashMap<String, String> {
+    let path = data_dir.join("domains.json");
+    let raw = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return HashMap::new(),
+    };
+    match serde_json::from_slice::<HashMap<String, String>>(&raw) {
+        Ok(m) => m.into_iter().map(|(k, v)| (norm_host(&k), v)).collect(),
+        Err(e) => {
+            eprintln!("ce-hub: parse {} failed: {e}", path.display());
+            HashMap::new()
+        }
+    }
+}
+
+/// Save the custom-domain registry to <data>/domains.json (best-effort, full rewrite).
+fn save_domains(st: &Shared) {
+    ensure_dir(&st.data_dir);
+    let path = st.data_dir.join("domains.json");
+    let snapshot: HashMap<String, String> = st.domains.lock().unwrap().clone();
+    match serde_json::to_vec(&snapshot) {
+        Ok(bytes) => {
+            if let Err(e) = std::fs::write(&path, bytes) {
+                eprintln!("ce-hub: write {} failed: {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("ce-hub: serialize domains.json failed: {e}"),
+    }
+}
+
 /// Load all hosted apps from <data>/apps/<id>/** on startup.
 fn load_apps(data_dir: &std::path::Path) -> HashMap<String, HostedApp> {
     let mut out = HashMap::new();
@@ -971,6 +1356,15 @@ fn load_apps(data_dir: &std::path::Path) -> HashMap<String, HostedApp> {
                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                     if let Ok(v) = s.trim().parse::<u64>() {
                         app.version = v;
+                    }
+                }
+                continue;
+            }
+            if rel == ".config" {
+                // { "spa": bool } — app-level config persisted alongside files.
+                if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                    if let Some(spa) = v.get("spa").and_then(|s| s.as_bool()) {
+                        app.spa = spa;
                     }
                 }
                 continue;
@@ -1137,6 +1531,11 @@ fn uptime_pct(rec: &NodeRecord, extra_secs: u64) -> u64 {
 // ---- stats ----
 
 fn snapshot(st: &Shared) -> Value {
+    // Current storage usage (apps + db + blobs). Computed before locking nodes so this never holds
+    // two of these locks at once — keeps lock order simple and the value visible alongside limits.
+    let data_used = app_bytes_total(&st.apps.lock().unwrap())
+        + db_bytes_total(&st.db.lock().unwrap())
+        + st.blob_bytes.load(Ordering::Relaxed);
     let nodes = st.nodes.lock().unwrap();
     let live: Vec<&NodeEntry> = nodes.values().filter(|n| n.last_seen.elapsed() < STALE).collect();
     let cores: u64 = live.iter().map(|n| n.caps.cores as u64).sum();
@@ -1195,6 +1594,23 @@ fn snapshot(st: &Shared) -> Value {
     let latency_p95_ms = pct(0.95);
     let measured = rtts.len();
 
+    // Hosting/replication aggregates: number of hosted apps and total live replica placements
+    // (replica node ids that are still connected, summed across all apps).
+    let live_ids: std::collections::HashSet<&String> = nodes
+        .iter()
+        .filter(|(_, n)| n.last_seen.elapsed() < STALE)
+        .map(|(id, _)| id)
+        .collect();
+    let (hosted_apps, replicas) = {
+        let apps = st.apps.lock().unwrap();
+        let hosted = apps.len();
+        let reps: usize = apps
+            .values()
+            .map(|a| a.replicas.iter().filter(|nid| live_ids.contains(nid)).count())
+            .sum();
+        (hosted, reps)
+    };
+
     json!({
         "nodes": live.len(),
         "cores": cores,
@@ -1219,6 +1635,10 @@ fn snapshot(st: &Shared) -> Value {
         "latency_p50_ms": latency_p50_ms,
         "latency_p95_ms": latency_p95_ms,
         "latency_measured": measured,
+        "data_used_bytes": data_used,
+        "limits": st.limits,
+        "hosted_apps": hosted_apps,
+        "replicas": replicas,
     })
 }
 

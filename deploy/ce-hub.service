@@ -9,6 +9,13 @@ ExecStart=/opt/ce-hub/ce-hub
 Environment=CE_HUB_PORT=8970
 Environment=CE_HUB_MODULES=/opt/ce-hub/modules
 Environment=CE_HUB_DATA=/opt/ce-hub/data
+# Storage limits so an anonymous caller can never fill this host's disk. The code defaults are
+# already conservative (512 MiB / 200 apps / 100 domains / 500 db namespaces); these explicit
+# values just make the relay's budget visible and bounded. Raise per host as trust grows.
+Environment=CE_HUB_MAX_DATA_BYTES=1073741824
+Environment=CE_HUB_MAX_APPS=500
+Environment=CE_HUB_MAX_DOMAINS=200
+Environment=CE_HUB_MAX_DB_NAMESPACES=1000
 Restart=always
 RestartSec=2
 # hardening: the hub holds no secrets and binds localhost only. It now persists app

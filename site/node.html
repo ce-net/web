@@ -195,10 +195,15 @@ footer{border-top:1px solid var(--line-2);padding:24px 0 50px;margin-top:40px;co
 
   <!-- ============ WRITE A TASK ============ -->
   <section class="panel" id="code">
-    <div class="ph"><h2>Write a task, run it on a node</h2><span class="tag">JavaScript · sandboxed</span></div>
+    <div class="ph"><h2>Write a task, run it on a node</h2><span class="tag" id="code-tag">JavaScript · sandboxed</span></div>
     <p class="sub">Write a function. Hit run. It's shipped to a live node, executed in an isolated worker over there, and
       the return value comes back. This is the whole point of CE — your code, someone else's hardware.</p>
     <div class="fldrow" style="margin-top:0;margin-bottom:11px">
+      <label>language:</label>
+      <select class="sel" id="lang">
+        <option value="js">JavaScript</option>
+        <option value="python">Python</option>
+      </select>
       <label>example:</label>
       <select class="sel" id="ex"></select>
     </div>
@@ -269,6 +274,22 @@ function nodeId(){let id=localStorage.getItem('ce_node_id');
   return id;}
 const ID=nodeId();
 $('nid').textContent=ID.slice(0,12)+'…';
+
+// in-memory replication cache for hub {t:"store"}/{t:"fetch"} messages (no-op safe).
+// Capped so a hub can never use unbounded memory on your device; oldest entries evict first.
+// Override the budget with ?cache=<bytes> (0 disables caching). Conservative 32 MiB default.
+const replicaStore=new Map();
+const MAX_CACHE_BYTES=Math.max(0,Number(new URLSearchParams(location.search).get('cache'))||32*1024*1024);
+let replicaBytes=0;
+function cacheStore(key,item){
+  const size=item.b64?item.b64.length:0;
+  if(size>MAX_CACHE_BYTES)return false;
+  const ex=replicaStore.get(key); if(ex){replicaBytes-=ex.size;replicaStore.delete(key);}
+  item.size=size; replicaStore.set(key,item); replicaBytes+=size;
+  for(const k of replicaStore.keys()){ if(replicaBytes<=MAX_CACHE_BYTES)break; if(k===key)continue;
+    const e=replicaStore.get(k); replicaStore.delete(k); replicaBytes-=e.size; }
+  return true;
+}
 
 // ---- hub endpoints ----
 function wsBase(){
@@ -346,6 +367,42 @@ function runJsJob(job){
     }catch(e){fin({ok:false,value:'',error:String(e&&e.message||e)});}
   });
 }
+// Python tasks run via Pyodide (WASM CPython), lazy-loaded from the CDN once and cached.
+// The pushed code defines task(input); we call it and JSON-serialize the return value.
+let pyReady=null;
+function ensurePyodide(){
+  if(pyReady)return pyReady;
+  pyReady=(async()=>{
+    if(typeof loadPyodide==='undefined'){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js';
+        s.onload=res; s.onerror=()=>rej(new Error('failed to load pyodide'));
+        document.head.appendChild(s);
+      });
+    }
+    return await loadPyodide({indexURL:'https://cdn.jsdelivr.net/pyodide/v0.26.2/full/'});
+  })().catch(e=>{pyReady=null;throw e;});
+  return pyReady;
+}
+async function runPyJob(job){
+  const t0=performance.now();
+  const done=r=>Object.assign({ms:Math.round((performance.now()-t0)*100)/100},r);
+  try{
+    const py=await ensurePyodide();
+    py.globals.set('__ce_input__',py.toPy(job.input==null?null:JSON.parse(JSON.stringify(job.input))));
+    const runner=
+      'import json\n'+
+      '__ce_ns__ = {}\n'+
+      'exec(compile('+JSON.stringify(job.code||'')+', "<task>", "exec"), __ce_ns__)\n'+
+      'if "task" not in __ce_ns__ or not callable(__ce_ns__["task"]):\n'+
+      '    raise RuntimeError("define a function task(input)")\n'+
+      '__ce_r__ = __ce_ns__["task"](__ce_input__.to_py() if hasattr(__ce_input__, "to_py") else __ce_input__)\n'+
+      'json.dumps(__ce_r__)\n';
+    const value=await py.runPythonAsync(runner);
+    return done({ok:true,value:typeof value==='string'?value:String(value)});
+  }catch(e){return done({ok:false,value:'',error:String(e&&e.message||e)});}
+}
 
 // ---- hub connection ----
 let ws=null, hb=null, caps=null, running=false, tasks=0, totalMs=0, started=Date.now();
@@ -359,11 +416,22 @@ function connect(){
     clearInterval(hb);hb=setInterval(()=>{try{ws.send(JSON.stringify({t:'hb'}))}catch(e){}},10000);};
   ws.onmessage=async ev=>{let m;try{m=JSON.parse(ev.data)}catch(e){return}
     if(m.t==='ping'){try{ws.send(JSON.stringify({t:'pong',ts:m.ts}))}catch(e){}return;}
+    if(m.t==='store'){
+      // best-effort replication: cache app file bytes in memory, within the budget (relay stays source of truth)
+      try{const cached=cacheStore(m.id+':'+m.path,{b64:m.b64||'',ct:m.ct||'application/octet-stream',version:m.version});
+        ws.send(JSON.stringify({t:'stored',kind:m.kind,id:m.id,path:m.path,version:m.version,cached}));}catch(e){}
+      return;}
+    if(m.t==='fetch'){
+      const hit=replicaStore.get(m.id+':'+m.path);
+      try{if(hit)ws.send(JSON.stringify({t:'file',id:m.id,path:m.path,b64:hit.b64,ct:hit.ct,version:hit.version}));
+        else ws.send(JSON.stringify({t:'file',id:m.id,path:m.path,miss:true}));}catch(e){}
+      return;}
     if(m.t==='job'){
-      const isJs=m.lang==='js';
-      const label=isJs?(m.func||'task')+'( js )':m.func+'('+(m.args||[]).join(',')+')';
+      const lang=m.lang||'wasm';
+      const isCode=lang==='js'||lang==='python';
+      const label=isCode?(m.func||'task')+'( '+lang+' )':m.func+'('+(m.args||[]).join(',')+')';
       log('job <span class="jb">'+esc(label)+'</span> received','jb');
-      const res=isJs?await runJsJob(m):await runWasmJob(m);
+      const res=lang==='js'?await runJsJob(m):lang==='python'?await runPyJob(m):await runWasmJob(m);
       if(res.ok){tasks++;totalMs+=res.ms;$('m-tasks').textContent=tasks;$('m-ms').textContent=Math.round(totalMs);
         log('→ <b>'+esc(res.value.length>80?res.value.slice(0,80)+'…':res.value)+'</b> in '+res.ms+'ms','ok');}
       else log('→ error: '+esc(res.error),'er');
@@ -439,36 +507,63 @@ $('burst').onclick=async()=>{
 };
 
 // ====================== WRITE A TASK ======================
-const EXAMPLES=[
-  {name:'Heavy math (CPU burn)',
-   code:'function task(input) {\n  // runs on a live node — return anything JSON-serializable\n  let sum = 0;\n  for (let i = 0; i < input.n; i++) sum += Math.sqrt(i);\n  return { n: input.n, sum: Math.round(sum) };\n}',
-   input:'{"n": 5000000}'},
-  {name:'Reverse a string',
-   code:'function task(input) {\n  return input.text.split("").reverse().join("");\n}',
-   input:'{"text": "hello mesh"}'},
-  {name:'Prime factorization',
-   code:'function task(input) {\n  let n = input.n, f = [], d = 2;\n  while (d * d <= n) { while (n % d === 0) { f.push(d); n /= d; } d++; }\n  if (n > 1) f.push(n);\n  return { of: input.n, factors: f };\n}',
-   input:'{"n": 600851475143}'},
-  {name:'SHA-256 a string (Web Crypto)',
-   code:'async function task(input) {\n  const buf = new TextEncoder().encode(input.text);\n  const h = await crypto.subtle.digest("SHA-256", buf);\n  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2,"0")).join("");\n}',
-   input:'{"text": "content addressing"}'},
-  {name:'Estimate π (Monte Carlo)',
-   code:'function task(input) {\n  let inside = 0;\n  for (let i = 0; i < input.samples; i++) {\n    const x = Math.random(), y = Math.random();\n    if (x*x + y*y <= 1) inside++;\n  }\n  return { pi: 4 * inside / input.samples, samples: input.samples };\n}',
-   input:'{"samples": 8000000}'},
-];
-const exSel=$('ex');
-EXAMPLES.forEach((e,i)=>{const o=document.createElement('option');o.value=i;o.textContent=e.name;exSel.appendChild(o);});
-function loadExample(i){$('src').value=EXAMPLES[i].code;$('cin').value=EXAMPLES[i].input;}
+const EXAMPLES={
+  js:[
+    {name:'Heavy math (CPU burn)',
+     code:'function task(input) {\n  // runs on a live node — return anything JSON-serializable\n  let sum = 0;\n  for (let i = 0; i < input.n; i++) sum += Math.sqrt(i);\n  return { n: input.n, sum: Math.round(sum) };\n}',
+     input:'{"n": 5000000}'},
+    {name:'Reverse a string',
+     code:'function task(input) {\n  return input.text.split("").reverse().join("");\n}',
+     input:'{"text": "hello mesh"}'},
+    {name:'Prime factorization',
+     code:'function task(input) {\n  let n = input.n, f = [], d = 2;\n  while (d * d <= n) { while (n % d === 0) { f.push(d); n /= d; } d++; }\n  if (n > 1) f.push(n);\n  return { of: input.n, factors: f };\n}',
+     input:'{"n": 600851475143}'},
+    {name:'SHA-256 a string (Web Crypto)',
+     code:'async function task(input) {\n  const buf = new TextEncoder().encode(input.text);\n  const h = await crypto.subtle.digest("SHA-256", buf);\n  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2,"0")).join("");\n}',
+     input:'{"text": "content addressing"}'},
+    {name:'Estimate π (Monte Carlo)',
+     code:'function task(input) {\n  let inside = 0;\n  for (let i = 0; i < input.samples; i++) {\n    const x = Math.random(), y = Math.random();\n    if (x*x + y*y <= 1) inside++;\n  }\n  return { pi: 4 * inside / input.samples, samples: input.samples };\n}',
+     input:'{"samples": 8000000}'},
+  ],
+  python:[
+    {name:'Sum of squares (CPU burn)',
+     code:'def task(input):\n    # runs on a browser node via Pyodide — return anything JSON-serializable\n    n = input["n"]\n    total = sum(i * i for i in range(n))\n    return {"n": n, "sum_of_squares": total}',
+     input:'{"n": 1000000}'},
+    {name:'Reverse a string',
+     code:'def task(input):\n    return input["text"][::-1]',
+     input:'{"text": "hello mesh"}'},
+    {name:'Prime factorization',
+     code:'def task(input):\n    n = input["n"]\n    factors, d = [], 2\n    while d * d <= n:\n        while n % d == 0:\n            factors.append(d)\n            n //= d\n        d += 1\n    if n > 1:\n        factors.append(n)\n    return {"of": input["n"], "factors": factors}',
+     input:'{"n": 600851475143}'},
+    {name:'Count primes (sieve)',
+     code:'def task(input):\n    n = input["limit"]\n    sieve = bytearray([1]) * n\n    sieve[0:2] = b"\\x00\\x00"\n    for i in range(2, int(n ** 0.5) + 1):\n        if sieve[i]:\n            sieve[i*i::i] = bytearray(len(sieve[i*i::i]))\n    return {"limit": n, "primes": sum(sieve)}',
+     input:'{"limit": 200000}'},
+  ],
+};
+const exSel=$('ex'), langSel=$('lang');
+function populateExamples(lang){
+  exSel.innerHTML='';
+  EXAMPLES[lang].forEach((e,i)=>{const o=document.createElement('option');o.value=i;o.textContent=e.name;exSel.appendChild(o);});
+}
+function loadExample(i){const lang=langSel.value;const e=EXAMPLES[lang][i];$('src').value=e.code;$('cin').value=e.input;}
+function onLangChange(){
+  const lang=langSel.value;
+  populateExamples(lang);
+  loadExample(0);
+  $('code-tag').textContent=lang==='python'?'Python · Pyodide':'JavaScript · sandboxed';
+}
 exSel.onchange=()=>loadExample(+exSel.value);
-loadExample(0);
+langSel.onchange=onLangChange;
+onLangChange();
 
 $('runjs').onclick=async()=>{
+  const lang=langSel.value;
   const code=$('src').value.trim(); let input;
   try{input=$('cin').value.trim()?JSON.parse($('cin').value):null;}
   catch(e){showRes($('js-res'),{what:'your task',err:'input is not valid JSON: '+e.message});return;}
   const el=$('js-res'); const b=$('runjs'); b.disabled=true;
   showRes(el,{what:'your task',running:true});
-  const j=await pushTask({lang:'js',code,input});
+  const j=await pushTask({lang,code,input});
   b.disabled=false;
   if(j.error){showRes(el,{what:'your task',err:j.error});return;}
   if(!j.ok){showRes(el,{what:'your task',err:j.error||'task threw'});return;}

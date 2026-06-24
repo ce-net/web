@@ -1,0 +1,3 @@
+# React Native (Expo) on CE
+
+A single React Native UI built with Expo, exported to the web via react-native-web: `npm i && npm run build` runs `expo export --platform web --output-dir dist` to produce a static web bundle the CE hub can host (`baseUrl: ""` keeps asset paths relative for `/apps/<id>/`). On the web target the counter persists to the CE database through `ce.db`; the same component also runs natively under `expo start` on iOS and Android. Deploy with `ce-app deploy`. The local `ce.ts` implements the `@ce/client` contract against the same-origin hub — swap it for the published `@ce/client` package if you prefer. Expo pulls a large dependency tree, so the first `npm i` is heavier than the Vite templates.

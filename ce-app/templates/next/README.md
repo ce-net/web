@@ -1,0 +1,3 @@
+# Next.js on CE
+
+A Next.js App Router project configured for static export (`output: "export"`) — `npm i && npm run build` prerenders every page to static HTML in `out/`, which the CE hub serves under `/apps/<id>/` (relative `assetPrefix`, `trailingSlash` so deep links resolve to `index.html`). There is no Next server in production: the page hydrates on the client and the counter persists to the CE database via `ce.db`. Deploy with `ce-app deploy`. The local `app/lib/ce.ts` implements the `@ce/client` contract against the same-origin hub — swap it for the published `@ce/client` package if you prefer.

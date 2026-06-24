@@ -1,7 +1,7 @@
 {
   "name": "ce-app",
-  "version": "0.1.0",
-  "description": "One command to a live, globally reachable, hot-reloading app on ce-net.com",
+  "version": "0.2.0",
+  "description": "One command to deploy any frontend framework (Vite/React/Vue/Svelte/SvelteKit/Next/Astro/Nuxt/Expo) to a live, globally reachable, hot-reloading app on ce-net.com",
   "type": "module",
   "license": "MIT",
   "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
@@ -30,7 +30,9 @@
     "node": ">=18"
   },
   "scripts": {
-    "smoke": "node bin/ce-app.mjs smoke"
+    "smoke": "node bin/ce-app.mjs smoke",
+    "detect": "node bin/ce-app.mjs detect",
+    "test": "node bin/ce-app.mjs smoke"
   },
   "dependencies": {
     "chokidar": "^3.6.0",

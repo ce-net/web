@@ -128,6 +128,41 @@ async function runJsJob(job) {
   }
 }
 
+// ---- replication cache (best-effort redundancy; in-memory, no-op safe) ----
+// The hub may push {t:"store",...} to replicate app files across nodes, and later
+// {t:"fetch",id,path} to read one back. We cache the bytes in memory only — the relay
+// remains the source of truth, so losing this cache is harmless.
+const replicaStore = new Map() // key `${id}:${path}` -> { b64, ct, version, size }
+function replicaKey(id, p) { return String(id) + ':' + String(p) }
+
+// Hard cap on how much of OTHER people's data this node will hold, so a hub can never use all your
+// memory/disk. Conservative default (64 MiB); override with CE_WORKER_MAX_CACHE_BYTES (0 disables
+// the cache entirely). Oldest entries are evicted first when the budget is exceeded.
+const MAX_CACHE_BYTES = Math.max(0, Number(process.env.CE_WORKER_MAX_CACHE_BYTES) || 64 * 1024 * 1024)
+let replicaBytes = 0
+function cacheStore(key, item) {
+  const size = item.b64 ? item.b64.length : 0
+  if (size > MAX_CACHE_BYTES) return false // a single item larger than the whole budget is refused
+  const existing = replicaStore.get(key)
+  if (existing) { replicaBytes -= existing.size; replicaStore.delete(key) }
+  item.size = size
+  replicaStore.set(key, item)
+  replicaBytes += size
+  for (const k of replicaStore.keys()) {
+    if (replicaBytes <= MAX_CACHE_BYTES) break
+    if (k === key) continue
+    const e = replicaStore.get(k); replicaStore.delete(k); replicaBytes -= e.size
+  }
+  return true
+}
+
+// ---- Python jobs ----
+// Pyodide is too heavy to run cheaply in a headless Node worker, so python tasks are
+// declined here with a clear message; they run on browser nodes (web/site/node.html).
+function runPythonUnsupported(_job) {
+  return { ok: false, value: '', ms: 0, error: 'python runs on browser nodes (this headless worker handles js + wasm)' }
+}
+
 // ---- connection loop ----
 let caps = detectCaps()
 let ws = null, hb = null, tasks = 0, backoff = 2000
@@ -153,11 +188,33 @@ function connect() {
     try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString()) } catch { return }
     if (m.t === 'welcome') { log('registered with hub'); return }
     if (m.t === 'ping') { try { ws.send(JSON.stringify({ t: 'pong', ts: m.ts })) } catch { /* ignore */ } return }
+    if (m.t === 'store') {
+      // Replication push from the hub: cache app file bytes in memory, within the budget.
+      try {
+        const cached = cacheStore(replicaKey(m.id, m.path), { b64: m.b64 || '', ct: m.ct || 'application/octet-stream', version: m.version })
+        ws.send(JSON.stringify({ t: 'stored', kind: m.kind, id: m.id, path: m.path, version: m.version, cached }))
+      } catch { /* ignore */ }
+      return
+    }
+    if (m.t === 'fetch') {
+      // Replication read: serve a cached file back if we have it.
+      const hit = replicaStore.get(replicaKey(m.id, m.path))
+      try {
+        if (hit) ws.send(JSON.stringify({ t: 'file', id: m.id, path: m.path, b64: hit.b64, ct: hit.ct, version: hit.version }))
+        else ws.send(JSON.stringify({ t: 'file', id: m.id, path: m.path, miss: true }))
+      } catch { /* ignore */ }
+      return
+    }
     if (m.t === 'job') {
-      const res = m.lang === 'js' ? await runJsJob(m) : await runJob(m)
+      const res = m.lang === 'wasm' || !m.lang ? await runJob(m)
+        : m.lang === 'js' ? await runJsJob(m)
+        : m.lang === 'python' ? runPythonUnsupported(m)
+        : { ok: false, value: '', ms: 0, error: `unsupported lang "${m.lang}"` }
       try { ws.send(JSON.stringify({ t: 'result', jid: m.jid, ...res })) } catch { /* dropped */ }
       tasks++
-      const label = m.lang === 'js' ? `${m.func || 'task'}(js)` : `${m.func}(${(m.args || []).join(',')})`
+      const label = (m.lang && m.lang !== 'wasm')
+        ? `${m.func || 'task'}(${m.lang})`
+        : `${m.func}(${(m.args || []).join(',')})`
       log(`task ${label} -> ${res.ok ? res.value : 'ERR ' + res.error} (${res.ms}ms, total ${tasks})`)
     }
   }

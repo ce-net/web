@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "CE Native",
+    "slug": "ce-native",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "cenative",
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.svg"
+    },
+    "experiments": {
+      "baseUrl": ""
+    }
+  }
+}
