@@ -2109,7 +2109,6 @@ fn detect_runtime(st: &Shared, ip: &str, node_id: &str, ms: f64) {
     if !(ms.is_finite() && ms > 0.0) {
         return;
     }
-    let now = Instant::now();
     let (median, runs) = {
         let mut det = st.detect.lock().unwrap();
         let stat = det.ips.entry(ip.to_string()).or_default();
