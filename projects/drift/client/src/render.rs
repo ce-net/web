@@ -95,7 +95,6 @@ impl Renderer {
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                         .using_resolution(adapter.limits()),
-                    memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
             )
@@ -214,7 +213,6 @@ impl Renderer {
                 targets: &[Some(color_target.clone())],
             }),
             multiview: None,
-            cache: None,
         });
 
         // Line pipeline: a single vertex buffer of (pos, color).
@@ -244,7 +242,6 @@ impl Renderer {
                 targets: &[Some(color_target)],
             }),
             multiview: None,
-            cache: None,
         });
 
         let quad_corner_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
