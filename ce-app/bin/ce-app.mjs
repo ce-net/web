@@ -2,7 +2,8 @@
 // ce-app — one command to a live, globally reachable, hot-reloading app.
 //
 //   ce-app new [template] [dir]   scaffold a template (lists available if omitted)
-//   ce-app whoami                 print your stable public id + derived nodeprefix
+//   ce-app whoami                 print your ONE identity + nodeprefix + where it came from
+//   ce-app link [token]           print the device-pairing flow (capability/QR) — design stub
 //   ce-app dev                    build + watch + live-upload, prints the public URL(s)
 //   ce-app deploy                 framework auto-detect + build + upload + spa config
 //   ce-app domain add|rm|ls <d>   manage custom production domains for this app
@@ -11,11 +12,17 @@
 //
 // Flags: --help  --hub <base>  --app <id>  --project <name>
 //
+// ONE identity per person (invisible Tier-2): ce-app never mints a second id. It
+// reuses the CE node identity (`ce id`; secret key at
+// ~/.local/share/ce/identity/node.key) when present, else one local Ed25519 keypair
+// at ~/.ce/identity created once. The old ~/.ce/id and per-project ./.ce/app-id
+// migrate to this single identity. Every mutating request is signed (x-ce-id /
+// x-ce-sig / x-ce-ts / x-ce-nonce), forward-compatible with the live hub.
+//
 // Per-project, node-id-tied domains:
-//   A stable public id lives at ~/.ce/id (16 hex; generated if absent; prefers the
-//   `ce` node id from `ce id` when the CE CLI is installed). The first 10 hex chars are
-//   the "nodeprefix". Each project deploys as "<project>-<nodeprefix>" and is reachable
-//   at BOTH https://<project>-<nodeprefix>.ce-net.com and
+//   nodeprefix = the identity id's first 10 hex chars. Each project deploys as
+//   "<project>-<nodeprefix>" and is reachable at BOTH
+//   https://<project>-<nodeprefix>.ce-net.com and
 //   https://ce-net.com/apps/<project>-<nodeprefix>/ — same origin either way. The single
 //   DNS label keeps wildcard TLS automatic. Bring your own domain on top with
 //   `ce-app domain add <your-domain>`.
@@ -110,13 +117,29 @@ function contentType(file) {
 }
 
 // ---------------------------------------------------------------------------
-// identity — a STABLE public dev id tied to this node, persisted at ~/.ce/id
+// identity — ONE identity per person, reused across everything (invisible Tier-2).
 //
-//   - 16 hex chars; generated once if absent.
-//   - If the `ce` CLI is installed, we prefer its node id (first hex token of
-//     `ce id`) so every project you deploy from this machine shares one identity.
-//   - nodeprefix = first 10 hex of the id; it namespaces every project subdomain
-//     so two developers' "chat" apps never collide.
+// CE's locked design is "1 person = 1 node id". ce-app NEVER mints a second id.
+// Resolution order (the FIRST that exists wins, and is treated as the source of
+// truth for the public id):
+//
+//   1) CE node identity. If the `ce` CLI is installed, `ce id` prints the node
+//      id (64 hex). The matching Ed25519 SECRET key lives on disk at
+//      ~/.local/share/ce/identity/node.key when this is a real CE node, and is
+//      used to SIGN mutating requests. The node id is the public id.
+//   2) Otherwise, ONE local app keypair at ~/.ce/identity (Ed25519, created once
+//      and reused forever). Its node id is sha256(pubkey) hex. This key signs.
+//
+// Migration (must keep existing deploys working):
+//   - The OLD random/derived id at ~/.ce/id and any per-project ./.ce/app-id are
+//     still honored, but they MIGRATE to the single identity above. ~/.ce/id is
+//     rewritten to the resolved id so the source of truth converges, while the
+//     previously-derived app ids keep resolving (the ./.ce/app-id pin still wins
+//     for that checkout, so a project already live at <name>-<oldprefix> stays
+//     reachable at exactly that id).
+//
+// nodeprefix = first 10 hex of the id; it namespaces every project subdomain so
+// two developers' "chat" apps never collide.
 // ---------------------------------------------------------------------------
 
 const NODEPREFIX_LEN = 10;
@@ -125,9 +148,19 @@ function ceHomeDir() {
   return path.join(os.homedir(), ".ce");
 }
 
+// Where a real CE node keeps its Ed25519 secret key (see root CLAUDE.md).
+function ceNodeKeyPath() {
+  return path.join(os.homedir(), ".local", "share", "ce", "identity", "node.key");
+}
+
+function ceIdentityDir() {
+  return path.join(ceHomeDir(), "identity");
+}
+
 // Try `ce id` and return the first 16-hex-or-longer token, lowercased. Returns
 // null if the CLI is missing, errors, or prints nothing hex-looking. Best-effort
-// and fast: a short timeout, no throw.
+// and fast: a short timeout, no throw. We anchor on the "node id" line when the
+// CLI prints both a node id and a libp2p id.
 function tryCeNodeId() {
   try {
     const r = spawnSync(process.platform === "win32" ? "ce.cmd" : "ce", ["id"], {
@@ -136,30 +169,163 @@ function tryCeNodeId() {
       stdio: ["ignore", "pipe", "ignore"],
     });
     if (r.status !== 0 || !r.stdout) return null;
-    const m = r.stdout.match(/[0-9a-fA-F]{16,}/);
+    // Prefer the explicit "node id" line if present (`ce id` prints node + libp2p).
+    const line = r.stdout.split(/\r?\n/).find((l) => /node\s*id/i.test(l));
+    const m = (line || r.stdout).match(/[0-9a-fA-F]{16,}/);
     return m ? m[0].toLowerCase() : null;
   } catch (_) {
     return null;
   }
 }
 
-// Resolve (and persist) the stable public id at ~/.ce/id. Generates a 16-hex id
-// on first run; thereafter the file wins so the id never changes underneath you.
-async function resolvePublicId() {
+// Cached identity so repeated calls (whoami, deploy, every signed PUT) are cheap.
+let _identityCache = null;
+
+// Resolve the ONE identity for this machine. Returns:
+//   { id, source, secretKey, publicKey, signer }
+//     id        : 64-hex (or >=16-hex) public node id used for app ids + x-ce-id
+//     source    : "ce-node" | "ce-node (no local key)" | "local-keypair" | "migrated"
+//     secretKey : node:crypto KeyObject (Ed25519 private) or null if unsignable
+//     publicKey : raw 32-byte Ed25519 public key (hex) when known, else derived
+//     signer    : (canonicalString) => sigHex  or  null when no secret key
+//
+// NEVER regenerates a second id. The first existing source wins.
+async function resolveIdentity() {
+  if (_identityCache) return _identityCache;
+
   const ceDir = ceHomeDir();
   const idFile = path.join(ceDir, "id");
+  const identDir = ceIdentityDir();
+  const localKeyFile = path.join(identDir, "node.key");
+  const localPubFile = path.join(identDir, "node.pub");
+
+  // (1) CE node identity via `ce id`. This is the canonical "1 person = 1 id".
+  const ceId = tryCeNodeId();
+  if (ceId) {
+    // Try to load the node's secret key so we can actually sign. It may be absent
+    // (e.g. on a machine where only `ce` is on PATH but the node data dir lives
+    // elsewhere) — signing is then disabled, but identity still resolves.
+    const loaded = await tryLoadEd25519Secret(ceNodeKeyPath());
+    const ident = {
+      id: ceId,
+      source: loaded ? "ce-node" : "ce-node (no local key)",
+      secretKey: loaded ? loaded.secretKey : null,
+      publicKey: loaded ? loaded.publicKeyHex : ceId,
+      signer: loaded ? makeSigner(loaded.secretKey) : null,
+      keyPath: loaded ? ceNodeKeyPath() : null,
+    };
+    await migrateIdFile(idFile, ceId);
+    _identityCache = ident;
+    return ident;
+  }
+
+  // (2) The single local keypair at ~/.ce/identity. Create ONCE, reuse forever.
+  let kp = await tryLoadEd25519Secret(localKeyFile);
+  if (!kp) {
+    // First run with no CE node: mint exactly one keypair and persist it.
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    const der = privateKey.export({ type: "pkcs8", format: "der" });
+    const pubHex = rawEd25519PubHex(publicKey); // 32-byte raw key, hex
+    await fs.mkdir(identDir, { recursive: true });
+    await fs.writeFile(localKeyFile, der);
+    try { await fs.chmod(localKeyFile, 0o600); } catch (_) { /* best effort (Windows) */ }
+    await fs.writeFile(localPubFile, pubHex + "\n");
+    kp = {
+      secretKey: privateKey,
+      publicKey,
+      publicKeyHex: pubHex,
+    };
+  }
+  // The node id for a local keypair = sha256(pubkey) hex (64 hex chars), so it is
+  // shaped like a CE node id and is stable across runs.
+  const id = crypto.createHash("sha256").update(Buffer.from(kp.publicKeyHex, "hex")).digest("hex");
+  const ident = {
+    id,
+    source: "local-keypair",
+    secretKey: kp.secretKey,
+    publicKey: kp.publicKeyHex,
+    signer: makeSigner(kp.secretKey),
+    keyPath: localKeyFile,
+  };
+  await migrateIdFile(idFile, id);
+  _identityCache = ident;
+  return ident;
+}
+
+// Load an Ed25519 secret key from a file. Accepts PKCS8 DER (what we write) and,
+// best-effort, PKCS8 PEM. Returns { secretKey, publicKey, publicKeyHex } or null.
+async function tryLoadEd25519Secret(file) {
+  let buf;
+  try {
+    buf = await fs.readFile(file);
+  } catch (_) {
+    return null;
+  }
+  // Try DER pkcs8, then PEM pkcs8. A raw 32-byte seed is also wrapped into pkcs8.
+  const attempts = [];
+  attempts.push(() => crypto.createPrivateKey({ key: buf, format: "der", type: "pkcs8" }));
+  attempts.push(() => crypto.createPrivateKey({ key: buf.toString("utf8"), format: "pem", type: "pkcs8" }));
+  if (buf.length === 32) {
+    attempts.push(() => crypto.createPrivateKey({ key: ed25519SeedToPkcs8(buf), format: "der", type: "pkcs8" }));
+  }
+  for (const make of attempts) {
+    try {
+      const secretKey = make();
+      if (secretKey.asymmetricKeyType !== "ed25519") continue;
+      const publicKey = crypto.createPublicKey(secretKey);
+      return { secretKey, publicKey, publicKeyHex: rawEd25519PubHex(publicKey) };
+    } catch (_) {
+      /* try next */
+    }
+  }
+  return null;
+}
+
+// Wrap a raw 32-byte Ed25519 seed into a minimal PKCS8 DER so node:crypto loads it.
+function ed25519SeedToPkcs8(seed32) {
+  // PKCS8 prefix for Ed25519 private keys (RFC 8410): fixed 16-byte header.
+  const prefix = Buffer.from("302e020100300506032b657004220420", "hex");
+  return Buffer.concat([prefix, Buffer.from(seed32)]);
+}
+
+// Extract the raw 32-byte Ed25519 public key (hex) from a KeyObject. The JWK
+// "x" coordinate is the portable way to get it across Node versions (export
+// with { type: "raw" } is not universally supported for Ed25519).
+function rawEd25519PubHex(publicKeyObj) {
+  const jwk = publicKeyObj.export({ format: "jwk" });
+  return Buffer.from(jwk.x, "base64url").toString("hex");
+}
+
+// Build a signer: canonicalString -> Ed25519 signature, hex-encoded.
+function makeSigner(secretKey) {
+  return (canonicalString) => {
+    const sig = crypto.sign(null, Buffer.from(canonicalString, "utf8"), secretKey);
+    return Buffer.from(sig).toString("hex");
+  };
+}
+
+// Migrate ~/.ce/id to the resolved single id. Old random/derived ids are replaced
+// so the source of truth converges on the one identity. Idempotent and quiet.
+async function migrateIdFile(idFile, id) {
   try {
     const existing = (await fs.readFile(idFile, "utf8")).trim().toLowerCase();
-    if (/^[0-9a-f]{16,}$/.test(existing)) return existing;
+    if (existing === id) return; // already converged
   } catch (_) {
     /* not yet created */
   }
-  // Prefer the CE node id if the CLI is present, else generate a stable 16-hex id.
-  const ceId = tryCeNodeId();
-  const id = ceId || crypto.randomBytes(8).toString("hex");
-  await fs.mkdir(ceDir, { recursive: true });
-  await fs.writeFile(idFile, id + "\n");
-  return id;
+  try {
+    await fs.mkdir(path.dirname(idFile), { recursive: true });
+    await fs.writeFile(idFile, id + "\n");
+  } catch (_) {
+    /* non-fatal: read-only home, etc. */
+  }
+}
+
+// Back-compat shim: the rest of the CLI calls resolvePublicId() to get the id
+// string. It now delegates to the single-identity resolver.
+async function resolvePublicId() {
+  const ident = await resolveIdentity();
+  return ident.id;
 }
 
 function nodePrefix(id) {
@@ -176,14 +342,28 @@ function dnsLabelPart(s) {
     .replace(/^-+|-+$/g, "");
 }
 
-// The project name: --project, else package.json "name", else the directory name.
+// The project name: --project, else ce-app.json "project"/"name", else
+// package.json "name", else Cargo.toml [package].name, else the directory name.
 function resolveProjectName(cwd, override) {
   if (override && String(override).trim()) return dnsLabelPart(override);
+  // Optional ce-app.json (used by the rust templates so a Rust project with no
+  // package.json still gets a stable, intentional app slug).
+  const ceCfg = readJsonSafe(path.join(cwd, "ce-app.json"));
+  if (ceCfg && typeof (ceCfg.project || ceCfg.name) === "string") {
+    const lbl = dnsLabelPart(String(ceCfg.project || ceCfg.name));
+    if (lbl) return lbl;
+  }
   const pkg = readJsonSafe(path.join(cwd, "package.json"));
   if (pkg && typeof pkg.name === "string" && pkg.name.trim()) {
     // npm scoped names ("@scope/name") -> use the last path segment.
     const bare = pkg.name.replace(/^@[^/]+\//, "");
     const lbl = dnsLabelPart(bare);
+    if (lbl) return lbl;
+  }
+  // Rust projects: fall back to the crate name in Cargo.toml.
+  const cargo = parseCargoToml(readTextSafe(path.join(cwd, "Cargo.toml")));
+  if (cargo && cargo.name) {
+    const lbl = dnsLabelPart(cargo.name);
     if (lbl) return lbl;
   }
   const dir = dnsLabelPart(path.basename(cwd) || "app");
@@ -234,6 +414,89 @@ function appUrls(hub, appId) {
 }
 
 // ---------------------------------------------------------------------------
+// signed writes (invisible, forward-compatible)
+//
+// Every MUTATING request (app file PUT, config PUT, domain PUT/DELETE, and any
+// future slug/registry/feedback write) is signed with the single identity. The
+// canonical scheme — fixed NOW so the wave-2 hub can verify it — is:
+//
+//   headers:
+//     x-ce-id:    <pubkey-hex>     (the signer's Ed25519 public key, hex)
+//     x-ce-sig:   <ed25519-sig>    (hex signature over the canonical string)
+//     x-ce-ts:    <unix-ms>        (millisecond timestamp, replay window)
+//     x-ce-nonce: <random-hex>     (per-request nonce, replay defense)
+//
+//   canonical string (newline-joined, exact order):
+//     METHOD "\n" PATH "\n" ts "\n" nonce "\n" sha256(body)-hex
+//
+//   - PATH is the request path + query exactly as sent (no host), e.g.
+//     "/apps/chat-abcd/index.html".
+//   - body is the raw request bytes; for an empty body, sha256("") is used.
+//
+// The LIVE hub ignores these headers today (wave 1), so signing must never break
+// anonymous PUTs. We sign when a secret key is available and silently skip the
+// signature (still send no broken headers) when it is not.
+// ---------------------------------------------------------------------------
+
+function sha256Hex(buf) {
+  return crypto.createHash("sha256").update(buf == null ? Buffer.alloc(0) : buf).digest("hex");
+}
+
+// Build the canonical signing headers for a request. Returns {} when we cannot
+// sign (no secret key) so the request stays a valid anonymous request.
+async function signedHeaders(method, urlOrPath, body) {
+  let ident;
+  try {
+    ident = await resolveIdentity();
+  } catch (_) {
+    return {};
+  }
+  if (!ident || !ident.signer) return {}; // unsignable -> anonymous, still valid
+
+  // PATH = path + search of the URL, with no host. Accept a full URL or a path.
+  let pathOnly = String(urlOrPath);
+  try {
+    const u = new URL(urlOrPath);
+    pathOnly = u.pathname + (u.search || "");
+  } catch (_) {
+    /* already a path */
+  }
+
+  const ts = String(Date.now());
+  const nonce = crypto.randomBytes(12).toString("hex");
+  const bodyBuf = body == null ? Buffer.alloc(0) : Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+  const canonical = [method.toUpperCase(), pathOnly, ts, nonce, sha256Hex(bodyBuf)].join("\n");
+  let sig;
+  try {
+    sig = ident.signer(canonical);
+  } catch (_) {
+    return {};
+  }
+  return {
+    "x-ce-id": ident.publicKey,
+    "x-ce-sig": sig,
+    "x-ce-ts": ts,
+    "x-ce-nonce": nonce,
+  };
+}
+
+// fetch() wrapper that attaches the canonical signature headers for mutating
+// requests. Non-mutating GETs go through unsigned. Never throws on signing.
+async function signedFetch(url, init = {}) {
+  const method = (init.method || "GET").toUpperCase();
+  const mutating = method === "PUT" || method === "POST" || method === "DELETE" || method === "PATCH";
+  if (!mutating) return fetch(url, init);
+  let extra = {};
+  try {
+    extra = await signedHeaders(method, url, init.body);
+  } catch (_) {
+    extra = {};
+  }
+  const headers = { ...(init.headers || {}), ...extra };
+  return fetch(url, { ...init, headers });
+}
+
+// ---------------------------------------------------------------------------
 // file walking + upload
 // ---------------------------------------------------------------------------
 
@@ -258,7 +521,7 @@ async function walk(dir, baseDir = dir) {
 
 async function putFile(hub, appId, rel, body, ct) {
   const url = `${hub}/apps/${encodeURIComponent(appId)}/${rel}`;
-  const res = await fetch(url, {
+  const res = await signedFetch(url, {
     method: "PUT",
     headers: { "content-type": ct },
     body,
@@ -271,27 +534,37 @@ async function putFile(hub, appId, rel, body, ct) {
 }
 
 // Upload an output dir. `prev` maps rel->hash to skip unchanged files; returns the new map.
-async function uploadDir(hub, appId, outDir, prev = null, { quiet = false } = {}) {
+// `maxAppFile` (bytes) triggers a non-fatal warning per file that exceeds the hub cap.
+async function uploadDir(hub, appId, outDir, prev = null, { quiet = false, maxAppFile = 0 } = {}) {
   const files = await walk(outDir);
   const next = new Map();
   let uploaded = 0;
+  let oversize = 0;
   for (const f of files) {
     const buf = await fs.readFile(f.abs);
     const hash = crypto.createHash("sha1").update(buf).digest("hex");
     next.set(f.rel, hash);
     if (prev && prev.get(f.rel) === hash) continue; // unchanged
+    if (maxAppFile && buf.length > maxAppFile) {
+      oversize++;
+      console.log(
+        `  WARN  ${f.rel} is ${(buf.length / (1024 * 1024)).toFixed(1)} MiB, over the hub per-file cap ` +
+          `(${(maxAppFile / (1024 * 1024)).toFixed(0)} MiB) — the hub may reject it. ` +
+          `For wasm: build with --release and run wasm-opt -Oz to shrink it.`
+      );
+    }
     await putFile(hub, appId, f.rel, buf, contentType(f.rel));
     uploaded++;
     if (!quiet) console.log(`  ok  ${f.rel}  (${buf.length}b)`);
   }
-  return { next, uploaded, total: files.length };
+  return { next, uploaded, total: files.length, oversize };
 }
 
 // Set spa=true (or any config) on the app via the hub config endpoint.
 async function setAppConfig(hub, appId, config) {
   const url = `${hub}/apps/${encodeURIComponent(appId)}/config`;
   try {
-    const res = await fetch(url, {
+    const res = await signedFetch(url, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(config),
@@ -385,11 +658,355 @@ function runCmd(cwd, cmd, args) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Rust -> wasm (+wgpu) recipe
+//
+// Three build variants, picked by config files present:
+//   - trunk    (Trunk.toml or index.html with a wasm <link data-trunk>) ->
+//              `trunk build --release --public-url ./`  -> ./dist
+//   - wasm-pack(has a [lib] crate-type cdylib and no Trunk.toml; index.html that
+//              imports ./pkg) -> `wasm-pack build --target web` -> ./pkg (+ web/)
+//   - cargo    (raw) -> cargo build --release --target wasm32-unknown-unknown,
+//              optional `wasm-opt -Oz`, assemble ./dist with index.html + .wasm + glue
+//
+// detectRustWasm(cwd) returns null when there is no Cargo.toml at the root, so
+// the JS framework detection is unaffected for non-Rust projects.
+// ---------------------------------------------------------------------------
+
+// Run a command and capture stdout/exit; never throws. Used for preflight probes.
+function probeCmd(cmd, args, cwd) {
+  try {
+    const bin = process.platform === "win32" ? cmd + ".cmd" : cmd;
+    const r = spawnSync(bin, args, {
+      cwd,
+      encoding: "utf8",
+      timeout: 8000,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+    return { ok: r.status === 0, status: r.status, stdout: r.stdout || "", stderr: r.stderr || "" };
+  } catch (_) {
+    return { ok: false, status: -1, stdout: "", stderr: "" };
+  }
+}
+
+function hasBin(cmd) {
+  // `<cmd> --version` is the cheapest portable presence check.
+  return probeCmd(cmd, ["--version"], process.cwd()).ok;
+}
+
+function readTextSafe(p) {
+  try {
+    return fssync.readFileSync(p, "utf8");
+  } catch (_) {
+    return null;
+  }
+}
+
+// Parse just enough of Cargo.toml (no TOML dep): crate name + crate-type list.
+function parseCargoToml(text) {
+  const out = { name: null, crateTypes: [] };
+  if (!text) return out;
+  const nameM = text.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
+  if (nameM) out.name = nameM[1];
+  const ctM = text.match(/crate-type\s*=\s*\[([^\]]*)\]/);
+  if (ctM) {
+    out.crateTypes = ctM[1]
+      .split(",")
+      .map((s) => s.replace(/["'\s]/g, ""))
+      .filter(Boolean);
+  }
+  return out;
+}
+
+// Detect a Rust->wasm project rooted at cwd. Returns a recipe or null.
+function detectRustWasm(cwd) {
+  const cargoPath = path.join(cwd, "Cargo.toml");
+  const cargoText = readTextSafe(cargoPath);
+  if (!cargoText) return null; // not a Rust crate at the root
+
+  const cargo = parseCargoToml(cargoText);
+  const hasTrunk = fileExists(cwd, "Trunk.toml") || /data-trunk/.test(readTextSafe(path.join(cwd, "index.html")) || "");
+  const usesTrunkDep = /\btrunk\b/.test(cargoText);
+  const isCdylib = cargo.crateTypes.includes("cdylib");
+  const usesWasmBindgen = /wasm-bindgen\s*=/.test(cargoText);
+  // A "./pkg/" import is the wasm-pack signal. The reference may live in index.html
+  // OR in a frontend module (game.js / main.js / src/*), so scan those too.
+  const frontendText = [
+    readTextSafe(path.join(cwd, "index.html")),
+    readTextSafe(path.join(cwd, "game.js")),
+    readTextSafe(path.join(cwd, "main.js")),
+    readTextSafe(path.join(cwd, "src", "main.js")),
+    readTextSafe(path.join(cwd, "src", "index.js")),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const importsPkg = /(\.\/)?pkg\//.test(frontendText) || fileExists(cwd, "pkg");
+  // Allow ce-app.json to force a variant explicitly.
+  const cfgVariant = (readJsonSafe(path.join(cwd, "ce-app.json")) || {}).wasm;
+
+  // --- variant: trunk ---
+  if (cfgVariant === "trunk" || hasTrunk || usesTrunkDep) {
+    return rustRecipe(cwd, {
+      id: "rust-trunk",
+      label: "Rust -> wasm (Trunk)",
+      variant: "trunk",
+      tools: ["rustc", "cargo", "trunk"],
+      build: async (c) => {
+        await rustPreflight(c, ["wasm-target", "trunk"]);
+        await runCmd(c, "trunk", ["build", "--release", "--public-url", "./"]);
+      },
+      outDirs: ["dist"],
+      baseHint: "trunk --public-url ./ keeps asset paths relative for /apps/<id>/",
+    });
+  }
+
+  // --- variant: wasm-pack ---
+  if (cfgVariant === "wasm-pack" || (isCdylib && (importsPkg || usesWasmBindgen))) {
+    return rustRecipe(cwd, {
+      id: "rust-wasm-pack",
+      label: "Rust -> wasm (wasm-pack --target web)",
+      variant: "wasm-pack",
+      tools: ["rustc", "cargo", "wasm-pack"],
+      build: async (c) => {
+        await rustPreflight(c, ["wasm-target", "wasm-pack"]);
+        await runCmd(c, "wasm-pack", ["build", "--release", "--target", "web", "--out-dir", "pkg"]);
+        // Assemble a servable ./dist: index.html (project or generated) + ./pkg/*.
+        await assembleWasmPackDist(c, cargo.name);
+      },
+      outDirs: ["dist"],
+      baseHint: "wasm-pack --target web emits ESM glue in ./pkg; we copy it under ./dist/pkg",
+    });
+  }
+
+  // --- variant: raw cargo (wasm32) ---
+  if (isCdylib || /\[lib\]/.test(cargoText)) {
+    return rustRecipe(cwd, {
+      id: "rust-cargo",
+      label: "Rust -> wasm (cargo wasm32 + optional wasm-opt)",
+      variant: "cargo",
+      tools: ["rustc", "cargo"],
+      build: async (c) => {
+        await rustPreflight(c, ["wasm-target"]);
+        await runCmd(c, "cargo", ["build", "--release", "--target", "wasm32-unknown-unknown"]);
+        await assembleRawCargoDist(c, cargo.name);
+      },
+      outDirs: ["dist"],
+      baseHint: "raw cargo wasm; wasm-opt -Oz applied when available; index.html loads the module",
+    });
+  }
+
+  return null;
+}
+
+// Wrap a rust recipe with a marker so messaging/tests can identify it.
+function rustRecipe(cwd, base) {
+  return { rust: true, ...base };
+}
+
+// Toolchain preflight: verify rust + the chosen extra tools are installed, and
+// that the wasm32 target is added. Prints EXACT install hints and throws with a
+// concise summary if anything is missing. `needs` is a list of capability keys.
+async function rustPreflight(cwd, needs) {
+  const missing = [];
+  const hint = [];
+
+  if (!hasBin("rustc") || !hasBin("cargo")) {
+    missing.push("rust toolchain");
+    hint.push("  install Rust:        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh");
+  }
+
+  if (needs.includes("wasm-target")) {
+    // `rustup target list --installed` is authoritative; fall back to assuming
+    // missing if rustup is absent (cargo can still build if target preinstalled).
+    const r = probeCmd("rustup", ["target", "list", "--installed"], cwd);
+    const installed = r.ok && /wasm32-unknown-unknown/.test(r.stdout);
+    if (!installed) {
+      missing.push("wasm32-unknown-unknown target");
+      hint.push("  add the wasm target:  rustup target add wasm32-unknown-unknown");
+    }
+  }
+
+  if (needs.includes("trunk") && !hasBin("trunk")) {
+    missing.push("trunk");
+    hint.push("  install trunk:        cargo install --locked trunk");
+  }
+  if (needs.includes("wasm-pack") && !hasBin("wasm-pack")) {
+    missing.push("wasm-pack");
+    hint.push("  install wasm-pack:    cargo install wasm-pack   (or: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh)");
+  }
+
+  if (missing.length) {
+    const lines = [
+      `Rust->wasm toolchain preflight failed — missing: ${missing.join(", ")}`,
+      "",
+      ...hint,
+    ];
+    throw new Error(lines.join("\n"));
+  }
+}
+
+// Is wasm-opt available? (optional optimizer, part of binaryen)
+function hasWasmOpt() {
+  return hasBin("wasm-opt");
+}
+
+// Find the built .wasm artifact under target/wasm32-unknown-unknown/release.
+function findCargoWasm(cwd, crateName) {
+  const relDir = path.join(cwd, "target", "wasm32-unknown-unknown", "release");
+  if (!fssync.existsSync(relDir)) return null;
+  // Prefer the crate-named artifact; else first .wasm.
+  const candidates = [];
+  if (crateName) candidates.push(path.join(relDir, crateName.replace(/-/g, "_") + ".wasm"));
+  try {
+    for (const f of fssync.readdirSync(relDir)) {
+      if (f.endsWith(".wasm")) candidates.push(path.join(relDir, f));
+    }
+  } catch (_) {}
+  for (const c of candidates) if (fssync.existsSync(c)) return c;
+  return null;
+}
+
+// Assemble ./dist for a wasm-pack build: project index.html (or a generated one)
+// + the ./pkg/ ESM glue directory.
+async function assembleWasmPackDist(cwd, crateName) {
+  const dist = path.join(cwd, "dist");
+  await fs.mkdir(path.join(dist, "pkg"), { recursive: true });
+  // Copy pkg/* into dist/pkg.
+  const pkgDir = path.join(cwd, "pkg");
+  if (fssync.existsSync(pkgDir)) {
+    for (const f of await walk(pkgDir)) {
+      const dest = path.join(dist, "pkg", f.rel);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.copyFile(f.abs, dest);
+    }
+  }
+  // index.html: prefer the project's; else generate one that boots the module.
+  const srcHtml = fssync.existsSync(path.join(cwd, "index.html"))
+    ? await fs.readFile(path.join(cwd, "index.html"), "utf8")
+    : defaultWasmIndexHtml(crateName, "pkg");
+  await fs.writeFile(path.join(dist, "index.html"), srcHtml);
+  // Copy a ./static or ./public dir of assets if present.
+  await copyStaticInto(cwd, dist);
+}
+
+// Assemble ./dist for a raw cargo build: the .wasm (optionally wasm-opt -Oz'd),
+// a generated boot index.html if the project has none, + static assets.
+async function assembleRawCargoDist(cwd, crateName) {
+  const dist = path.join(cwd, "dist");
+  await fs.mkdir(dist, { recursive: true });
+  const wasm = findCargoWasm(cwd, crateName);
+  if (!wasm) throw new Error("cargo build produced no .wasm under target/wasm32-unknown-unknown/release");
+  const outWasm = path.join(dist, "app.wasm");
+  if (hasWasmOpt()) {
+    const r = probeCmd("wasm-opt", ["-Oz", "-o", outWasm, wasm], cwd);
+    if (!r.ok) await fs.copyFile(wasm, outWasm); // optimizer failed -> ship unoptimized
+  } else {
+    await fs.copyFile(wasm, outWasm);
+  }
+  const srcHtml = fssync.existsSync(path.join(cwd, "index.html"))
+    ? await fs.readFile(path.join(cwd, "index.html"), "utf8")
+    : defaultRawWasmIndexHtml();
+  await fs.writeFile(path.join(dist, "index.html"), srcHtml);
+  await copyStaticInto(cwd, dist);
+}
+
+// Copy ./static and ./public (if any) into the dist dir.
+async function copyStaticInto(cwd, dist) {
+  for (const d of ["static", "public", "assets"]) {
+    const src = path.join(cwd, d);
+    if (!fssync.existsSync(src)) continue;
+    for (const f of await walk(src)) {
+      const dest = path.join(dist, f.rel);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.copyFile(f.abs, dest);
+    }
+  }
+}
+
+function defaultWasmIndexHtml(crateName, pkgDir) {
+  const mod = (crateName || "app").replace(/-/g, "_");
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${crateName || "ce-app"} · wasm</title>
+    <style>html,body{margin:0;height:100%;background:#070d18;color:#e9f1fb;font:16px system-ui}
+      canvas{display:block;width:100%;height:100%}</style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <script type="module">
+      import init from "./${pkgDir}/${mod}.js";
+      init().catch((e) => { document.body.innerHTML = "<pre>"+e+"</pre>"; });
+    </script>
+  </body>
+</html>
+`;
+}
+
+function defaultRawWasmIndexHtml() {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ce-app · wasm</title>
+    <style>html,body{margin:0;height:100%;background:#070d18;color:#e9f1fb;font:16px system-ui}
+      canvas{display:block;width:100%;height:100%}</style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <script type="module">
+      // Raw wasm has no generated JS glue; instantiate the module directly.
+      const res = await fetch("./app.wasm");
+      const { instance } = await WebAssembly.instantiateStreaming(res, {});
+      if (instance.exports && typeof instance.exports.main === "function") instance.exports.main();
+    </script>
+  </body>
+</html>
+`;
+}
+
+// Probe the hub for the per-file size cap. The wave-1 hub does NOT expose a
+// /hub/stats limits object yet, so we try /hub/stats then /stats and read
+// limits.max_app_file / max_app_bytes if present; otherwise fall back to the
+// documented 16 MiB per-file cap. Never throws.
+const DEFAULT_MAX_APP_FILE = 16 * 1024 * 1024; // mirrors ce-hub MAX_APP_FILE
+
+async function probeHubLimits(hub) {
+  const fallback = { maxAppFile: DEFAULT_MAX_APP_FILE, source: "default" };
+  for (const p of ["/hub/stats", "/stats"]) {
+    try {
+      const res = await fetch(`${hub}${p}`);
+      if (!res || !res.ok) continue;
+      const data = await res.json().catch(() => null);
+      const lim = data && (data.limits || data.hub_limits);
+      if (lim) {
+        const maxAppFile = Number(lim.max_app_file || lim.maxAppFile);
+        if (maxAppFile && isFinite(maxAppFile) && maxAppFile > 0) {
+          return { maxAppFile, source: p };
+        }
+      }
+    } catch (_) {
+      /* try next */
+    }
+  }
+  return fallback;
+}
+
 // Returns a recipe object describing how to build + where output lands.
 function detectFramework(cwd) {
   const pkg = readJsonSafe(path.join(cwd, "package.json"));
   const deps = depSet(pkg);
   const has = (...names) => names.some((n) => deps.has(n));
+
+  // --- Rust -> wasm (+wgpu): a Cargo.toml at the root wins over the JS recipes.
+  // Placed before static/esbuild (and ahead of the JS frameworks) so a Rust
+  // project that happens to ship an index.html still builds with cargo/trunk. ---
+  const rust = detectRustWasm(cwd);
+  if (rust) return rust;
 
   // --- Next.js (static export only) ---
   if (has("next") || fileExists(cwd, ...NEXT_CONFIGS)) {
@@ -652,6 +1269,12 @@ async function listTemplates() {
       let desc = "";
       const pkg = readJsonSafe(path.join(tplRoot, e.name, "package.json"));
       if (pkg && pkg.description) desc = pkg.description;
+      // Rust templates have no package.json — pull the description from Cargo.toml.
+      if (!desc) {
+        const cargo = readTextSafe(path.join(tplRoot, e.name, "Cargo.toml"));
+        const m = cargo && cargo.match(/^\s*description\s*=\s*["']([^"']+)["']/m);
+        if (m) desc = m[1];
+      }
       names.push({ name: e.name, desc });
     }
     return names.sort((a, b) => a.name.localeCompare(b.name));
@@ -780,7 +1403,11 @@ async function cmdDeploy(opts) {
   }
   console.log(`Output: ${path.relative(cwd, outDir) || "."}`);
 
-  const { uploaded, total } = await uploadDir(opts.hub, appId, outDir);
+  // Probe the hub's per-file cap so we can warn on oversized wasm before upload.
+  const limits = await probeHubLimits(opts.hub);
+  const { uploaded, total } = await uploadDir(opts.hub, appId, outDir, null, {
+    maxAppFile: limits.maxAppFile,
+  });
 
   // SPAs (React Router / SvelteKit / Vue Router / etc.) need server-side fallback to
   // index.html for client routes; tell the hub to enable it for this app.
@@ -818,6 +1445,8 @@ async function cmdDev(opts) {
   console.log(`  ${urls.path}\n`);
 
   const { default: chokidar } = await import("chokidar");
+  // Probe the per-file cap once so dev pushes warn on oversized wasm too.
+  const limits = await probeHubLimits(opts.hub);
   let prev = new Map();
   let rebuilding = false;
   let pending = false;
@@ -831,7 +1460,10 @@ async function cmdDev(opts) {
     try {
       if (reason) console.log(`[build] ${reason}`);
       if (doBuild) await doBuild();
-      const { next, uploaded } = await uploadDir(opts.hub, appId, outDir, prev, { quiet: false });
+      const { next, uploaded } = await uploadDir(opts.hub, appId, outDir, prev, {
+        quiet: false,
+        maxAppFile: limits.maxAppFile,
+      });
       prev = next;
       if (uploaded > 0) console.log(`[push] ${uploaded} file(s) -> ${url}`);
     } catch (e) {
@@ -886,12 +1518,12 @@ async function cmdDev(opts) {
     // Generic framework: full build on each change to src/. Slower but correct.
     const doBuild = () => recipe.build(cwd);
     await buildAndUpload(`initial (${recipe.label})`, doBuild);
-    const watchPaths = ["src", "app", "pages", "public", "index.html"]
+    const watchPaths = ["src", "app", "pages", "public", "static", "index.html", "Cargo.toml"]
       .map((p) => path.join(cwd, p))
       .filter((p) => fssync.existsSync(p));
     const watcher = chokidar.watch(watchPaths, {
       ignoreInitial: true,
-      ignored: /(^|[\\/])(node_modules|\.ce|out|dist|build|\.next|\.output|\.svelte-kit)([\\/]|$)/,
+      ignored: /(^|[\\/])(node_modules|\.ce|out|dist|build|target|pkg|\.next|\.output|\.svelte-kit)([\\/]|$)/,
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
     });
     const debounced = debounce((p) => buildAndUpload(`changed ${path.relative(cwd, p)}`, doBuild), 250);
@@ -931,7 +1563,7 @@ async function cmdDomain(opts) {
     const domain = (opts._[2] || "").toLowerCase().trim();
     if (!domain) throw new Error("usage: ce-app domain add <domain>");
     const appId = await resolveAppId(cwd, opts);
-    const res = await fetch(`${opts.hub}/apps/${encodeURIComponent(appId)}/domain`, {
+    const res = await signedFetch(`${opts.hub}/apps/${encodeURIComponent(appId)}/domain`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ domain }),
@@ -959,7 +1591,7 @@ async function cmdDomain(opts) {
     const domain = (opts._[2] || "").toLowerCase().trim();
     if (!domain) throw new Error("usage: ce-app domain rm <domain>");
     const appId = await resolveAppId(cwd, opts);
-    const res = await fetch(
+    const res = await signedFetch(
       `${opts.hub}/apps/${encodeURIComponent(appId)}/domain/${encodeURIComponent(domain)}`,
       { method: "DELETE" }
     );
@@ -980,21 +1612,103 @@ async function cmdDomain(opts) {
 
 async function cmdWhoami(opts) {
   const cwd = process.cwd();
-  const id = await resolvePublicId();
+  const ident = await resolveIdentity();
+  const id = ident.id;
   const prefix = nodePrefix(id);
-  const source = tryCeNodeId() ? "ce id (CE node)" : "generated";
   const project = resolveProjectName(cwd, opts && opts.project);
   const appId = await resolveAppId(cwd, opts);
   const urls = appUrls(opts.hub, appId);
 
+  // Human-readable "where it came from" for the single identity.
+  const whereBySource = {
+    "ce-node": `ce id (CE node) — secret key at ${ident.keyPath || "~/.local/share/ce/identity/node.key"}`,
+    "ce-node (no local key)": "ce id (CE node) — no local secret key found; writes are anonymous (still valid)",
+    "local-keypair": `local keypair at ${ident.keyPath || ceIdentityDir()}`,
+  };
+  const where = whereBySource[ident.source] || ident.source;
+
   console.log(`id:         ${id}`);
   console.log(`nodeprefix: ${prefix}`);
-  console.log(`source:     ${source}  (~/.ce/id)`);
+  console.log(`source:     ${ident.source}`);
+  console.log(`from:       ${where}`);
+  console.log(`pubkey:     ${ident.publicKey}`);
+  console.log(`signing:    ${ident.signer ? "enabled (mutating requests are signed)" : "disabled (no secret key — anonymous writes)"}`);
   console.log(`project:    ${project}`);
   console.log(`app id:     ${appId}`);
   console.log("urls:");
   console.log(`  ${urls.subdomain}`);
   console.log(`  ${urls.path}`);
+}
+
+// ---------------------------------------------------------------------------
+// link — document the device-pairing flow (capability/QR). STUB for wave 1:
+// it prints the designed flow; the full pairing transport ships later.
+// ---------------------------------------------------------------------------
+
+async function cmdLink(opts) {
+  const ident = await resolveIdentity();
+  const id = ident.id;
+  // A pairing payload a second device would consume (printed as a documented stub).
+  const payload = {
+    v: 1,
+    kind: "ce-pair",
+    id,
+    pubkey: ident.publicKey,
+    hub: opts.hub,
+    // a short-lived pairing challenge the new device signs to prove possession
+    nonce: crypto.randomBytes(16).toString("hex"),
+    ts: Date.now(),
+  };
+  const token = Buffer.from(JSON.stringify(payload)).toString("base64url");
+
+  console.log("ce-app link — device pairing (DESIGN STUB, not yet a live transport)\n");
+  console.log("CE's locked design is ONE identity per person, reused across every device.");
+  console.log("A second device does NOT mint a new id; it converges on this one via a");
+  console.log("signed capability, the same primitive CE uses everywhere (see ce/docs/");
+  console.log("capabilities.md). The flow:\n");
+  console.log("  1. On THIS device (already holding the identity), start a pairing offer.");
+  console.log("     It encodes your id + pubkey + hub + a one-time nonce:");
+  console.log("");
+  console.log(`     id:     ${id}`);
+  console.log(`     pubkey: ${ident.publicKey}`);
+  console.log("");
+  console.log("     Pairing token (scan as a QR, or paste on the new device):");
+  console.log(`     ${token}`);
+  console.log("");
+  console.log("  2. On the NEW device, run `ce-app link <token>`. It generates its own");
+  console.log("     ephemeral keypair, signs the nonce (proof of possession), and asks");
+  console.log("     this device to issue a capability over the relay rendezvous room.");
+  console.log("");
+  console.log("  3. THIS device verifies the proof and self-issues a signed, attenuating");
+  console.log("     capability (ability: \"app:write\", scoped + expiring) to the new device,");
+  console.log("     rooted at this identity's key — exactly like `ce grant`. The new device");
+  console.log("     stores it and now writes as the SAME identity (x-ce-id stays constant;");
+  console.log("     it presents the capability chain alongside its own signature).");
+  console.log("");
+  console.log("Status: the QR/relay transport + capability issuance land in a later wave.");
+  console.log("Today this prints the flow and a valid pairing token so tooling can build on");
+  console.log("the canonical shape. Nothing here changes your single identity.");
+
+  // If a token was passed, show what the NEW-device side would do (still a stub).
+  const incoming = opts._[1];
+  if (incoming) {
+    console.log("\n--- new-device side (stub) ---");
+    let decoded = null;
+    try {
+      decoded = JSON.parse(Buffer.from(incoming, "base64url").toString("utf8"));
+    } catch (_) {
+      console.log("  the provided token is not a valid ce-pair token.");
+      return;
+    }
+    if (!decoded || decoded.kind !== "ce-pair") {
+      console.log("  the provided token is not a ce-pair token.");
+      return;
+    }
+    console.log(`  would converge on identity ${decoded.id}`);
+    console.log(`  would sign nonce ${decoded.nonce} to prove possession, then request a`);
+    console.log(`  capability (ability: app:write) from that identity over ${decoded.hub}.`);
+    console.log("  (transport not yet implemented — wave 2.)");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,6 +1721,22 @@ async function cmdDetect(opts) {
   console.log(`framework: ${recipe.id}`);
   console.log(`label:     ${recipe.label}`);
   console.log(`outDirs:   ${recipe.outDirs.join(", ")}`);
+  if (recipe.rust) {
+    console.log(`variant:   ${recipe.variant}`);
+    console.log(`tools:     ${(recipe.tools || []).join(", ")}`);
+    // Best-effort, no-throw presence check so `detect` is a quick toolchain audit.
+    const status = (recipe.tools || []).map((t) => {
+      if (t === "rustc" || t === "cargo") return `${t}:${hasBin(t) ? "ok" : "MISSING"}`;
+      if (t === "trunk") return `trunk:${hasBin("trunk") ? "ok" : "MISSING"}`;
+      if (t === "wasm-pack") return `wasm-pack:${hasBin("wasm-pack") ? "ok" : "MISSING"}`;
+      return t;
+    });
+    const wasmTarget = probeCmd("rustup", ["target", "list", "--installed"], cwd);
+    const haveTarget = wasmTarget.ok && /wasm32-unknown-unknown/.test(wasmTarget.stdout);
+    status.push(`wasm32-target:${haveTarget ? "ok" : "MISSING"}`);
+    status.push(`wasm-opt:${hasWasmOpt() ? "ok" : "absent (optional)"}`);
+    console.log(`toolchain: ${status.join("  ")}`);
+  }
   if (recipe.baseHint) console.log(`note:      ${recipe.baseHint}`);
 }
 
@@ -1126,6 +1856,34 @@ async function cmdSmoke() {
       files: { "src/main.ts": "export {};", "src/index.html": "<!doctype html>" },
       expect: "esbuild",
     },
+    // --- Rust -> wasm variants (Cargo.toml at root selects the rust recipe) ---
+    {
+      name: "rust-trunk",
+      pkg: null,
+      files: {
+        "Cargo.toml": '[package]\nname = "demo"\n[dependencies]\n',
+        "Trunk.toml": "[build]\n",
+        "index.html": '<!doctype html><link data-trunk rel="rust" />',
+      },
+      expect: "rust-trunk",
+    },
+    {
+      name: "rust-wasm-pack",
+      pkg: null,
+      files: {
+        "Cargo.toml": '[package]\nname = "demo"\n[lib]\ncrate-type = ["cdylib"]\n[dependencies]\nwasm-bindgen = "0.2"\n',
+        "index.html": '<!doctype html><script type="module">import init from "./pkg/demo.js"</script>',
+      },
+      expect: "rust-wasm-pack",
+    },
+    {
+      name: "rust-cargo",
+      pkg: null,
+      files: {
+        "Cargo.toml": '[package]\nname = "demo"\n[lib]\ncrate-type = ["cdylib"]\n[dependencies]\n',
+      },
+      expect: "rust-cargo",
+    },
   ];
 
   for (const c of cases) {
@@ -1142,6 +1900,48 @@ async function cmdSmoke() {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  }
+
+  // --- Part 3: signing scheme — canonical string + Ed25519 sign/verify roundtrip ---
+  try {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+    const method = "PUT";
+    const pathOnly = "/apps/demo-abc/index.html";
+    const ts = "1700000000000";
+    const nonce = "deadbeefcafebabe";
+    const bodyHash = sha256Hex(Buffer.from("hello"));
+    const canonical = [method, pathOnly, ts, nonce, bodyHash].join("\n");
+    const sig = crypto.sign(null, Buffer.from(canonical, "utf8"), privateKey);
+    const verified = crypto.verify(null, Buffer.from(canonical, "utf8"), publicKey, sig);
+    need(verified, "signing: Ed25519 sign/verify roundtrip over canonical string");
+    need(canonical.split("\n").length === 5, "signing: canonical string is 5 newline-joined fields");
+    need(sha256Hex(Buffer.alloc(0)).length === 64, "signing: sha256(empty body) is 64 hex chars");
+
+    // makeSigner produces a hex signature that verifies.
+    const signer = makeSigner(privateKey);
+    const hexSig = signer(canonical);
+    need(/^[0-9a-f]+$/.test(hexSig), "signing: makeSigner returns hex");
+    need(
+      crypto.verify(null, Buffer.from(canonical, "utf8"), publicKey, Buffer.from(hexSig, "hex")),
+      "signing: makeSigner signature verifies"
+    );
+
+    // ed25519SeedToPkcs8: a raw 32-byte seed loads as an Ed25519 key.
+    const seed = crypto.randomBytes(32);
+    const loaded = crypto.createPrivateKey({ key: ed25519SeedToPkcs8(seed), format: "der", type: "pkcs8" });
+    need(loaded.asymmetricKeyType === "ed25519", "signing: raw seed wraps into a loadable pkcs8 Ed25519 key");
+  } catch (e) {
+    need(false, `signing: roundtrip threw (${e.message})`);
+  }
+
+  // --- Part 4: rust dist assembly helpers (no toolchain needed) ---
+  {
+    const html = defaultWasmIndexHtml("my-game", "pkg");
+    need(/import init from "\.\/pkg\/my_game\.js"/.test(html), "rust: wasm-pack index.html imports ./pkg/<crate>.js");
+    need(contentType("x/app.wasm") === "application/wasm", "rust: .wasm content-type is application/wasm");
+    const cargo = parseCargoToml('[package]\nname = "drift"\n[lib]\ncrate-type = ["cdylib", "rlib"]\n');
+    need(cargo.name === "drift", "rust: parseCargoToml reads crate name");
+    need(cargo.crateTypes.includes("cdylib"), "rust: parseCargoToml reads crate-type cdylib");
   }
 
   // --- report ---
@@ -1162,7 +1962,8 @@ const HELP = `ce-app — one command to a live, globally reachable, hot-reloadin
 
 Usage:
   ce-app new [template] [dir]   Scaffold a template (no name -> list available)
-  ce-app whoami                 Print your stable public id + derived nodeprefix
+  ce-app whoami                 Print your ONE identity + nodeprefix + where it came from
+  ce-app link [token]           Print the device-pairing flow (capability/QR) — design stub
   ce-app dev                    Build + watch + live-upload; prints the public URL(s)
   ce-app deploy                 Auto-detect framework, build, upload, enable SPA routing
   ce-app domain add <domain>    Register a custom production domain for this app
@@ -1177,15 +1978,29 @@ Options:
   --app <id>        Override the full app id (default: ./.ce/app-id, then derived)
   -h, --help        Show this help
 
-Frameworks auto-detected on deploy: Vite (vanilla/React/Vue/Svelte), SvelteKit
-(static adapter), Next.js (static export), Astro (static), Nuxt (static generate),
-Create React App, Expo / react-native-web (web export), plain static sites, and the
-built-in esbuild path (src/main + src/index.html).
+Frameworks auto-detected on deploy: Rust -> wasm (+wgpu) via Trunk / wasm-pack /
+raw cargo, Vite (vanilla/React/Vue/Svelte), SvelteKit (static adapter), Next.js
+(static export), Astro (static), Nuxt (static generate), Create React App, Expo /
+react-native-web (web export), plain static sites, and the built-in esbuild path
+(src/main + src/index.html). A Cargo.toml at the project root selects the Rust
+recipe. Templates: \`ce-app new rust-game\`, \`ce-app new rust-backend\`.
 
-Identity & domains:
-  Your stable public id lives at ~/.ce/id (prefers \`ce id\` if the CE CLI is
-  installed). nodeprefix = its first 10 hex chars. Each project deploys as
-  "<project>-<nodeprefix>" and is live at BOTH
+Identity (ONE per person, reused everywhere — invisible Tier-2):
+  ce-app NEVER mints a second id. It resolves, in order:
+    1) the CE node identity (\`ce id\`); its secret key at
+       ~/.local/share/ce/identity/node.key signs your writes when present, or
+    2) one local Ed25519 keypair at ~/.ce/identity, created once and reused.
+  The old ~/.ce/id and per-project ./.ce/app-id MIGRATE to this single identity
+  (existing deploys keep working). nodeprefix = the id's first 10 hex chars.
+  Multiple devices converge on the one id via \`ce-app link\` (capability/QR).
+
+Signed writes (invisible, forward-compatible):
+  Every mutating request is signed: headers x-ce-id / x-ce-sig / x-ce-ts /
+  x-ce-nonce over METHOD\\nPATH\\nts\\nnonce\\nsha256(body). The live hub ignores
+  these today, so anonymous PUTs keep working; the wave-2 hub will verify them.
+
+Domains:
+  Each project deploys as "<project>-<nodeprefix>" and is live at BOTH
     ${DEFAULT_HUB}/apps/<project>-<nodeprefix>/
     https://<project>-<nodeprefix>.${hubHost(DEFAULT_HUB)}/
   Same origin either way; the single DNS label keeps wildcard TLS automatic.
@@ -1208,6 +2023,9 @@ async function main() {
       break;
     case "whoami":
       await cmdWhoami(opts);
+      break;
+    case "link":
+      await cmdLink(opts);
       break;
     case "dev":
       await cmdDev(opts);

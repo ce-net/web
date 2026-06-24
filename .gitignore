@@ -6,3 +6,4 @@
 **/.ce/
 ce-hub/data/
 deploy/data/
+**/pkg/

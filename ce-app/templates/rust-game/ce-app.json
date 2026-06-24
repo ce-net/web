@@ -1,0 +1,6 @@
+{
+  "project": "rust-game",
+  "room": "g1",
+  "wasm": "wasm-pack",
+  "_comment": "ce-app reads `project` as the stable app slug (deployed as <project>-<nodeprefix>) and `wasm` to pin the Rust->wasm build variant (wasm-pack here; the frontend imports ./pkg). Run `ce-app detect` to confirm."
+}

@@ -1,0 +1,21 @@
+[package]
+name = "rust-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Authoritative game-state crate (init/tick/snapshot/restore) compiled to wasm"
+license = "MIT"
+
+# cdylib -> a .wasm with a stable C ABI the browser can instantiate directly.
+# rlib   -> lets a native host (server / drift-sim style) link the same logic.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[profile.release]
+# Small wasm: optimize for size, strip, fat LTO. wasm-opt -Oz shrinks further.
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

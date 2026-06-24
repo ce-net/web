@@ -28,13 +28,15 @@ the static output, uploads it, and turns on client-side-routing fallback for the
 | Command | What it does |
 |---|---|
 | `ce-app new [template] [dir]` | Scaffold a template. With no name, lists the available templates. |
+| `ce-app whoami` | Print your one identity, nodeprefix, and where it came from (no network). |
+| `ce-app link [token]` | Print the device-pairing flow (capability/QR) — a documented design stub. |
 | `ce-app dev` | Build, watch, and live-upload every output file to `/apps/<id>/<relpath>`. Prints the public URL. Hot reload is automatic. |
 | `ce-app deploy` | Auto-detect the framework, build, upload, and enable SPA routing. |
 | `ce-app domain add <domain>` | Register a custom production domain and print the CNAME + TLS steps. |
 | `ce-app domain rm <domain>` | Unregister a custom domain. |
 | `ce-app domain ls` | List this app's custom domains. |
-| `ce-app detect` | Print the detected framework + output dir (no network). |
-| `ce-app smoke` | Build a fixture and run framework-detection self-checks (no network). |
+| `ce-app detect` | Print the detected framework + output dir (no network). For Rust projects, also audits the wasm toolchain. |
+| `ce-app smoke` | Build a fixture and run framework-detection + signing self-checks (no network). |
 
 Flags: `--hub <base>` (default `https://ce-net.com`, or `$CE_HUB`), `--app <id>`
 (default `./.ce/app-id`), `--help`.
@@ -48,6 +50,9 @@ uploads it, and calls `PUT /apps/<id>/config {spa:true}` so client-side routers 
 
 | Detected | Trigger | Build | Output dir |
 |---|---|---|---|
+| Rust → wasm (Trunk) | `Cargo.toml` + `Trunk.toml` / `data-trunk` | `trunk build --release --public-url ./` | `dist/` |
+| Rust → wasm (wasm-pack) | `Cargo.toml` cdylib + `./pkg/` import or `wasm-bindgen` | `wasm-pack build --target web` | `dist/` (glue under `dist/pkg/`) |
+| Rust → wasm (raw cargo) | `Cargo.toml` with a `[lib]` / cdylib | `cargo build --release --target wasm32-unknown-unknown` (+ `wasm-opt -Oz` if present) | `dist/` |
 | Vite (vanilla/React/Vue/Svelte) | `vite` dep or `vite.config.*` | `vite build` | `dist/` |
 | SvelteKit | `@sveltejs/kit` | `vite build` (static adapter) | `build/` or `dist/` |
 | Next.js | `next` dep or `next.config.*` | `next build` (+ `next export` if needed) | `out/` |
@@ -137,6 +142,84 @@ createClient(opts?) -> {
 `appId` resolves from `location.pathname` matching `/apps/<id>/`, falling back to
 `opts.app`, then `'demo'`.
 
+## Identity — one per person, reused everywhere
+
+ce-app **never mints a second id**. It resolves one identity, in order, and the
+first that exists is the source of truth:
+
+1. **The CE node identity.** If the `ce` CLI is installed, `ce id` is your node id
+   (64 hex). The matching Ed25519 secret key at
+   `~/.local/share/ce/identity/node.key` (when present) **signs your writes**.
+2. **One local keypair.** Otherwise ce-app creates a single Ed25519 keypair at
+   `~/.ce/identity` **once** and reuses it forever. Its node id is `sha256(pubkey)`.
+
+The old `~/.ce/id` and any per-project `./.ce/app-id` **migrate** to this single
+identity — existing deploys keep working (a project pinned to `<name>-<oldprefix>`
+stays reachable at exactly that id; the source-of-truth id file converges on the
+one identity). `nodeprefix` = the id's first 10 hex chars; it namespaces every
+project subdomain.
+
+```bash
+ce-app whoami     # id, nodeprefix, source, where it came from, signing on/off
+```
+
+Multiple devices converge on the **same** id via a signed capability (the same
+primitive CE uses everywhere). `ce-app link` documents that pairing flow and emits
+a valid pairing token (QR-able); the full QR/relay transport + capability issuance
+land in a later wave.
+
+```bash
+ce-app link              # print the pairing offer + token (on the device that holds the id)
+ce-app link <token>      # on the new device: show what it would sign + request (stub)
+```
+
+## Signed writes — invisible, forward-compatible
+
+Every **mutating** request (app file `PUT`, config `PUT`, domain `PUT`/`DELETE`,
+and future slug/registry/feedback writes) is signed with your identity using a
+canonical scheme fixed now so a future hub can verify it:
+
+```
+headers:
+  x-ce-id:    <pubkey-hex>
+  x-ce-sig:   <ed25519 signature, hex>
+  x-ce-ts:    <unix-ms>
+  x-ce-nonce: <random hex>
+
+canonical string (newline-joined, exact order):
+  METHOD "\n" PATH "\n" ts "\n" nonce "\n" sha256(body)-hex
+```
+
+`PATH` is the request path + query with no host (e.g. `/apps/chat-abcd/index.html`);
+`body` is the raw request bytes (`sha256("")` for an empty body). The **live hub
+ignores these headers today**, so anonymous `PUT`s keep working — signing is
+additive and never breaks an existing deploy. Signing uses Node's built-in
+`crypto` (Ed25519); when no secret key is available, writes go out anonymously
+(still valid). The rationale: caps exist to stop **anonymous** writers filling the
+relay disk; signed/owned writes earn generous, identity-scoped quotas that grow
+with node uptime/trust, while anonymous writes keep today's small caps.
+
+## Rust → wasm (+wgpu)
+
+A `Cargo.toml` at the project root selects the Rust→wasm recipe (ahead of the
+static/esbuild paths). `ce-app` picks the build variant from the files present,
+runs a toolchain preflight with exact install hints, builds to `dist/`, and uploads
+with the correct `application/wasm` MIME — warning on any file over the hub's
+per-file cap (probed from `/hub/stats` → `/stats`, default 16 MiB).
+
+| Variant | Selected when | Command |
+|---|---|---|
+| `trunk` | `Trunk.toml` or a `data-trunk` link, or a `trunk` dep | `trunk build --release --public-url ./` |
+| `wasm-pack` | a cdylib crate + a `./pkg/` import or `wasm-bindgen` (or `ce-app.json {"wasm":"wasm-pack"}`) | `wasm-pack build --release --target web` |
+| `cargo` | any `[lib]` / cdylib crate | `cargo build --release --target wasm32-unknown-unknown` (+ `wasm-opt -Oz` when available) |
+
+Preflight checks `rustc`/`cargo`, the `wasm32-unknown-unknown` target, and the
+variant's tool, printing install hints like
+`rustup target add wasm32-unknown-unknown`, `cargo install --locked trunk`, or
+`cargo install wasm-pack`. `ce-app detect` prints a quick toolchain audit. Scaffold
+a ready-to-run multiplayer starter with `ce-app new rust-game`, or just the
+authoritative crate with `ce-app new rust-backend`.
+
 ## Public surface (served by the hub)
 
 - App: `https://ce-net.com/apps/<id>/`
@@ -145,4 +228,8 @@ createClient(opts?) -> {
 
 ## Requirements
 
-Node 18+. Dependencies: `esbuild`, `chokidar` (and `vite` only if your project uses it).
+Node 18+ (uses the built-in `crypto` module for Ed25519 signing — no extra crypto
+dependency). Dependencies: `esbuild`, `chokidar` (and `vite` only if your project
+uses it). Rust→wasm projects additionally need the Rust toolchain + the
+`wasm32-unknown-unknown` target, and `trunk` / `wasm-pack` for those variants;
+`ce-app` prints the exact install commands when anything is missing.
