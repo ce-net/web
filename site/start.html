@@ -215,7 +215,11 @@ footer a{color:var(--muted)}footer a:hover{color:var(--text)}
       <button class="btn primary sm" id="runbtn">Run on a node &#9656;</button>
     </div>
     <div class="res" id="run-res"></div>
+<<<<<<< HEAD
     <p class="note">Each snippet publishes <code>{lang:"js",code,input}</code> onto the mesh <code>tasks</code> room; any node picks it up and replies. The
+=======
+    <p class="note">Each snippet ships <code>{lang:"js",code,input}</code> to <code>POST /hub/tasks</code>. The
+>>>>>>> refs/ce-gitsync/incoming/debian
       prime-count example uses the prebuilt WASM <code>demo</code> module instead. No nodes online? You'll get a friendly note — open <a href="/node" style="color:var(--cyan)">a browser node</a> in another tab and try again.</p>
   </section>
 
@@ -240,8 +244,13 @@ footer a{color:var(--muted)}footer a:hover{color:var(--text)}
   <!-- ============ 4. DATABASE ============ -->
   <section class="panel" id="db">
     <div class="ph"><span class="secnum">03</span><h2>CE database</h2><span class="tag">KV · durable</span></div>
+<<<<<<< HEAD
     <p class="sub">A namespaced key-value store over the mesh. <code>db.set(key, value)</code> replicates a JSON write across the
       app's gossipsub map, <code>db.get</code> reads, <code>db.list</code> by prefix. Try it — these writes are real and converge under the app namespace
+=======
+    <p class="sub">A namespaced key-value store, one HTTP call away. <code>PUT /db/&lt;app&gt;/&lt;key&gt;</code> to write JSON,
+      <code>GET</code> to read, list by prefix. Try it — these writes are real and land under the app namespace
+>>>>>>> refs/ce-gitsync/incoming/debian
       <code>start-demo</code>.</p>
     <div class="kv-grid">
       <input class="fld" id="kv-key" placeholder="key (e.g. greeting)" value="greeting" spellcheck="false" />
@@ -258,9 +267,15 @@ footer a{color:var(--muted)}footer a:hover{color:var(--text)}
 
   <!-- ============ 5. REALTIME ============ -->
   <section class="panel" id="rt">
+<<<<<<< HEAD
     <div class="ph"><span class="secnum">04</span><h2>Realtime rooms</h2><span class="tag">mesh pub/sub · multiplayer</span></div>
     <p class="sub">Join a room with <code>room(name)</code> and any message you <code>send</code> is published over the mesh to
       everyone else in the room. That's the whole realtime API. You're connected to
+=======
+    <div class="ph"><span class="secnum">04</span><h2>Realtime rooms</h2><span class="tag">websocket · multiplayer</span></div>
+    <p class="sub">Open a websocket to <code>/rt/&lt;app&gt;/&lt;room&gt;</code> and any text frame you send is broadcast to
+      everyone else in the room (the last 50 frames replay on connect). That's the whole realtime API. You're connected to
+>>>>>>> refs/ce-gitsync/incoming/debian
       <code>start-demo/lobby</code> below — open this page in a second tab and watch them talk.</p>
     <div class="rt-bar">
       <span class="rt-here"><b id="rt-count">1</b> here now</span>
@@ -342,6 +357,7 @@ createGame({
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
+<<<<<<< HEAD
 // ====================== mesh-native client (same-origin only) ======================
 // Inlined @ce/client (web/ce-app/client/index.js): talks ONLY to the local node —
 // the in-browser bridge window.__ceNode, else the same-origin "/ce" reverse proxy.
@@ -439,6 +455,29 @@ async function pollStats(){
     if(st) nodes=Math.max(nodes,1);
     $('hero-pulse').className='pulse'+(nodes>0?' on':'');
     $('hero-text').innerHTML='<b>'+fmt(nodes)+'</b> node'+(nodes===1?'':'s')+' online · <b>'+fmt(tasksComputed)+'</b> tasks computed';
+=======
+// ---- endpoints (apex for /db /rt, /hub/* for the hub API) ----
+const ORIGIN=(location.protocol==='https:'||location.protocol==='http:')&&location.host
+  ? location.origin : 'https://ce-net.com';
+const HUB=ORIGIN+'/hub';
+const wsScheme=location.protocol==='https:'?'wss':'ws';
+function rtURL(app,room){return wsScheme+'://'+location.host+'/rt/'+encodeURIComponent(app)+'/'+encodeURIComponent(room);}
+// On file:// or odd hosts, fall back to the public apex so the demos still work.
+function rtURLsafe(app,room){
+  if(location.protocol==='file:'||!location.host)return 'wss://ce-net.com/rt/'+encodeURIComponent(app)+'/'+encodeURIComponent(room);
+  return rtURL(app,room);
+}
+
+// ====================== HERO READOUT (/hub/stats) ======================
+function fmt(n){n=Number(n)||0;return n>=1000?(n/1000).toFixed(n>=10000?0:1)+'k':String(n);}
+async function pollStats(){
+  try{
+    const r=await fetch(HUB+'/stats',{headers:{accept:'application/json'}});
+    const j=await r.json();
+    const nodes=j.nodes||0, tasks=j.tasks_run||0;
+    $('hero-pulse').className='pulse'+(nodes>0?' on':'');
+    $('hero-text').innerHTML='<b>'+fmt(nodes)+'</b> node'+(nodes===1?'':'s')+' online · <b>'+fmt(tasks)+'</b> tasks computed';
+>>>>>>> refs/ce-gitsync/incoming/debian
   }catch(e){
     $('hero-pulse').className='pulse';
     $('hero-text').textContent='mesh stats unavailable — retrying…';
@@ -447,6 +486,7 @@ async function pollStats(){
 pollStats();setInterval(pollStats,4000);
 
 // ====================== RUN CODE ON THE MESH ======================
+<<<<<<< HEAD
 // Mesh-native task dispatch: publish a {req} onto a shared "tasks" room and await
 // the worker's matching {res}. Any mesh node subscribed to the room (browser node,
 // ce-worker, headless node) can pick it up and reply. Same-origin only — no /hub.
@@ -473,6 +513,18 @@ function pushTask(body){
     try{ taskRoom.send({kind:'req',req:reqId,task:body}); }
     catch(e){ clearTimeout(timer); finish({error:'could not reach the local node'}); }
   });
+=======
+async function pushTask(body){
+  let r;
+  try{
+    r=await fetch(HUB+'/tasks',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  }catch(e){return {error:'network error — could not reach the mesh'};}
+  let j; try{j=await r.json();}catch(e){j={};}
+  if(r.status===503)return {error:'no nodes are online right now — open a browser node in another tab and retry'};
+  if(r.status===504)return {error:'a node picked it up but did not return in time — try again'};
+  if(!r.ok&&!j.error)j.error='HTTP '+r.status;
+  return j;
+>>>>>>> refs/ce-gitsync/incoming/debian
 }
 const nodeShort=id=>id?String(id).slice(0,10):'—';
 
@@ -539,7 +591,13 @@ async function runTask(){
 }
 $('runbtn').onclick=runTask;
 
+<<<<<<< HEAD
 // ====================== DATABASE (KV playground — mesh db) ======================
+=======
+// ====================== DATABASE (KV playground) ======================
+const DB_APP='start-demo';
+const dbBase=()=>ORIGIN+'/db/'+DB_APP;
+>>>>>>> refs/ce-gitsync/incoming/debian
 function setKvNote(t,bad){$('kv-note').innerHTML=(bad?'<span style="color:var(--bad)">'+esc(t)+'</span>':esc(t));}
 async function kvSet(){
   const key=$('kv-key').value.trim();if(!key){setKvNote('enter a key first',true);return;}
@@ -547,8 +605,14 @@ async function kvSet(){
   try{payload=JSON.parse(raw);}catch(e){payload=raw;} // accept JSON or plain text
   setKvNote('writing…');
   try{
+<<<<<<< HEAD
     await ce.db.set(key,payload);
     setKvNote('set "'+key+'" ✓ — replicated to the start-demo mesh map');
+=======
+    const r=await fetch(dbBase()+'/'+encodeURIComponent(key),{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    setKvNote('set "'+key+'" ✓ — stored under start-demo/'+key);
+>>>>>>> refs/ce-gitsync/incoming/debian
     kvList();
   }catch(e){setKvNote('write failed: '+e.message,true);}
 }
@@ -556,18 +620,34 @@ async function kvGet(){
   const key=$('kv-key').value.trim();if(!key){setKvNote('enter a key first',true);return;}
   setKvNote('reading…');
   try{
+<<<<<<< HEAD
     const v=await ce.db.get(key);
     if(v===undefined){setKvNote('no value at "'+key+'" yet — set it first',true);return;}
     let pretty;try{pretty=JSON.stringify(v);}catch(e){pretty=String(v);}
+=======
+    const r=await fetch(dbBase()+'/'+encodeURIComponent(key));
+    if(r.status===404){setKvNote('no value at start-demo/'+key+' yet — set it first',true);return;}
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const txt=await r.text();let pretty=txt;try{pretty=JSON.stringify(JSON.parse(txt));}catch(e){}
+>>>>>>> refs/ce-gitsync/incoming/debian
     setKvNote('got "'+key+'" → '+(pretty.length>120?pretty.slice(0,120)+'…':pretty));
   }catch(e){setKvNote('read failed: '+e.message,true);}
 }
 async function kvList(){
   const el=$('kv-list');
   try{
+<<<<<<< HEAD
     const items=await ce.db.list('',20);
     if(!items.length){el.innerHTML='<div class="kv-empty">no keys yet — set one above</div>';return;}
     el.innerHTML=items.map(it=>{
+=======
+    const r=await fetch(dbBase()+'?limit=20');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    const items=(j&&Array.isArray(j.items))?j.items:[];
+    if(!items.length){el.innerHTML='<div class="kv-empty">no keys yet — set one above</div>';return;}
+    el.innerHTML=items.slice().reverse().map(it=>{
+>>>>>>> refs/ce-gitsync/incoming/debian
       let v=it.value;if(typeof v!=='string'){try{v=JSON.stringify(v);}catch(e){v=String(v);}}
       return '<div class="kv-row"><span class="kk">'+esc(it.key)+'</span><span class="vv">'+esc(v)+'</span></div>';
     }).join('');
@@ -579,10 +659,17 @@ $('kv-refresh').onclick=kvList;
 $('kv-val').addEventListener('keydown',e=>{if(e.key==='Enter')kvSet();});
 kvList();
 
+<<<<<<< HEAD
 // ====================== REALTIME (presence + chat — mesh room) ======================
 const MY_ID=Math.random().toString(36).slice(2,8);
 const lobby=ce.room('lobby');
 let rtOpen=false;
+=======
+// ====================== REALTIME (presence + chat) ======================
+const RT_APP='start-demo', RT_ROOM='lobby';
+const MY_ID=Math.random().toString(36).slice(2,8);
+let rtWs=null, rtOpen=false, rtRetry=null;
+>>>>>>> refs/ce-gitsync/incoming/debian
 const presence=new Map(); // id -> last-heard ms
 const feed=$('rt-feed'); let feedHasMsgs=false;
 
@@ -591,16 +678,34 @@ function rtSetState(on,txt){
   $('rt-state-txt').textContent=txt;
 }
 function rtConnect(){
+<<<<<<< HEAD
   rtSetState(false,'connecting…');
   lobby.onOpen(()=>{rtOpen=true;rtSetState(true,'connected as '+MY_ID);ping();});
   lobby.on(m=>{
+=======
+  try{rtWs=new WebSocket(rtURLsafe(RT_APP,RT_ROOM));}
+  catch(e){rtSetState(false,'unavailable');scheduleReconnect();return;}
+  rtSetState(false,'connecting…');
+  rtWs.onopen=()=>{rtOpen=true;rtSetState(true,'connected as '+MY_ID);ping();};
+  rtWs.onmessage=ev=>{
+    let m;try{m=JSON.parse(ev.data);}catch(e){return;}
+>>>>>>> refs/ce-gitsync/incoming/debian
     if(!m||typeof m!=='object')return;
     const id=m.id||m.from||m.uid;
     if(id&&id!==MY_ID){presence.set(String(id),Date.now());}
     if(m.t==='chat'&&typeof m.text==='string'&&id!==MY_ID){addMsg(id||'someone',m.text,false);}
+<<<<<<< HEAD
   });
 }
 function rtSend(obj){ if(rtOpen){try{lobby.send(obj);}catch(e){}} }
+=======
+  };
+  rtWs.onclose=()=>{rtOpen=false;rtSetState(false,'reconnecting…');scheduleReconnect();};
+  rtWs.onerror=()=>{try{rtWs.close();}catch(e){}};
+}
+function scheduleReconnect(){if(rtRetry)return;rtRetry=setTimeout(()=>{rtRetry=null;rtConnect();},2000);}
+function rtSend(obj){if(rtOpen&&rtWs&&rtWs.readyState===1){try{rtWs.send(JSON.stringify(obj));}catch(e){}}}
+>>>>>>> refs/ce-gitsync/incoming/debian
 function ping(){rtSend({t:'ping',id:MY_ID});}
 setInterval(ping,1500);
 
@@ -688,6 +793,7 @@ function buildDemo(d){
 function renderGallery(){const g=$('gallery');g.textContent='';GALLERY.forEach(d=>g.appendChild(buildDemo(d)));}
 renderGallery();
 
+<<<<<<< HEAD
 // The public projects registry was a central hub endpoint; the mesh has no central
 // registry. We render the curated static gallery above. Newly-published projects
 // that opt into the mesh registry advertise themselves under the shared registry
@@ -703,11 +809,31 @@ async function loadRegistry(){
   const extra=[];
   items.forEach(it=>{
     const p=it&&it.value; if(!p||typeof p!=='object')return;
+=======
+async function loadRegistry(){
+  let data;
+  try{
+    const res=await fetch(HUB+'/registry',{headers:{accept:'application/json'}});
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    data=await res.json();
+  }catch(e){return;} // keep static fallback
+  const list=Array.isArray(data)?data:(data&&Array.isArray(data.items)?data.items:(data&&Array.isArray(data.projects)?data.projects:[]));
+  if(!Array.isArray(list)||!list.length)return;
+  const known=new Set(DEMOS.map(d=>d.slug));
+  const extra=[];
+  list.forEach(p=>{
+    if(!p||typeof p!=='object')return;
+>>>>>>> refs/ce-gitsync/incoming/debian
     const slug=String(p.slug||p.app_id||'').trim();
     if(!slug||known.has(slug))return;
     known.add(slug);
     let url;
+<<<<<<< HEAD
     if(p.app_id)url=appUrl(p.app_id);
+=======
+    if(p.site&&/^https?:\/\//i.test(p.site))url=p.site;
+    else if(p.app_id)url=appUrl(p.app_id);
+>>>>>>> refs/ce-gitsync/incoming/debian
     else url=appUrl(slug);
     extra.push({
       slug,

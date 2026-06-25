@@ -130,7 +130,11 @@ footer{border-top:1px solid var(--line-2);padding:24px 0 50px;margin-top:36px;co
   <div class="notice" id="notice"></div>
 
   <div class="grid">
+<<<<<<< HEAD
     <div class="cap"><div class="k">Hot-reload version</div><div class="v" id="m-version">—</div><div class="s" id="m-version-s">hub-only</div></div>
+=======
+    <div class="cap"><div class="k">Hot-reload version</div><div class="v" id="m-version">—</div><div class="s" id="m-version-s">/__reload SSE</div></div>
+>>>>>>> refs/ce-gitsync/incoming/debian
     <div class="cap"><div class="k">Hosted</div><div class="v" id="m-hosted">—</div><div class="s" id="m-hosted-s">app size</div></div>
     <div class="cap"><div class="k">Live in /main</div><div class="v" id="m-room">—</div><div class="s" id="m-room-s">participants</div></div>
     <div class="cap"><div class="k">DB keys</div><div class="v" id="m-db">—</div><div class="s" id="m-db-s">/db list</div></div>
@@ -169,7 +173,11 @@ footer{border-top:1px solid var(--line-2);padding:24px 0 50px;margin-top:36px;co
     <p class="sub">Caps stop anonymous writers from filling the relay disk. Signed/owned writes earn larger,
       identity-scoped quotas (see <a class="mono" href="https://docs.ce-net.com" style="color:var(--cyan)">docs/limits</a>).
       These are the platform globals, not your per-app quota.</p>
+<<<<<<< HEAD
     <div class="lim" id="limits"><div class="empty">platform quotas were a central hub metric — not exposed by the mesh node</div></div>
+=======
+    <div class="lim" id="limits"><div class="empty">load an app to read /stats</div></div>
+>>>>>>> refs/ce-gitsync/incoming/debian
   </div>
 
   <div class="panel">
@@ -184,11 +192,16 @@ footer{border-top:1px solid var(--line-2);padding:24px 0 50px;margin-top:36px;co
     see <a href="https://docs.ce-net.com" style="color:var(--cyan)">docs/debug</a>.</p>
   <div class="links" id="quicklinks"></div>
 
+<<<<<<< HEAD
   <footer>CE app debug · read-only over the local node, same-origin mesh only · the <span class="mono">__debug</span> room convention is documented in <a href="https://docs.ce-net.com" style="color:var(--cyan)">docs/debug</a>.</footer>
+=======
+  <footer>CE app debug · read-only over existing hub endpoints · the <span class="mono">__debug</span> room convention is documented in <a href="https://docs.ce-net.com" style="color:var(--cyan)">docs/debug</a>.</footer>
+>>>>>>> refs/ce-gitsync/incoming/debian
 </div>
 
 <script>
 // ---------------------------------------------------------------------------
+<<<<<<< HEAD
 // Mesh-native, same-origin only. The inspector reads an app's live db + rooms over
 // the local node (window.__ceNode bridge, else the "/ce" reverse proxy) via /mesh/*
 // and the per-app gossipsub map — never ce-net.com/db, /rt, or any remote hub. The
@@ -261,6 +274,21 @@ const enc=encodeURIComponent;
 let CE=null;
 
 const state={ app:null, mainRoom:null, debugRoom:null, frames:[], filter:'all', autoscroll:true, pollTimer:null };
+=======
+// hub endpoints. The app/db/rt routes live on the apex host (NOT under /hub,
+// which is the contributor-node websocket). Override with ?hub=https://host.
+// ---------------------------------------------------------------------------
+function httpBase(){
+  const p=new URLSearchParams(location.search).get('hub'); if(p)return p.replace(/\/+$/,'');
+  if(location.protocol==='file:'||['localhost','127.0.0.1'].includes(location.hostname))return 'http://127.0.0.1:8970';
+  return location.origin;
+}
+function wsBase(){ return httpBase().replace(/^http/,'ws'); }
+const $=id=>document.getElementById(id);
+const enc=encodeURIComponent;
+
+const state={ app:null, reloadES:null, mainWS:null, debugWS:null, frames:[], filter:'all', autoscroll:true, pollTimer:null };
+>>>>>>> refs/ce-gitsync/incoming/debian
 
 function setStatus(kind,label){
   const dot=$('dot'); dot.className='dot'+(kind?(' '+kind):'');
@@ -270,6 +298,7 @@ function notice(msg){ const n=$('notice'); if(!msg){n.classList.remove('show');r
 function fmtBytes(n){ n=Number(n)||0; const u=['B','KB','MB','GB','TB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return (Math.round(n*10)/10)+' '+u[i]; }
 function approxSize(v){ try{ return new TextEncoder().encode(typeof v==='string'?v:JSON.stringify(v)).length; }catch(_){ return 0; } }
 
+<<<<<<< HEAD
 // --- app-hosting introspection panes (version/reload/limits/hosted/owner) were
 //     central hub endpoints (/apps/:id/debug, /apps/:id/__reload, /stats). The mesh
 //     node does not expose per-app hosting counters, so these panes show "n/a (hub)".
@@ -288,6 +317,61 @@ async function pollDb(app){
   let items=null;
   try{ items=CE?await CE.db.list('',1000):null; }catch(_){ items=null; }
   if(!items){ $('m-db').textContent='—'; $('m-db-s').textContent='no db'; list.innerHTML='<div class="empty">mesh db not available for this app</div>'; $('dbState').textContent='unavailable'; return; }
+=======
+// --- fetch helpers, all read-only, all tolerant ---
+async function jget(path,ms=6000){
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),ms);
+  try{ const r=await fetch(httpBase()+path,{signal:ctl.signal}); if(!r.ok)return{ok:false,status:r.status}; const d=await r.json().catch(()=>null); return{ok:true,status:r.status,data:d}; }
+  catch(e){ return{ok:false,error:String(e)}; } finally{ clearTimeout(t); }
+}
+async function headApp(app){
+  try{ const r=await fetch(httpBase()+'/apps/'+enc(app)+'/'); return{ok:r.ok,status:r.status}; }catch(e){ return{ok:false}; }
+}
+
+// --- hot-reload version: read one SSE event from /apps/:id/__reload ---
+function watchReload(app){
+  if(state.reloadES){ state.reloadES.close(); state.reloadES=null; }
+  try{
+    const es=new EventSource(httpBase()+'/apps/'+enc(app)+'/__reload');
+    state.reloadES=es;
+    es.onmessage=ev=>{ $('m-version').textContent=ev.data; $('m-version-s').textContent='live'; };
+    es.onerror=()=>{ $('m-version-s').textContent='no SSE'; };
+  }catch(_){ $('m-version').textContent='—'; $('m-version-s').textContent='unsupported'; }
+}
+
+// --- /apps/:id/debug snapshot (requests, errors, version, bytes, owner, rooms) ---
+async function pollDebug(app){
+  const r=await jget('/apps/'+enc(app)+'/debug');
+  if(r.ok&&r.data){
+    const d=r.data;
+    $('m-req').textContent=d.requests??0;
+    $('m-err').textContent=d.errors??0;
+    $('m-err-s').textContent=d.last_error?String(d.last_error).slice(0,40):'none';
+    $('m-rooms').textContent=d.rooms??0;
+    $('m-owner').textContent=d.owner?String(d.owner).slice(0,12)+'…':'anonymous';
+    if(Number(d.version)>0||Number(d.bytes)>0){
+      $('m-hosted').textContent='yes'; $('m-hosted-s').textContent=fmtBytes(d.bytes);
+    }
+    return d;
+  }
+  return null;
+}
+
+// --- hosted status fallback (HEAD) when /debug is absent or version 0 ---
+async function pollHosted(app,dbg){
+  if(dbg&&(Number(dbg.version)>0||Number(dbg.bytes)>0))return;
+  const h=await headApp(app);
+  if(h.ok){ $('m-hosted').textContent='served'; $('m-hosted-s').textContent='no counters'; }
+  else{ $('m-hosted').textContent='no'; $('m-hosted-s').textContent='not deployed'; }
+}
+
+// --- db key counts/sizes (/db/:app list) ---
+async function pollDb(app){
+  const r=await jget('/db/'+enc(app)+'?limit=1000');
+  const list=$('dblist');
+  if(!r.ok||!r.data){ $('m-db').textContent='—'; $('m-db-s').textContent='no /db'; list.innerHTML='<div class="empty">/db not available for this app</div>'; $('dbState').textContent='unavailable'; return; }
+  const items=r.data.items||[];
+>>>>>>> refs/ce-gitsync/incoming/debian
   $('m-db').textContent=items.length;
   let total=0; items.forEach(it=>total+=approxSize(it.value));
   $('m-db-s').textContent=fmtBytes(total);
@@ -302,6 +386,7 @@ async function pollDb(app){
   });
 }
 
+<<<<<<< HEAD
 // --- live room participant count: join the mesh "main" room, count peers via presence ---
 // Mesh pub/sub delivers each frame's authenticated sender as msg.from; we also accept
 // an app-level id field. Count distinct senders over a short window, +1 for ourselves.
@@ -320,10 +405,65 @@ function watchMainRoom(app){
     if(id){ seen.set(String(id),Date.now()); render(); }
     else { seen.set('_anon',Date.now()); render(); }
   });
+=======
+// --- platform limits + data_used from /stats ---
+async function pollStats(){
+  const r=await jget('/stats');
+  const box=$('limits');
+  if(!r.ok||!r.data||!r.data.limits){ box.innerHTML='<div class="empty">/stats has no limits block</div>'; return; }
+  const d=r.data, L=d.limits;
+  const rows=[
+    ['Platform data', d.data_used_bytes, L.max_data_bytes, fmtBytes],
+    ['Hosted apps', d.hosted_apps, L.max_apps, x=>String(x)],
+    ['Custom domains', null, L.max_domains, x=>String(x)],
+    ['DB namespaces', null, L.max_db_namespaces, x=>String(x)],
+  ];
+  box.innerHTML='';
+  rows.forEach(([label,used,max,fmt])=>{
+    const pct=(used!=null&&max)?Math.min(100,Math.round(used/max*1000)/10):null;
+    const wrap=document.createElement('div');
+    const head=document.createElement('div'); head.className='row';
+    const l=document.createElement('span'); l.textContent=label;
+    const v=document.createElement('b');
+    v.textContent=(used!=null?fmt(used)+' / ':'cap ')+fmt(max)+(pct!=null?'  ('+pct+'%)':'');
+    head.appendChild(l); head.appendChild(v); wrap.appendChild(head);
+    if(pct!=null){
+      const bar=document.createElement('div'); bar.className='bar'+(pct>=90?' warn':'');
+      const i=document.createElement('i'); i.style.width=Math.max(2,pct)+'%'; bar.appendChild(i); wrap.appendChild(bar);
+    }
+    box.appendChild(wrap);
+  });
+}
+
+// --- live room participant count: open /rt/<app>/main, count peers via presence ---
+// The hub relays frames between clients (never echoing to sender) and does not push
+// a roster. We approximate "live participants" by counting distinct peer ids seen on
+// the wire over a short window, +1 for ourselves. Netgame apps tag frames with id.
+function watchMainRoom(app){
+  if(state.mainWS){ try{state.mainWS.close();}catch(_){}}
+  const seen=new Map(); // id -> lastSeenMs
+  let ws;
+  try{ ws=new WebSocket(wsBase()+'/rt/'+enc(app)+'/main'); }
+  catch(_){ $('m-room').textContent='—'; $('m-room-s').textContent='no ws'; return; }
+  state.mainWS=ws;
+  const prune=()=>{ const now=Date.now(); for(const [k,t] of seen) if(now-t>8000) seen.delete(k); render(); };
+  const render=()=>{ $('m-room').textContent=(seen.size+1); $('m-room-s').textContent=seen.size? 'incl. you':'just you (quiet)'; };
+  ws.onopen=()=>{ render(); };
+  ws.onmessage=ev=>{
+    let f; try{ f=JSON.parse(typeof ev.data==='string'?ev.data:String(ev.data)); }catch(_){ return; }
+    const id=f.id||f.from||f.src; if(id){ seen.set(String(id),Date.now()); render(); }
+    else { // untagged traffic still proves at least one other client is live
+      seen.set('_anon',Date.now()); render();
+    }
+  };
+  ws.onclose=()=>{ if(state.mainWS===ws){ $('m-room').textContent='—'; $('m-room-s').textContent='closed'; } };
+  ws.onerror=()=>{};
+>>>>>>> refs/ce-gitsync/incoming/debian
   state._pruneTimer&&clearInterval(state._pruneTimer);
   state._pruneTimer=setInterval(prune,3000);
 }
 
+<<<<<<< HEAD
 // --- live log pane: join the mesh "__debug" room read-only ---
 function watchDebugRoom(app){
   if(state.debugRoom){ try{state.debugRoom.close();}catch(_){}}
@@ -338,6 +478,24 @@ function watchDebugRoom(app){
     if(typeof f!=='object') f={t:'raw',msg:String(f)};
     addFrame(f);
   });
+=======
+// --- live log pane: join /rt/<app>/__debug read-only ---
+function watchDebugRoom(app){
+  if(state.debugWS){ try{state.debugWS.close();}catch(_){}}
+  let ws;
+  $('logState').innerHTML='<span class="spin"></span> connecting';
+  try{ ws=new WebSocket(wsBase()+'/rt/'+enc(app)+'/'+enc('__debug')); }
+  catch(_){ $('logState').textContent='no websocket'; return; }
+  state.debugWS=ws;
+  ws.onopen=()=>{ $('logState').textContent='live'; };
+  ws.onmessage=ev=>{
+    let f; try{ f=JSON.parse(typeof ev.data==='string'?ev.data:String(ev.data)); }
+    catch(_){ f={t:'raw',msg:(typeof ev.data==='string'?ev.data:'[binary]')}; }
+    addFrame(f);
+  };
+  ws.onclose=()=>{ if(state.debugWS===ws) $('logState').textContent='closed'; };
+  ws.onerror=()=>{ $('logState').textContent='error'; };
+>>>>>>> refs/ce-gitsync/incoming/debian
 }
 
 function frameKind(f){
@@ -400,6 +558,7 @@ async function loadApp(app){
   app=String(app||'').trim();
   if(!app){ setStatus('warn','enter an app id'); return; }
   state.app=app;
+<<<<<<< HEAD
   // Tear down any previous app's mesh client + room subscriptions, then open this one.
   try{ state.mainRoom&&state.mainRoom.close(); }catch(_){}
   try{ state.debugRoom&&state.debugRoom.close(); }catch(_){}
@@ -426,6 +585,36 @@ async function loadApp(app){
   if(state.pollTimer)clearInterval(state.pollTimer);
   state.pollTimer=setInterval(async ()=>{
     await pollDb(app).catch(()=>{});
+=======
+  state.frames=[]; $('log').innerHTML='<div class="empty">No frames yet. The app must publish to its <span class="mono">__debug</span> room.</div>';
+  notice('');
+  const url=new URL(location.href); url.searchParams.set('app',app); history.replaceState(null,'',url);
+  $('appUrl').innerHTML='<a href="'+httpBase()+'/apps/'+enc(app)+'/" target="_blank" style="color:var(--faint)">'+httpBase().replace(/^https?:\/\//,'')+'/apps/'+app+'/</a>';
+  setStatus('warn','inspecting '+app+'…');
+  buildQuicklinks(app);
+
+  // snapshot polls (graceful: any single failure leaves a — and a note)
+  const dbg=await pollDebug(app).catch(()=>null);
+  await pollHosted(app,dbg).catch(()=>{});
+  await pollDb(app).catch(()=>{});
+  await pollStats().catch(()=>{});
+
+  // live streams
+  watchReload(app);
+  watchMainRoom(app);
+  watchDebugRoom(app);
+
+  const hosted=dbg&&(Number(dbg.version)>0||Number(dbg.bytes)>0);
+  if(hosted)setStatus('on','live · '+app);
+  else { setStatus('warn','reachable, app not deployed yet'); notice('This app id is not hosted yet. The hub still answers /stats and the room sockets, so the log pane and limits work — but version/db/hosted will stay empty until you run `ce-app deploy`.'); }
+
+  if(state.pollTimer)clearInterval(state.pollTimer);
+  state.pollTimer=setInterval(async ()=>{
+    const d=await pollDebug(app).catch(()=>null);
+    await pollHosted(app,d).catch(()=>{});
+    await pollDb(app).catch(()=>{});
+    await pollStats().catch(()=>{});
+>>>>>>> refs/ce-gitsync/incoming/debian
   },10000);
 }
 
@@ -433,8 +622,16 @@ function buildQuicklinks(app){
   const ql=$('quicklinks'); ql.innerHTML='';
   const links=[
     ['open app','/apps/'+enc(app)+'/'],
+<<<<<<< HEAD
   ];
   links.forEach(([label,path])=>{ const a=document.createElement('a'); a.href=path; a.target='_blank'; a.textContent=label; ql.appendChild(a); });
+=======
+    ['/stats','/stats'],
+    ['/db list','/db/'+enc(app)],
+    ['/apps debug','/apps/'+enc(app)+'/debug'],
+  ];
+  links.forEach(([label,path])=>{ const a=document.createElement('a'); a.href=httpBase()+path; a.target='_blank'; a.textContent=label; ql.appendChild(a); });
+>>>>>>> refs/ce-gitsync/incoming/debian
 }
 
 // --- wiring ---
