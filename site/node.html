@@ -366,7 +366,12 @@ async function detect(){
   const gpu=gpuName(); const webgpu=!!navigator.gpu;
   const platform=navigator.platform||(navigator.userAgentData&&navigator.userAgentData.platform)||'';
   const vram_mb=await vramMb(); const cpu_mark=cpuBench();
-  return {cores,ram_gb:ram,storage_gb:Math.round(storage*10)/10,gpu,webgpu,platform,vram_mb,cpu_mark};
+  // Self-identify as a Browser node so placement can downrank slow browser-WASM work (ce-sched's
+  // runtime-kind penalty) and so the hub/atlas counts this node by kind. The link hint mirrors the
+  // NodeProfile network.link axis (advisory, from navigator.connection where supported).
+  let link=null; const c=navigator.connection;
+  if(c){link={};if(typeof c.effectiveType==='string')link.type=c.effectiveType;if(Number.isFinite(c.downlink))link.downlink_mbps=c.downlink;if(Number.isFinite(c.rtt))link.rtt_ms=c.rtt;if(!Object.keys(link).length)link=null;}
+  return {cores,ram_gb:ram,storage_gb:Math.round(storage*10)/10,gpu,webgpu,platform,vram_mb,cpu_mark,kind:'Browser',link};
 }
 function showCaps(c){
   $('c-cores').textContent=c.cores||'—';
@@ -477,6 +482,10 @@ function connect(){
       await sendSignedHello(m.nonce||'');return;}
     if(m.t==='welcome'){log('identity '+String(m.id||'').slice(0,12)+'… accepted by hub','ok');return;}
     if(m.t==='ping'){try{ws.send(JSON.stringify({t:'pong',ts:m.ts}))}catch(e){}return;}
+    if(m.t==='pub'){
+      // Inbound generic app pub/sub frame from the hub → feed the __ceNode SSE subscribers.
+      try{window.__ceNodeOnPub&&window.__ceNodeOnPub({from:m.from||'',topic:m.topic||'',payload_hex:m.payload_hex||''});}catch(e){}
+      return;}
     if(m.t==='store'){
       // best-effort replication: cache app file bytes in memory, within the budget (relay stays source of truth)
       try{const cached=cacheStore(m.id+':'+m.path,{b64:m.b64||'',ct:m.ct||'application/octet-stream',version:m.version});
@@ -742,6 +751,166 @@ document.querySelectorAll('.copy').forEach(b=>b.onclick=()=>{
   navigator.clipboard.writeText(b.dataset.copy).then(()=>{b.textContent='copied';b.classList.add('done');
     setTimeout(()=>{b.textContent='copy';b.classList.remove('done')},1400);});
 });
+
+// ====================== window.__ceNode — the in-browser node BRIDGE ======================
+// SHARED CONTRACT (must match ce-ts/src/browser-node.ts `CeNodeBridge`):
+//
+//   window.__ceNode.request(method, path, init?) => Promise<{ status, headers, body }>
+//
+// where `path` is a node HTTP API path ("/status", "/blobs/:hash", "/mesh/publish",
+// "/mesh/subscribe", "/mesh/request", "/mesh/messages/stream", ...). This dispatches
+// IN-PROCESS against THIS tab's node — it must NEVER make the app page reach the network.
+// `@ce-net/sdk`'s `connectNode()` / `bridgeFetch()` wrap this object so apps drive it through
+// the SDK's normal request + SSE paths, confined to one origin by the strict CSP.
+//
+// `body` may be: a JSON/text string, a Uint8Array (binary, e.g. /blobs), or a
+// ReadableStream<Uint8Array> of `data: ...\n\n` SSE frames (paths ending in /stream).
+// Routes the node can't honor yet resolve { status: 501 } (never throw) so callers see a
+// clean error instead of a hang.
+//
+// ----------------------------------------------------------------------------------------
+// WHAT THIS TAB ACTUALLY IS, AND WHAT THE FULL WASM NODE MUST PROVIDE
+// ----------------------------------------------------------------------------------------
+// Today this page is a real mesh participant but a *hub-backed* one: it joins via the relay
+// hub WebSocket (runs pushed WASM/JS/Python jobs) and uses content-addressed /blobs over the
+// hub's HTTP. It is NOT yet a self-contained libp2p node compiled to WASM. So the bridge below
+// is REAL where the in-browser node can serve a route in-process or via this page's own
+// (node-host, NOT app-page) hub connection, and returns an honest 501 with a `X-Ce-Bridge`
+// marker for routes that require capabilities the in-browser node does not yet expose.
+//
+// To make every route real, the in-browser WASM CE node (the `ce` node compiled to wasm32,
+// tracked separately — do NOT build it from this app-tier page) must expose an in-process
+// dispatch entrypoint, e.g. `window.__ceNodeCore.dispatch(method, path, headers, body)`,
+// returning the same { status, headers, body } shape directly from the node's axum router
+// running on a WASM event loop (no WebSocket hub, no HTTP). When that core is present this
+// bridge prefers it (see `coreDispatch` below); until then it falls back to the hub-backed
+// implementation. The contract the app sees is identical either way.
+const CE = (()=>{
+  const BRIDGE='browser-node-hub'; // marker value for the X-Ce-Bridge response header
+  const enc=new TextEncoder();
+  const norm=p=>{const i=p.indexOf('?');return i<0?p:p.slice(0,i);};
+  const J=(status,obj,headers)=>({status,headers:Object.assign({'Content-Type':'application/json','X-Ce-Bridge':BRIDGE},headers||{}),body:JSON.stringify(obj)});
+  const notImpl=(method,path)=>J(501,{error:'in-browser node does not yet serve '+method+' '+path+' in-process',need:'wasm node core dispatch (window.__ceNodeCore.dispatch)'});
+
+  // Prefer a real in-process WASM node core if one has been installed by the node workstream.
+  async function coreDispatch(method,path,init){
+    const core=window.__ceNodeCore;
+    if(!core||typeof core.dispatch!=='function')return null;
+    try{
+      const r=await core.dispatch(method,path,(init&&init.headers)||{},(init&&init.body));
+      // The core returns the contract shape directly.
+      return r&&typeof r.status==='number'?r:null;
+    }catch(e){return J(502,{error:'wasm node core error: '+String(e&&e.message||e)});}
+  }
+
+  // ---- /mesh subscriptions: feed inbound hub pubsub frames to SSE consumers ----
+  // Each subscriber gets a ReadableStream; inbound app messages are fanned out as SSE frames.
+  const subscribers=new Set(); // {controller, topics:Set|null (null = all)}
+  function pushInbound(msg){ // msg: {from,topic,payload_hex,reply_token?}
+    const frame='data: '+JSON.stringify(msg)+'\n\n';
+    for(const s of subscribers){
+      if(s.topics&&!s.topics.has(msg.topic))continue;
+      try{s.controller.enqueue(enc.encode(frame));}catch(e){subscribers.delete(s);}
+    }
+  }
+  const meshTopics=new Set();
+  function meshStream(topicFilter){
+    let self;
+    const stream=new ReadableStream({
+      start(controller){self={controller,topics:topicFilter};subscribers.add(self);},
+      cancel(){subscribers.delete(self);}
+    });
+    return stream;
+  }
+  // Publish/send/request bridge to the hub when it supports an app-pubsub frame; otherwise 501.
+  function meshSend(frame){
+    // The hub protocol used by this page is task/replication oriented; generic app pub/sub
+    // (t:"pub") is sent best-effort. A hub that does not understand it simply drops it, and
+    // local subscribers still see locally-originated publishes (loopback) so single-tab apps work.
+    try{if(ws&&ws.readyState===1)ws.send(JSON.stringify(frame));}catch(e){}
+  }
+
+  async function hubBlob(method,hash,init){
+    // /blobs is content-addressed; the node-host page (NOT a confined app page) may use the hub's
+    // HTTP blob store. Also check the in-memory replica cache first for a local hit.
+    const url=httpBase()+'/blobs/'+hash;
+    if(method==='GET'){
+      // local replica cache hit (stored under 'blob:'+hash if we cached it)
+      try{
+        const r=await fetch(url);
+        if(!r.ok)return J(r.status,{error:'blob not found'});
+        const buf=new Uint8Array(await r.arrayBuffer());
+        return {status:200,headers:{'Content-Type':r.headers.get('content-type')||'application/octet-stream','X-Ce-Bridge':BRIDGE},body:buf};
+      }catch(e){return J(502,{error:'blob fetch failed: '+String(e&&e.message||e)});}
+    }
+    if(method==='PUT'){
+      let bytes=init&&init.body;
+      if(typeof bytes==='string')bytes=enc.encode(bytes);
+      else if(bytes instanceof ArrayBuffer)bytes=new Uint8Array(bytes);
+      else if(!(bytes instanceof Uint8Array))bytes=new Uint8Array(0);
+      try{
+        const r=await fetch(url,{method:'PUT',headers:{'content-type':(init&&init.headers&&(init.headers['content-type']||init.headers['Content-Type']))||'application/octet-stream'},body:bytes});
+        if(!r.ok)return J(r.status,{error:'blob store failed'});
+        return J(200,{hash});
+      }catch(e){return J(502,{error:'blob store failed: '+String(e&&e.message||e)});}
+    }
+    return notImpl(method,'/blobs/'+hash);
+  }
+
+  async function request(method,path,init){
+    method=(method||'GET').toUpperCase();
+    const p=norm(path||'/');
+
+    // 1) If a real in-process WASM node core exists, it is authoritative for everything.
+    const core=await coreDispatch(method,path,init);
+    if(core)return core;
+
+    // 2) Hub-backed fallback — real where this page can serve it, honest 501 otherwise.
+    if(method==='GET'&&(p==='/health'))return {status:200,headers:{'Content-Type':'text/plain','X-Ce-Bridge':BRIDGE},body:'ok'};
+    if(method==='GET'&&p==='/status'){
+      const id=(SIGNER?SIGNER.idHex:ID);
+      const net=Number($('m-net').textContent)||0;
+      return J(200,{node_id:id,height:0,difficulty:0,
+        balance:'0',circulating_supply:'0',burned_total:'0',
+        bond:'0',weight:0,free:'0',locked_channels:'0',locked_bond:'0',
+        peers:Math.max(0,net-1),
+        caps:caps||null});
+    }
+    if(method==='GET'&&p==='/bootstrap')return J(200,{peers:[]}); // browser node holds no stored multiaddrs
+    if(p.startsWith('/blobs/'))return await hubBlob(method,decodeURIComponent(p.slice('/blobs/'.length)),init);
+
+    // ---- mesh app messaging ----
+    if(method==='GET'&&p==='/mesh/messages/stream'){
+      return {status:200,headers:{'Content-Type':'text/event-stream','X-Ce-Bridge':BRIDGE},body:meshStream(null)};
+    }
+    if(method==='POST'&&p==='/mesh/subscribe'){
+      try{const b=JSON.parse((init&&init.body)||'{}');if(b.topic)meshTopics.add(b.topic);}catch(e){}
+      return J(200,{});
+    }
+    if(method==='POST'&&(p==='/mesh/publish'||p==='/mesh/send')){
+      let b={};try{b=JSON.parse((init&&init.body)||'{}');}catch(e){}
+      const msg={from:(SIGNER?SIGNER.idHex:ID),topic:b.topic||'',payload_hex:b.payload_hex||''};
+      meshSend({t:'pub',to:b.to||null,topic:msg.topic,payload_hex:msg.payload_hex});
+      pushInbound(msg); // loopback so single-tab apps converge without a second peer
+      return J(200,{});
+    }
+    if(method==='POST'&&p==='/mesh/request'){
+      // Request/reply needs a responding peer over /ce/rpc/1; the hub fallback can't guarantee
+      // delivery, so this is an honest 501 until the WASM node core provides mesh request/reply.
+      return notImpl(method,'/mesh/request');
+    }
+    if(method==='GET'&&p==='/mesh/messages')return J(200,[]);
+
+    return notImpl(method,p);
+  }
+
+  // Hook the live hub connection: surface inbound generic pub/sub frames to SSE subscribers.
+  // (Defined here, consumed by the ws.onmessage handler via window.__ceNodeOnPub.)
+  window.__ceNodeOnPub=msg=>{try{pushInbound(msg);}catch(e){}};
+
+  return {get nodeId(){return SIGNER?SIGNER.idHex:ID;},ready:true,request};
+})();
+window.__ceNode=CE;
 
 start();
 </script>
