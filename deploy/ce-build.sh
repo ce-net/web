@@ -30,13 +30,16 @@ sync() { # <localdir> <name>
 cmd="${1:-}"; shift || true
 case "$cmd" in
   hub)
-    echo "==> sync + build ce-hub natively on the relay"
-    sync "$HERE/ce-hub" ce-hub
+    echo "==> sync ce-hub + its ce-rs path dep, then build natively on the relay"
+    # ce-hub now lives at ~/ce-net/ce-hub (its own repo) and depends on ../ce-rs (path dep), so
+    # ship ce-rs to $REMOTE/ce-rs alongside ce-hub for the relative path to resolve on the relay.
+    sync "$HERE/../ce-rs" ce-rs
+    sync "$HERE/../ce-hub" ce-hub
     "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE"'/ce-hub && cargo build --release 2>&1 | tail -20'
     echo "==> install binary + ensure modules/data + restart service"
     # refresh builtin wasm modules from the repo too
     "${SSH[@]}" "$RELAY" "mkdir -p /opt/ce-hub/modules /opt/ce-hub/data"
-    rsync -az -e "$RSH" "$HERE"/ce-hub/modules/ "$RELAY:/opt/ce-hub/modules/" 2>/dev/null || true
+    rsync -az -e "$RSH" "$HERE"/../ce-hub/modules/ "$RELAY:/opt/ce-hub/modules/" 2>/dev/null || true
     # keep the systemd unit (env: limits, rate-limit, admin-owner) in sync with the repo
     rsync -az -e "$RSH" "$HERE"/deploy/ce-hub.service "$RELAY:/etc/systemd/system/ce-hub.service" 2>/dev/null || true
     "${SSH[@]}" "$RELAY" '

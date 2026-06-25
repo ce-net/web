@@ -1,7 +1,0 @@
-{
-  "project": "hub",
-  "title": "ce-hub",
-  "desc": "GitHub for ce-net — browse code, diffs, releases, pull requests, and live instances",
-  "static": ".",
-  "public": true
-}
