@@ -47,6 +47,13 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 .board .lr .nm.me{color:var(--cyan);font-weight:600}
 .board .lr .kc{font-family:var(--mono);font-size:13px;color:var(--gold);font-weight:500}
 .board .empty{font-size:12px;color:var(--faint)}
+.board.mission h3{color:var(--surf)}
+.mission .mrow{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:2px 0;font-size:12.5px}
+.mission .mlbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.mission .mval{font-family:var(--mono);font-size:15px;color:var(--text);font-weight:500}
+.mission .mval.gold{color:var(--gold)}
+.mission .mnote{margin-top:6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;color:var(--faint);text-transform:uppercase}
+.wavetag{color:var(--surf)}
 
 /* ---- debug / failover (bottom-left) ---- */
 .dbg{left:max(12px,env(safe-area-inset-left));bottom:max(14px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;align-items:flex-start}
@@ -127,16 +134,25 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 
   <div class="pane topright">
     <div class="online"><span class="pdot"></span><span class="n" id="hud-online">1</span><span class="lbl">players</span></div>
+    <!-- shared cross-room mission: a leaderless CRDT folded from every room host -->
+    <div class="board mission">
+      <h3>Global mission · CRDT</h3>
+      <div class="mrow"><span class="mlbl">waves cleared</span><span class="mval" id="m-waves">0</span></div>
+      <div class="mrow"><span class="mlbl">shard pool</span><span class="mval gold" id="m-shards">0</span></div>
+      <div class="mrow"><span class="mlbl">active rooms</span><span class="mval" id="m-rooms">0</span></div>
+      <div class="mrow"><span class="mlbl">pilots (mesh)</span><span class="mval" id="m-pilots">0</span></div>
+      <div class="mnote" id="m-note">converging across the mesh…</div>
+    </div>
     <div class="board">
-      <h3>Leaderboard</h3>
+      <h3>Leaderboard · this room</h3>
       <div id="board-list"><div class="empty">no score yet</div></div>
     </div>
   </div>
 
   <div class="pane dbg">
-    <button class="failbtn" id="failBtn" title="Drop local host candidacy to force the arena to migrate to another node">
+    <button class="failbtn" id="failBtn" title="Drop our mesh session and rejoin the room over the local node">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
-      Force host failover
+      Reconnect to mesh
     </button>
     <div class="tickline" id="tickline"><b>tick</b> 0 · <b>seq</b> 0</div>
   </div>
@@ -174,10 +190,12 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
     <div class="howto">
       <div><b>Steer</b> · mouse / WASD / drag</div>
       <div><b>Fire</b> · space / click / FIRE</div>
-      <div><b>Host</b> · elected by latency+uptime</div>
-      <div><b>Failover</b> · automatic on host loss</div>
+      <div><b>Goal</b> · clear rift waves, bank shards</div>
+      <div><b>Mission</b> · shared CRDT across all rooms</div>
+      <div><b>Host</b> · authoritative game-coop backend</div>
+      <div><b>Transport</b> · CE mesh pubsub (local node)</div>
     </div>
-    <div class="foot">Built on <a href="https://ce-net.com" target="_blank" rel="noopener">CE</a> netgame &mdash; realtime room for input/state, <code>/db</code> snapshots for failover. Share the link, friends join the same arena.</div>
+    <div class="foot">Built on <a href="https://ce-net.com" target="_blank" rel="noopener">CE</a> &mdash; the authoritative simulation runs in the <code>game-coop</code> backend; this client sends input and renders snapshots over your local node's mesh. The <b>global mission</b> is a leaderless multi-writer CRDT that converges across every room with no central server. Share the link, friends join the same room.</div>
   </div>
 </div>
 
@@ -185,458 +203,208 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
 "use strict";
 
 /* ============================================================================
-   CE NETGAME — inline copy of the framework.
-   CANONICAL SOURCE: web/ce-app/client/netgame.js  (keep in sync with this copy).
-   This demo inlines it so the file is self-contained and deployable as one
-   index.html served at ce-net.com/apps/coop/.
+   CE MESH BRIDGE — talk to the local CE node over the SAME ORIGIN only.
 
-   Model: a global authoritative multiplayer framework. The authoritative game
-   logic runs on the best mesh node (lowest latency, highest uptime, strongest
-   benchmark, most trusted). Clients send only input; the elected host simulates
-   in tick() and broadcasts state; clients render in onState(). On host loss the
-   game migrates to the next-best node, restoring from a CE /db snapshot.
+   coop is server-authoritative. The game logic does NOT run in this browser —
+   it runs in the `game-coop` Rust backend hosting this room on the CE mesh. This
+   client ONLY sends input and renders the authoritative snapshots it receives.
 
-   Built ONLY on existing CE primitives, same-origin when served by the hub:
-     - realtime room:  wss://host/rt/<app>/<room>  (broadcasts each frame to all
-                       OTHER clients; you never receive your own frames)
-     - database (KV):  PUT/GET /db/<app>/<key>
-     - node metrics:   GET /nodes  ->  {nodes:[{id,short,rtt_ms,uptime_pct,
-                       device_class,caps:{cpu_mark},platform,...}]}
-                       GET /stats  ->  {latency_p50_ms,...}
+   Transport: the same-origin CE node bridge.
+     * window.__ceNode  — the in-browser WASM node (request()/stream()), if present
+     * else "/ce"       — the same-origin node proxy the hub mounts
+   We use the node's mesh app-messaging surface:
+     POST /mesh/subscribe          { topic }
+     POST /mesh/publish            { topic, payload_hex }
+     GET  /mesh/messages/stream    SSE of inbound { from, topic, payload_hex, ... }
 
-   createGame(opts) ->
-     { setInput, sendEvent, state, isHost, hostId, hostShort, online,
-       players, metrics, leave }
+   STRICT SAME-ORIGIN: this file never contacts ce-net.com, /db, /rt, /nodes,
+   /stats, or any remote origin. Everything goes through the local node.
    ============================================================================ */
-function createGame(opts){
-  const O = opts || {};
-  const app   = O.app;
-  const room  = O.room || "g1";
-  const id    = O.id;
-  const hz    = O.hz || 20;
-  const dt    = 1 / hz;
-  const initFn      = O.init     || (()=>({}));
-  const tickFn      = O.tick     || ((s)=>s);
-  const inputFn     = O.input    || null;
-  const onState     = O.onState  || (()=>{});
-  const onHostChange= O.onHostChange || (()=>{});
-  const snapshotEvery = O.snapshotEvery || 40;
-  const canHost     = O.canHost !== false;
-  const hostScoreFn = O.hostScore || null;
 
-  // ---- origin + injections (Node<22 / custom origin) ----
-  const hasLoc = (typeof location !== "undefined");
-  const base = (O.base != null ? String(O.base).replace(/\/+$/,"")
-                : (hasLoc ? location.origin : "")).replace(/\/+$/,"");
-  const WS = O.WebSocket || (typeof WebSocket !== "undefined" ? WebSocket : null);
-  const FETCH = O.fetch || (typeof fetch !== "undefined" ? fetch : null);
-  function wsURL(){
-    if (base.startsWith("https:")) return "wss:" + base.slice(6) + "/rt/" + app + "/" + room;
-    if (base.startsWith("http:"))  return "ws:"  + base.slice(5) + "/rt/" + app + "/" + room;
-    if (hasLoc) return (location.protocol==="https:"?"wss":"ws") + "://" + location.host + "/rt/" + app + "/" + room;
-    return base + "/rt/" + app + "/" + room;
-  }
-  const dbURL  = (k)=> base + "/db/" + app + (k ? "/" + encodeURIComponent(k) : "");
-  const SNAP_KEY = "snap:" + room;
+const TOPIC_PREFIX = "ce-game/coop";
+const inTopic    = (room) => `${TOPIC_PREFIX}/${room}/in`;
+const stateTopic = (room) => `${TOPIC_PREFIX}/${room}/state`;
 
-  // ---- timing helpers ----
-  const now = ()=> (typeof performance!=="undefined" && performance.now) ? performance.now() : Date.now();
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+function toHex(bytes){ let h=""; for(const b of bytes) h += b.toString(16).padStart(2,"0"); return h; }
+function fromHex(hex){ const n=hex.length>>1, out=new Uint8Array(n); for(let i=0;i<n;i++) out[i]=parseInt(hex.substr(i*2,2),16); return out; }
 
-  // ---- candidate / election state ----
-  const CAND_TTL = 2500;   // a {cand} is live for ~2.5s
-  const HOST_SILENT = 1000;// host considered failed if no {st} for >1s
-  const cands = new Map(); // id -> {score,server,ts}
-  let myScore = canHost ? 0.0001 : 0;  // computed async; tiny non-zero so a lone client can host
-  let myServer = false;
-  let curHost = null;      // elected host id
-  let curHostShort = "";
-  let lastStateTs = 0;     // last time we saw a {st} from the elected host
-  let lastStateTick = 0;
-  let lastStateSeq = 0;
-
-  // ---- per-client input (host side) ----
-  const inputs = new Map();  // pid -> {input, ts}
-  let mySeq = 0;
-  let pendingInput = null;   // set via setInput; or pulled from inputFn()
-
-  // ---- host simulation state ----
-  let state = null;          // authoritative state (host only)
-  let hostTick = 0;
-  let stSeq = 0;
-  let events = [];           // queued sendEvent() payloads for next tick ctx
-  let adoptedSnapshot = false;
-
-  // ---- websocket ----
-  let ws = null, wsOpen = false, backoff = 600, closed = false, reconnectT = null;
-  let alive = true;
-
-  function send(obj){
-    if (ws && wsOpen){ try{ ws.send(JSON.stringify(obj)); }catch(_){} }
-  }
-  function connect(){
-    if (closed || !WS) return;
-    let sock; try{ sock = new WS(wsURL()); }catch(_){ scheduleReconnect(); return; }
-    ws = sock;
-    ws.onopen = ()=>{ wsOpen = true; backoff = 600; announce(); };
-    ws.onmessage = (ev)=>{
-      let m; try{ m = JSON.parse(typeof ev.data==="string"?ev.data:String(ev.data)); }catch(_){ return; }
-      onFrame(m);
+/* Build a fetch-shaped caller + SSE opener over the chosen same-origin bridge. */
+function makeBridge(){
+  const node = (typeof window !== "undefined") ? window.__ceNode : null;
+  if (node && typeof node.request === "function"){
+    return {
+      kind: "node",
+      async post(path, jsonBody){
+        const r = await node.request({ method:"POST", path, jsonBody, headers:{"content-type":"application/json"}, signal:(new AbortController()).signal });
+        return (r && typeof r.status === "number") ? r.status : 0;
+      },
+      stream(path, signal){
+        // window.__ceNode.stream yields decoded `data:` payload strings.
+        if (typeof node.stream !== "function") return null;
+        return node.stream(path, signal);
+      },
     };
-    ws.onclose = ()=>{ wsOpen = false; if(!closed) scheduleReconnect(); };
-    ws.onerror = ()=>{ try{ ws.close(); }catch(_){} };
   }
-  function scheduleReconnect(){
-    if (reconnectT || closed) return;
-    reconnectT = setTimeout(()=>{ reconnectT=null; backoff=Math.min(backoff*1.7,8000); connect(); }, backoff);
-  }
+  // Same-origin "/ce" proxy fallback. NEVER an absolute/remote URL.
+  const BASE = "/ce";
+  return {
+    kind: "proxy",
+    async post(path, jsonBody){
+      try{
+        const r = await fetch(BASE + path, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(jsonBody) });
+        return r.status;
+      }catch(_){ return 0; }
+    },
+    stream(path, signal){
+      return sseLines(BASE + path, signal);
+    },
+  };
+}
 
-  // ---- frame handling (never receive our own frames) ----
-  function onFrame(m){
-    if (!m || !m.t || m.id === id) return;
-    const t = now();
-    switch(m.t){
-      case "cand": {
-        cands.set(m.id, {score: +m.score||0, server: !!m.server, ts: t});
-        recomputeHost();
-        break;
-      }
-      case "in": {
-        // a client's input -> remember the latest per pid (host consumes it)
-        inputs.set(m.id, {input: m.input, ts: t});
-        break;
-      }
-      case "st": {
-        // authoritative state from a host. Accept only from the elected host.
-        if (m.host && curHost && m.host !== curHost) {
-          // a different node claims host — let election arbitrate, but track liveness
-          cands.set(m.host, {score: cands.has(m.host)?cands.get(m.host).score:9e9, server:false, ts:t});
-        }
-        if (!curHost || m.host === curHost) {
-          lastStateTs = t; lastStateTick = m.tick||0; lastStateSeq = m.seq||0;
-          if (m.full || state == null){
-            // adopt authoritative snapshot for rendering (clients keep a mirror)
-            renderState(m.state, m.tick||0);
-          } else {
-            renderState(m.state, m.tick||0);
-          }
-        }
-        break;
-      }
-      case "bye": {
-        cands.delete(m.id); inputs.delete(m.id);
-        recomputeHost();
-        break;
-      }
+/* Minimal SSE reader for the "/ce" proxy path: yields decoded `data:` payloads. */
+async function* sseLines(url, signal){
+  const r = await fetch(url, { headers:{ "accept":"text/event-stream", "cache-control":"no-cache" }, signal });
+  if (!r.ok || !r.body) throw new Error("sse open failed: " + r.status);
+  const reader = r.body.getReader();
+  let buf = "";
+  for(;;){
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream:true });
+    let idx;
+    while((idx = buf.indexOf("\n\n")) >= 0){
+      const frame = buf.slice(0, idx); buf = buf.slice(idx+2);
+      const lines = frame.split("\n");
+      const data = lines.filter(l=>l.startsWith("data:")).map(l=>l.slice(5).replace(/^ /,"")).join("\n");
+      if (data) yield data;
     }
   }
+}
 
-  function renderState(s, tick){
+/*
+  CoopMesh — the client side of the coop mesh app.
+    * subscribes to this room's state topic and (so the node routes our own
+      inbound copy) the input topic;
+    * publishes {t:"in"} / {t:"bye"} input frames at hz;
+    * parses {t:"st"} authoritative snapshots and calls onState(state, meta).
+  No election, no /db, no /nodes — the authoritative host is named in each
+  snapshot's `host` field; we just render what it sends.
+*/
+function createMeshGame(opts){
+  const O = opts || {};
+  const room   = O.room || "g1";
+  const id     = O.id;
+  const hz     = O.hz || 20;
+  const inputFn= O.input  || (()=>null);
+  const onState= O.onState|| (()=>{});
+  const onHostChange = O.onHostChange || (()=>{});
+  const onStatus     = O.onStatus || (()=>{});
+
+  const bridge = makeBridge();
+  const ST = stateTopic(room), IN = inTopic(room);
+
+  let connected = false;
+  let leftRoom = false;
+  let curHost = null;
+  let lastTick = 0, lastSeq = 0;
+  let lastStateMs = 0;
+  let mySeq = 0;
+  let abort = new AbortController();
+
+  function setStatus(ok, text){ connected = ok; try{ onStatus(ok, text); }catch(_){} }
+
+  async function ensureSubscribed(){
+    await bridge.post("/mesh/subscribe", { topic: ST });
+    await bridge.post("/mesh/subscribe", { topic: IN });
+  }
+
+  async function publishInput(){
+    if (leftRoom) return;
+    const inp = (()=>{ try{ return inputFn(); }catch(_){ return null; } })();
+    if (inp == null) return;
+    mySeq++;
+    const frame = JSON.stringify({ t:"in", id, seq:mySeq, input: inp });
+    await bridge.post("/mesh/publish", { topic: IN, payload_hex: toHex(enc.encode(frame)) });
+  }
+
+  async function sayBye(){
+    const frame = JSON.stringify({ t:"bye", id });
+    try{ await bridge.post("/mesh/publish", { topic: IN, payload_hex: toHex(enc.encode(frame)) }); }catch(_){}
+  }
+
+  function handleSnapshot(msg){
+    if (!msg || msg.t !== "st" || !msg.state) return;
+    lastStateMs = Date.now();
+    lastTick = msg.tick || 0; lastSeq = msg.seq || 0;
+    if (msg.host && msg.host !== curHost){
+      curHost = msg.host;
+      try{ onHostChange({ host:curHost, hostShort: shortOf(curHost), tick:lastTick }); }catch(_){}
+    }
+    const rtt = (typeof msg.ts === "number") ? Math.max(0, Date.now() - msg.ts) : 0;
     try{
-      onState(s, {
-        host: curHost, hostShort: curHostShort, isHost: curHost === id,
-        online: liveCount(), tick, rttToHostMs: rttToHost(),
+      onState(msg.state, {
+        host: curHost, hostShort: shortOf(curHost), isHost: false,
+        online: msg.state.ships ? Object.keys(msg.state.ships).length : 0,
+        tick: lastTick, seq: lastSeq, rttToHostMs: rtt,
+        // The converged cross-room mission CRDT the host folded + attached to this snapshot.
+        mission: msg.mission || null,
       });
     }catch(_){}
   }
 
-  // ---- candidacy broadcast (~1/s while eligible) ----
-  function announce(){
-    if (!canHost) return;
-    send({t:"cand", id, score: myScore, server: myServer, ts: Date.now()});
+  /* Inbound mesh message pump: SSE of {from, topic, payload_hex}. Reconnects. */
+  async function pump(){
+    while(!leftRoom){
+      try{
+        setStatus(false, "connecting to the mesh…");
+        await ensureSubscribed();
+        const it = bridge.stream("/mesh/messages/stream", abort.signal);
+        if (!it){ throw new Error("node bridge exposes no message stream"); }
+        setStatus(true, "connected to the mesh");
+        for await (const data of it){
+          if (leftRoom) break;
+          let env; try{ env = JSON.parse(data); }catch(_){ continue; }
+          if (!env || env.topic !== ST || !env.payload_hex) continue;
+          let body; try{ body = JSON.parse(dec.decode(fromHex(env.payload_hex))); }catch(_){ continue; }
+          handleSnapshot(body);
+        }
+      }catch(e){
+        setStatus(false, "offline — start a local CE node");
+      }
+      if (leftRoom) break;
+      await new Promise(r=>setTimeout(r, 800)); // backoff then reconnect
+    }
   }
 
-  // ---- election: deterministic across all clients ----
-  function candidateSet(){
-    const t = now();
-    const set = new Map();
-    for (const [cid,c] of cands){ if (t - c.ts <= CAND_TTL) set.set(cid, c); }
-    if (canHost) set.set(id, {score: myScore, server: myServer, ts: t});
-    return set;
-  }
-  function electFrom(set){
-    let best = null, bestScore = -Infinity, bestServer = false;
-    for (const [cid,c] of set){
-      const sc = c.score, sv = c.server?1:0;
-      if (sv > (bestServer?1:0) ||
-          (sv === (bestServer?1:0) && sc > bestScore) ||
-          (sv === (bestServer?1:0) && sc === bestScore && (best===null || cid < best))){
-        best = cid; bestScore = sc; bestServer = !!c.server;
-      }
-    }
-    return best;
-  }
-  function recomputeHost(){
-    const set = candidateSet();
-    const elected = electFrom(set);
-    if (elected !== curHost){
-      const wasHost = curHost === id;
-      curHost = elected;
-      curHostShort = shortOf(curHost);
-      lastStateTs = now(); // grace period for the new host to start emitting
-      if (curHost === id && !wasHost) becomeHost();
-      if (curHost !== id && wasHost) stepDownHost();
-      try{ onHostChange({host:curHost, hostShort:curHostShort, isHost:curHost===id, online:liveCount()}); }catch(_){}
-    } else if (curHost && !curHostShort){
-      curHostShort = shortOf(curHost);
-    }
-  }
+  // input pump @ hz
+  const inputTimer = setInterval(()=>{ void publishInput(); }, 1000/hz);
+  // re-subscribe periodically (idempotent) to survive node restarts
+  const subTimer = setInterval(()=>{ void ensureSubscribed(); }, 5000);
+  void pump();
+
   function shortOf(cid){
-    if (!cid) return "";
-    if (cid === id && nodeShort) return nodeShort;
-    // browsers: short = last 6 of the id
+    if (!cid) return "—";
     const m = String(cid);
-    return m.length > 6 ? m.slice(-6) : m;
+    return m.length > 8 ? m.slice(0,8) : m;
   }
 
-  // ---- become / step down host ----
-  let hostLoopT = null, snapT = null;
-  async function becomeHost(){
-    // try to restore from the latest snapshot so the game continues seamlessly
-    if (state == null || isEmpty(state)){
-      const snap = await loadSnapshot();
-      if (snap && snap.state && !isEmpty(snap.state)){
-        state = snap.state; hostTick = snap.tick || 0; adoptedSnapshot = true;
-      } else {
-        state = initFn(); hostTick = 0;
-      }
-    }
-    startHostLoop();
-  }
-  function stepDownHost(){
-    if (hostLoopT){ clearInterval(hostLoopT); hostLoopT = null; }
-    if (snapT){ clearInterval(snapT); snapT = null; }
-    // keep `state` as a warm cache so re-election is fast; stop emitting.
-  }
-  function startHostLoop(){
-    if (hostLoopT) return;
-    hostLoopT = setInterval(hostStep, 1000/hz);
-    snapT = setInterval(saveSnapshot, Math.max(1000, (snapshotEvery/hz)*1000));
-  }
-  function hostStep(){
-    if (curHost !== id) return;
-    // collect the latest live input per client (drop inputs older than ~2s)
-    const t = now();
-    const live = {};
-    for (const [pid,rec] of inputs){ if (t - rec.ts <= 2000) live[pid] = rec.input; }
-    // include my own input
-    const myIn = pullInput();
-    if (myIn != null) live[id] = myIn;
-    const ev = events; events = [];
-    try{
-      state = tickFn(state, live, dt, {now:Date.now(), tick:hostTick, events:ev, host:id}) || state;
-    }catch(_){}
-    hostTick++;
-    stSeq++;
-    // broadcast full state each tick (state is small in this framework's demos).
-    send({t:"st", host:id, seq:stSeq, tick:hostTick, full:true, state, ts:Date.now()});
-    // also render locally for the host's own screen
-    lastStateTs = t; lastStateTick = hostTick;
-    renderState(state, hostTick);
-  }
-
-  // ---- snapshots (redundancy / failover) ----
-  async function saveSnapshot(){
-    if (curHost !== id || !FETCH || state == null) return;
-    try{
-      await FETCH(dbURL(SNAP_KEY), {method:"PUT", headers:{"content-type":"application/json"},
-        body: JSON.stringify({tick:hostTick, state, host:id, ts:Date.now()})});
-    }catch(_){ /* tolerate 507 / network */ }
-  }
-  async function loadSnapshot(){
-    if (!FETCH) return null;
-    try{
-      const r = await FETCH(dbURL(SNAP_KEY));
-      if (!r.ok) return null;       // 404 = no snapshot yet
-      let v = await r.json();
-      if (typeof v === "string"){ try{ v = JSON.parse(v); }catch(_){ return null; } }
-      return v;
-    }catch(_){ return null; }
-  }
-
-  // ---- client input loop (send {in} at hz) ----
-  function pullInput(){
-    if (pendingInput != null){ const v = pendingInput; return v; }
-    if (inputFn){ try{ return inputFn(); }catch(_){ return null; } }
-    return null;
-  }
-  let inputLoopT = setInterval(()=>{
-    const inp = pullInput();
-    if (inp == null) return;
-    mySeq++;
-    // send to whoever is host (broadcast; host filters by being host)
-    send({t:"in", id, seq:mySeq, input:inp});
-  }, 1000/hz);
-
-  // ---- liveness watchdog: re-elect if host went silent ----
-  let watchT = setInterval(()=>{
-    announce(); // keep candidacy warm (~1/s effective via the 1000ms interval)
-    if (curHost && curHost !== id){
-      if (now() - lastStateTs > HOST_SILENT){
-        // host failed — drop it and re-elect
-        cands.delete(curHost);
-        recomputeHost();
-      }
-    }
-    // prune dead candidates
-    const t = now();
-    for (const [cid,c] of cands){ if (t - c.ts > CAND_TTL*2) cands.delete(cid); }
-  }, 1000);
-
-  // ---- host scoring ----
-  let nodeShort = "";
-  let scoreReady = false;
-  function defaultLatencyScore(latMs, uptimePct, cpuMark, server){
-    return (1000/(40+latMs)) * (0.5 + uptimePct/100) * (1 + cpuMark/300) * (server ? 1.6 : 1);
-  }
-  async function microBenchCpu(){
-    // ~20ms throughput micro-bench -> a rough "cpu_mark"-like number.
-    const t0 = now(); let x = 0, n = 0;
-    while (now() - t0 < 20){ for (let i=0;i<5000;i++){ x += Math.sqrt(i*1.000001+x%7); } n += 5000; }
-    const ms = Math.max(1, now()-t0);
-    return Math.round(n/ms/50); // arbitrary scale, ~tens..hundreds
-  }
-  async function measureLatency(){
-    if (!FETCH) return 120;
-    const samples = [];
-    for (let i=0;i<3;i++){
-      const t0 = now();
-      try{ await FETCH(base + "/stats", {cache:"no-store"}); }
-      catch(_){ try{ await FETCH(base + "/health", {cache:"no-store"}); }catch(__){ return 200; } }
-      samples.push(now()-t0);
-    }
-    samples.sort((a,b)=>a-b);
-    return samples[Math.floor(samples.length/2)] || 120;
-  }
-  async function fetchNodes(){
-    if (!FETCH) return null;
-    try{
-      const r = await FETCH(base + "/nodes", {cache:"no-store"});
-      if (!r.ok) return null;
-      const d = await r.json();
-      return (d && Array.isArray(d.nodes)) ? d.nodes : null;
-    }catch(_){ return null; }
-  }
-  async function computeScore(){
-    if (!canHost){ myScore = 0; return; }
-    if (hostScoreFn){ try{ myScore = +hostScoreFn() || 0; scoreReady=true; return; }catch(_){} }
-    const nodes = await fetchNodes();
-    let mine = null;
-    if (nodes){ mine = nodes.find(n => n.id === id || (n.short && id && String(id).startsWith(n.short))); }
-    if (mine){
-      // I am a registered mesh node — use authoritative metrics.
-      const lat = (typeof mine.rtt_ms === "number" && mine.rtt_ms>0) ? mine.rtt_ms : 60;
-      const up  = (typeof mine.uptime_pct === "number") ? mine.uptime_pct : 50;
-      const cpu = (mine.caps && typeof mine.caps.cpu_mark==="number") ? mine.caps.cpu_mark : 0;
-      myServer = (mine.device_class === "server");
-      nodeShort = mine.short || nodeShort;
-      myScore = defaultLatencyScore(lat, up, cpu, myServer);
-    } else {
-      // a plain browser — measure latency + cpu; low uptime/trust default.
-      const [lat, cpu] = await Promise.all([measureLatency(), microBenchCpu()]);
-      myServer = false;
-      myScore = defaultLatencyScore(lat, 20 /* uptime% */, cpu, false);
-    }
-    scoreReady = true;
-    announce();
-    recomputeHost();
-  }
-
-  // ---- helpers ----
-  function liveCount(){
-    const t = now();
-    let c = 1; // me
-    for (const [cid,c2] of cands){ if (cid!==id && t-c2.ts <= CAND_TTL) c++; }
-    // also count input-only clients (browsers that can't host still send {in})
-    for (const [pid,rec] of inputs){ if (pid!==id && !cands.has(pid) && t-rec.ts <= 2000) c++; }
-    return c;
-  }
-  function rttToHost(){
-    // best-effort: if I am host, 0; else use my measured latency as a proxy.
-    if (curHost === id) return 0;
-    return Math.round(lastMeasuredLat);
-  }
-  let lastMeasuredLat = 60;
-  function isEmpty(s){ if (s==null) return true; if (typeof s!=="object") return false;
-    for (const k in s){ if (Object.prototype.hasOwnProperty.call(s,k)) return false; } return true; }
-
-  // ---- boot ----
-  connect();
-  computeScore();
-  // refresh score every ~5s (metrics drift; reconnect-safe)
-  let scoreT = setInterval(()=>{ measureLatency().then(l=>{lastMeasuredLat=l;}); computeScore(); }, 5000);
-  measureLatency().then(l=>{lastMeasuredLat=l;});
-
-  // ---- public API ----
   return {
-    setInput(obj){ pendingInput = obj; },
-    sendEvent(obj){ events.push(obj); },
-    state(){ return state; },
-    isHost(){ return curHost === id; },
+    online(){ return connected; },
     hostId(){ return curHost; },
-    hostShort(){ return curHostShort; },
-    online(){ return liveCount(); },
-    players(){
-      const t = now(); const out = [];
-      for (const [cid,c] of cands){ if (t-c.ts<=CAND_TTL) out.push(cid); }
-      if (!out.includes(id)) out.push(id);
-      return out;
+    hostShort(){ return shortOf(curHost); },
+    tick(){ return lastTick; },
+    seq(){ return lastSeq; },
+    hostAlive(){ return curHost && (Date.now() - lastStateMs) < 2000; },
+    leave(){
+      leftRoom = true;
+      clearInterval(inputTimer); clearInterval(subTimer);
+      void sayBye();
+      try{ abort.abort(); }catch(_){}
     },
-    metrics(){ return {score:myScore, server:myServer, host:curHost, hostShort:curHostShort,
-      tick:lastStateTick, seq:lastStateSeq, rttToHostMs:rttToHost(), online:liveCount()}; },
-    leave(opts2){
-      // Drop local host candidacy (demo host failover). With {hard:true} also
-      // close the socket. Re-elects immediately so another node takes over.
-      const hard = opts2 && opts2.hard;
-      const wasHost = curHost === id;
-      // become ineligible: stop announcing + stop hosting
-      myScore = -1; myServer = false;
-      cands.delete(id);
-      if (wasHost) stepDownHost();
-      send({t:"bye", id});
-      recomputeHost();
-      if (hard){
-        closed = true;
-        try{ ws && ws.close(); }catch(_){}
-      }
-    },
-    // internal: re-enable candidacy (used by the demo to "rejoin" as a candidate)
-    _reenable(){ closed = false; if(!wsOpen) connect(); computeScore(); },
   };
 }
-
-/* ============================================================================
-   EXAMPLE GAME — coop: a server-authoritative top-down arena.
-   Clients send ONLY input {th:[dx,dy], fire:bool}. The elected HOST simulates
-   movement, projectiles, collisions, score and respawns in tick(); clients just
-   render onState(). Namespace app="coop".
-
-   --- MINIMAL VERSION (the "simple as fuck" proof, ~30 lines) ---
-   import { createGame } from "./netgame.js";
-   const id = crypto.randomUUID();
-   const keys = {};
-   addEventListener("keydown", e => keys[e.key] = true);
-   addEventListener("keyup",   e => keys[e.key] = false);
-   const W = 800, H = 600;
-   const game = createGame({
-     app: "coop", room: "g1", id, hz: 20,
-     init: () => ({ p: {} }),                              // authoritative state
-     input: () => ({ x: (keys.d?1:0)-(keys.a?1:0), y: (keys.s?1:0)-(keys.w?1:0) }),
-     tick: (s, inputs) => {                                // runs on the host
-       for (const pid in inputs) {
-         const me = s.p[pid] || (s.p[pid] = { x: W/2, y: H/2 });
-         me.x = Math.max(0, Math.min(W, me.x + inputs[pid].x * 6));
-         me.y = Math.max(0, Math.min(H, me.y + inputs[pid].y * 6));
-       }
-       return s;
-     },
-     onState: (s, meta) => {                               // every client renders
-       const c = canvas.getContext("2d"); c.clearRect(0,0,W,H);
-       for (const pid in s.p){ c.fillStyle = pid===id?"#37c6ff":"#fff";
-         c.fillRect(s.p[pid].x-6, s.p[pid].y-6, 12, 12); }
-       label.textContent = "host: " + meta.hostShort + " (" + meta.rttToHostMs + "ms)";
-     },
-   });
-   ============================================================================ */
 
 const APP = "coop", ROOM = "g1";
 const ARENA = 2200;                 // square world 0..ARENA
@@ -730,90 +498,11 @@ function buildInput(){
 }
 
 /* ============================================================================
-   AUTHORITATIVE SIMULATION — runs ONLY on the elected host, in tick().
-   inputs = { pid: {a,th,fire,name,color} }.  state holds all ships/bullets.
+   NO LOCAL SIMULATION — the authoritative sim lives in the `game-coop` Rust
+   backend hosting this room on the mesh. This client only sends input and
+   renders the {t:"st"} snapshots the host broadcasts. (Original tickSim was
+   ported to game-coop/src/sim.rs.)
    ============================================================================ */
-function initState(){
-  return { ships:{}, bullets:[], t:0 };
-}
-function spawnShip(s, pid, inp){
-  s.ships[pid] = {
-    x:rand(ARENA*0.3,ARENA*0.7), y:rand(ARENA*0.3,ARENA*0.7),
-    vx:0, vy:0, a:(inp&&inp.a)||0, hp:100,
-    name:(inp&&inp.name)||"pilot", color:(inp&&inp.color)||"#5aa0ff",
-    score:0, alive:true, deadUntil:0, lastShot:0, seen:0,
-  };
-}
-function tickSim(s, inputs, dt, ctx2){
-  s.t = ctx2.tick;
-  const nowMs = ctx2.now;
-  // ensure a ship per active input; mark liveness
-  for(const pid in inputs){
-    if(!s.ships[pid]) spawnShip(s, pid, inputs[pid]);
-    const sh=s.ships[pid]; sh.seen=nowMs;
-    if(inputs[pid].name) sh.name=inputs[pid].name;
-    if(inputs[pid].color) sh.color=inputs[pid].color;
-  }
-  // advance ships
-  for(const pid in s.ships){
-    const sh=s.ships[pid]; const inp=inputs[pid];
-    // cull ships whose client has been silent for >6s
-    if(nowMs - (sh.seen||0) > 6000){ delete s.ships[pid]; continue; }
-    if(!sh.alive){
-      if(nowMs >= sh.deadUntil){ sh.alive=true; sh.hp=100; sh.x=rand(ARENA*0.3,ARENA*0.7); sh.y=rand(ARENA*0.3,ARENA*0.7); sh.vx=0; sh.vy=0; }
-      continue;
-    }
-    if(inp){
-      sh.a = inp.a;
-      if(inp.th){
-        const accel=620;
-        sh.vx += Math.cos(sh.a)*accel*dt;
-        sh.vy += Math.sin(sh.a)*accel*dt;
-      }
-      // fire
-      if(inp.fire && (nowMs - sh.lastShot) > 230){
-        sh.lastShot = nowMs;
-        const spd=760;
-        s.bullets.push({
-          x:sh.x+Math.cos(sh.a)*22, y:sh.y+Math.sin(sh.a)*22,
-          vx:Math.cos(sh.a)*spd+sh.vx, vy:Math.sin(sh.a)*spd+sh.vy,
-          life:1.5, owner:pid, dmg:12, color:sh.color,
-        });
-      }
-    }
-    // physics
-    const maxv=420; const sp=Math.hypot(sh.vx,sh.vy);
-    if(sp>maxv){ sh.vx*=maxv/sp; sh.vy*=maxv/sp; }
-    sh.vx*=0.992; sh.vy*=0.992;
-    sh.x+=sh.vx*dt; sh.y+=sh.vy*dt;
-    if(sh.x<16){sh.x=16;sh.vx=Math.abs(sh.vx)*.4;} if(sh.x>ARENA-16){sh.x=ARENA-16;sh.vx=-Math.abs(sh.vx)*.4;}
-    if(sh.y<16){sh.y=16;sh.vy=Math.abs(sh.vy)*.4;} if(sh.y>ARENA-16){sh.y=ARENA-16;sh.vy=-Math.abs(sh.vy)*.4;}
-    if(sh.hp<100) sh.hp=Math.min(100, sh.hp+3*dt);
-  }
-  // advance bullets + collisions (authoritative)
-  for(let i=s.bullets.length-1;i>=0;i--){
-    const b=s.bullets[i];
-    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
-    if(b.life<=0 || b.x<0||b.y<0||b.x>ARENA||b.y>ARENA){ s.bullets.splice(i,1); continue; }
-    let hit=false;
-    for(const pid in s.ships){
-      if(pid===b.owner) continue;
-      const sh=s.ships[pid]; if(!sh.alive) continue;
-      if((b.x-sh.x)**2+(b.y-sh.y)**2 < 18*18){
-        sh.hp -= b.dmg;
-        if(sh.hp<=0){
-          sh.alive=false; sh.hp=0; sh.deadUntil=nowMs+2600;
-          const k=s.ships[b.owner]; if(k){ k.score+=1; }
-        }
-        hit=true; break;
-      }
-    }
-    if(hit){ s.bullets.splice(i,1); }
-  }
-  // cap bullets for frame size
-  if(s.bullets.length>240) s.bullets.splice(0, s.bullets.length-240);
-  return s;
-}
 
 /* ============================================================================
    RENDER — every client renders the authoritative state it last received.
@@ -878,6 +567,27 @@ function draw(){
 
   if(!s){ return; }
 
+  // rift drones — the shared cooperative enemy. Pulsing hostile diamonds.
+  if(s.drones){
+    const pulse = 0.6 + 0.4*Math.sin(Date.now()/180);
+    for(const d of s.drones){
+      const v=w2v(d.x,d.y);
+      if(v.x<-30||v.x>W+30||v.y<-30||v.y>H+30) continue;
+      const r = 11*VIEW+3;
+      ctx.save();
+      ctx.translate(v.x,v.y); ctx.rotate(Date.now()/600);
+      ctx.beginPath();
+      ctx.moveTo(0,-r); ctx.lineTo(r,0); ctx.lineTo(0,r); ctx.lineTo(-r,0); ctx.closePath();
+      ctx.fillStyle="rgba(255,93,114,"+(0.45+0.3*pulse)+")";
+      ctx.fill();
+      ctx.lineWidth=1.6; ctx.strokeStyle="rgba(255,150,165,.9)"; ctx.stroke();
+      // hp pip
+      ctx.beginPath(); ctx.arc(0,0,r*0.32,0,TAU); ctx.fillStyle="rgba(255,255,255,.85)"; ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha=1;
+  }
+
   // bullets
   for(const b of s.bullets){
     const v=w2v(b.x,b.y);
@@ -885,6 +595,17 @@ function draw(){
     ctx.beginPath(); ctx.arc(v.x,v.y,2.6*VIEW+1.4,0,TAU); ctx.fill();
   }
   ctx.globalAlpha=1;
+
+  // the rift core at arena centre (where waves emerge)
+  {
+    const c=w2v(ARENA/2,ARENA/2);
+    const rr=(26+6*Math.sin(Date.now()/400))*VIEW;
+    const g=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,rr*2.4);
+    g.addColorStop(0,"rgba(199,139,255,.5)"); g.addColorStop(1,"rgba(199,139,255,0)");
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(c.x,c.y,rr*2.4,0,TAU); ctx.fill();
+    ctx.strokeStyle="rgba(199,139,255,.6)"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(c.x,c.y,rr,0,TAU); ctx.stroke();
+  }
 
   // ships
   for(const pid in s.ships){
@@ -929,19 +650,40 @@ const onlineEl=document.getElementById("hud-online");
 const boardEl=document.getElementById("board-list");
 const tickEl=document.getElementById("tickline");
 const feedEl=document.getElementById("feed");
+const mWavesEl=document.getElementById("m-waves");
+const mShardsEl=document.getElementById("m-shards");
+const mRoomsEl=document.getElementById("m-rooms");
+const mPilotsEl=document.getElementById("m-pilots");
+const mNoteEl=document.getElementById("m-note");
 
 function refreshHud(meta, s){
   if(meta){
     const short = meta.hostShort || "—";
-    const isMe = meta.isHost;
-    const rtt = isMe ? 0 : meta.rttToHostMs;
-    const srv = (game && game.metrics && game.metrics().server) ? '<span class="srv">server</span>' : 'node';
-    hostLineEl.innerHTML = isMe
-      ? `logic running on <b>${esc(short)}</b> (this device, host) <span class="rtt">0ms</span>`
-      : `logic running on node <b>${esc(short)}</b> (${srv}, <span class="rtt">${rtt}ms</span>)`;
-    hostDotEl.className = "dot " + (isMe ? "me" : "on");
+    const rtt = meta.rttToHostMs|0;
+    const wave = (s && s.wave) ? s.wave : 0;
+    // The authoritative host is the `game-coop` backend named in each snapshot.
+    hostLineEl.innerHTML = `logic on node <b>${esc(short)}</b> (<span class="srv">server</span>, <span class="rtt">${rtt}ms</span>)` + (wave?` · <span class="wavetag">wave ${wave}</span>`:"");
+    hostDotEl.className = "dot on";
     onlineEl.textContent = meta.online;
-    tickEl.innerHTML = `<b>tick</b> ${meta.tick||0} · <b>host</b> ${esc(short)} · <b>seq</b> ${(game&&game.metrics?game.metrics().seq:0)||0}`;
+    tickEl.innerHTML = `<b>tick</b> ${meta.tick||0} · <b>host</b> ${esc(short)} · <b>seq</b> ${meta.seq||0}`;
+    // Shared cross-room mission (CRDT). Prefer the converged mesh-wide objective; fall back to this
+    // room's own counters when no mission has been folded yet (degraded / single-room).
+    const m = meta.mission;
+    if(m){
+      mWavesEl.textContent = m.total_waves|0;
+      mShardsEl.textContent = m.shard_pool|0;
+      const rooms = m.rooms ? Object.keys(m.rooms).length : 0;
+      mRoomsEl.textContent = rooms;
+      let pilots = 0; if(m.rooms) for(const k in m.rooms) pilots += (m.rooms[k].pilots|0);
+      mPilotsEl.textContent = pilots;
+      mNoteEl.textContent = rooms>1 ? `converged across ${rooms} rooms on the mesh` : "leaderless CRDT · no central server";
+    } else if(s){
+      mWavesEl.textContent = s.wavesCleared|0;
+      mShardsEl.textContent = s.shardsBanked|0;
+      mRoomsEl.textContent = 1;
+      mPilotsEl.textContent = s.ships ? Object.keys(s.ships).length : 0;
+      mNoteEl.textContent = "this room (mission folding…)";
+    }
   }
   // leaderboard from authoritative state
   if(s && s.ships){
@@ -957,44 +699,47 @@ function refreshHud(meta, s){
 }
 function onHostChanged(meta){
   const t=document.createElement("div"); t.className="toast";
-  const who = meta.isHost ? "this device" : ("node "+esc(meta.hostShort||"—"));
-  t.innerHTML = `<b>host migrated</b> <span class="vs">&rarr;</span> ${who}`;
+  const who = "node "+esc(meta.hostShort||"—");
+  t.innerHTML = `<b>authoritative host</b> <span class="vs">&rarr;</span> ${who}`;
   feedEl.appendChild(t);
   setTimeout(()=>{ t.style.transition="opacity .4s,transform .4s"; t.style.opacity="0"; t.style.transform="translateY(-8px)"; setTimeout(()=>t.remove(),420); }, 3000);
   while(feedEl.children.length>3) feedEl.removeChild(feedEl.firstChild);
 }
 
 /* ============================================================================
-   GAME WIRING — input() drives the host; onState() drives the screen.
+   GAME WIRING — input() publishes to the host; onState() renders snapshots.
+   The authoritative simulation runs in the `game-coop` Rust backend on the mesh.
    ============================================================================ */
 let game = null;
 let playing = false;
 
 function startGame(){
-  game = createGame({
-    app: APP, room: ROOM, id: ID, hz: HZ,
-    init: initState,
-    tick: tickSim,
+  if(game){ try{ game.leave(); }catch(_){} }
+  game = createMeshGame({
+    room: ROOM, id: ID, hz: HZ,
     input: ()=> playing ? buildInput() : null,
     onState: onStateFromHost,
     onHostChange: onHostChanged,
-    snapshotEvery: 40,
-    canHost: true,
+    onStatus: (ok, text)=>{
+      const dot=document.getElementById("ol-dot"), txt=document.getElementById("ol-text");
+      if(dot) dot.className = "dot" + (ok ? " on" : "");
+      if(txt) txt.textContent = text;
+      if(!ok && playing){ hostDotEl.className = "dot"; hostLineEl.textContent = text; }
+    },
   });
 }
 
-/* ---- force-failover button: drop local candidacy, re-elect elsewhere ---- */
+/* ---- reconnect button: drop our mesh session and rejoin the room ---- */
 const failBtn=document.getElementById("failBtn");
 failBtn.addEventListener("click",()=>{
   if(!game) return;
-  game.leave();               // drop candidacy (and step down if hosting)
   failBtn.classList.add("cool");
   const t=document.createElement("div"); t.className="toast";
-  t.innerHTML=`<b>dropped candidacy</b> <span class="vs">·</span> migrating…`;
+  t.innerHTML=`<b>reconnecting</b> <span class="vs">·</span> rejoining room…`;
   feedEl.appendChild(t);
   setTimeout(()=>{ t.style.opacity="0"; setTimeout(()=>t.remove(),420); }, 2600);
-  // re-enable candidacy shortly so we keep playing as a normal client/candidate
-  setTimeout(()=>{ if(game && game._reenable) game._reenable(); failBtn.classList.remove("cool"); }, 4000);
+  startGame();   // leave + re-subscribe + re-pump over the mesh
+  setTimeout(()=>{ failBtn.classList.remove("cool"); }, 2500);
 });
 
 /* ============================================================================
@@ -1031,15 +776,24 @@ copyBtn.addEventListener("click",async()=>{
     setTimeout(()=>{ copyBtn.textContent="Copy link"; copyBtn.classList.remove("done"); },1500); }catch(_){}
 });
 
-/* connection indicator on the overlay — light up once a socket can reach the hub */
-(function probe(){
+/* Connection indicator on the overlay — probe the same-origin local CE node.
+   STRICT SAME-ORIGIN: window.__ceNode bridge if present, else the "/ce" proxy.
+   Never contacts a remote origin. */
+(async function probe(){
   const dot=document.getElementById("ol-dot"), txt=document.getElementById("ol-text");
   try{
-    const url=(location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+APP+"/"+ROOM;
-    const w=new WebSocket(url);
-    w.onopen=()=>{ dot.classList.add("on"); txt.textContent="connected to the mesh — ready"; try{w.close();}catch(_){} };
-    w.onerror=()=>{ txt.textContent="offline — serve via the CE hub to play"; };
-  }catch(_){ txt.textContent="offline — serve via the CE hub to play"; }
+    const node = (typeof window!=="undefined") ? window.__ceNode : null;
+    let ok=false;
+    if(node && typeof node.request==="function"){
+      const r=await node.request({ method:"GET", path:"/health", headers:{}, signal:(new AbortController()).signal });
+      ok = r && (r.status===200 || r.status===204 || r.status===0 && r.json!=null);
+    } else {
+      const r=await fetch("/ce/health", { cache:"no-store" });
+      ok = r.ok;
+    }
+    if(ok){ dot.classList.add("on"); txt.textContent="connected to the mesh — ready"; }
+    else { txt.textContent="local CE node unreachable — start `ce start`"; }
+  }catch(_){ txt.textContent="local CE node unreachable — start `ce start`"; }
 })();
 </script>
 </body>

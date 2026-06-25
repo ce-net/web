@@ -6,27 +6,34 @@
 // no build step. The sim/ and client/ wasm modules are produced by other owners;
 // this file is the JS that wires them to the hub.
 //
-// ARCHITECTURE
+// ARCHITECTURE  (MESH-NATIVE: drift's own data + state plane talk ONLY to the local
+// node — the window.__ceNode bridge or a same-origin "/ce" reverse proxy — via the
+// inlined mesh client createMeshClient above. No ce-net.com/db, no wss /rt for any
+// data drift owns.)
 // ------------
 // netgame.js is the CONTROL PLANE: deterministic, coordinator-free host election
 // over a per-region control room (text frames only — candidacy, host-change,
 // liveness). We DO NOT push the high-rate authoritative state through netgame's
 // JSON {t:"st"} channel; instead the elected host streams authoritative binary
-// StateFrames over a SEPARATE, EPHEMERAL /rt room (?ephemeral=1) as
-// Message::Binary, with a base64 {t:"st2"} text fallback when binary is
-// unavailable. This keeps the durable election/snapshot logic intact while the
+// StateFrames over a SEPARATE mesh room (base64-wrapped over mesh pub/sub via the
+// mesh client's roomRaw). This keeps the election/snapshot logic intact while the
 // state path stays compact and full-rate.
 //
-//   control room :  rt/drift/r:<gx>:<gy>            (netgame; text; election)
-//   state room   :  rt/drift/r:<gx>:<gy>::st?ephemeral=1  (binary StateFrames)
+//   control room :  ce-app/drift/.../r:<gx>:<gy>          (netgame; election)
+//   state room   :  ce-app/drift/raw/r:<gx>:<gy>::st      (binary StateFrames, mesh)
+//
+// NOTE on the control plane: netgame.js (a SEPARATE, out-of-scope file) still drives
+// its election/liveness frames over its own transport; drift passes it a SAME-ORIGIN
+// base so it never reaches a remote origin. Migrating netgame's transport onto the
+// mesh client is a follow-up tracked outside this file.
 //
 // Per-client AREA OF INTEREST: each client advertises its view center+radius on
 // the control room ({t:"aoi"}); the host streams each client a StateFrame built
 // from snapshot_aoi() around that client's center, so bandwidth scales with what
 // a player can see, not the whole world.
 //
-// SNAPSHOT / FAILOVER: the host writes a full binary snapshot to
-// /db/drift/snap:r:<gx>:<gy> every snapshotEvery ticks (CAS-guarded by a term).
+// SNAPSHOT / FAILOVER: the host writes a full binary snapshot to the mesh db key
+// snap:r:<gx>:<gy> every snapshotEvery ticks (term-ordered).
 // On host death, netgame re-elects; the new host restore()s the world from that
 // /db snapshot, so play continues with at most snapshotEvery/hz seconds of loss.
 //
@@ -64,15 +71,6 @@ function resolveBase(opts) {
     /* non-browser */
   }
   return "";
-}
-
-function httpToWs(base) {
-  if (base.startsWith("https:")) return "wss:" + base.slice("https:".length);
-  if (base.startsWith("http:")) return "ws:" + base.slice("http:".length);
-  if (typeof location !== "undefined") {
-    return (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host;
-  }
-  return base;
 }
 
 function pickWebSocket(opts) {
@@ -118,6 +116,106 @@ function toBytes(data) {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (data && ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   return null;
+}
+
+// =====================================================================================
+// MESH CLIENT — same-origin only (window.__ceNode bridge, else "/ce" reverse proxy).
+// This is the mesh-native @ce/client (web/ce-app/client/index.js) inlined for drift:
+//   db        — per-app LWW gossipsub map + blob snapshots (snapshot/handoff/directory)
+//   room      — JSON mesh pub/sub
+//   roomRaw   — mesh pub/sub carrying base64-wrapped BINARY StateFrames (drift's st2 path)
+// Drift never opens wss://.../rt or fetches /db directly anymore; everything rides the
+// node's /mesh/* + /blobs over a same-origin transport. NO ce-net.com/db, /rt, wss.
+// =====================================================================================
+function createMeshClient(opts) {
+  opts = opts || {};
+  const BRIDGE_BASE = "http://ce-browser-node.local";
+  function bridge() { try { const b = globalThis.__ceNode; return (b && typeof b.request === "function") ? b : null; } catch (_) { return null; } }
+  // Browser: the in-process bridge, else the same-origin "/ce" proxy. Node hosts
+  // (host.mjs) have no bridge and no same-origin "/ce" — they pass an explicit node
+  // base via opts.ce (or opts.base) so the headless host reaches its co-located node.
+  function node() { const b = bridge(); if (b) return bridgeT(b); return proxyT(opts.ce || opts.base || "/ce"); }
+  function bridgeT(b) {
+    async function request(m, p, init) { const h = (init && init.headers) || {}, body = init && init.body; return normB(await b.request(m, p, { headers: h, body })); }
+    function stream(p, onData, onErr) {
+      if (typeof b.stream === "function") { const c = new AbortController(); (async () => { try { for await (const d of b.stream(p, c.signal)) { if (c.signal.aborted) return; if (d) onData(strip(d)); } } catch (e) { if (!c.signal.aborted && onErr) onErr(e); } })(); return () => c.abort(); }
+      return sse((pp, init) => request("GET", pp, init).then(brToResp), p, onData, onErr);
+    }
+    return { request, stream, base: BRIDGE_BASE };
+  }
+  function proxyT(prefix) {
+    const root = String(prefix).replace(/\/+$/, "");
+    async function request(m, p, init) {
+      const h = Object.assign({}, (init && init.headers) || {}), body = init && init.body;
+      if (body != null && !h["content-type"] && !h["Content-Type"]) h["content-type"] = "application/json";
+      const doFetch = opts.fetch || (typeof fetch !== "undefined" ? fetch.bind(globalThis) : null);
+      if (!doFetch) throw new Error("drift mesh: no fetch available");
+      const res = await doFetch(root + p, { method: m, headers: h, body });
+      const ct = (res.headers && res.headers.get && res.headers.get("content-type")) || "", out = { status: res.status };
+      if (ct.indexOf("application/json") >= 0) out.json = res.status === 204 ? null : await res.json().catch(() => null);
+      else if (ct.indexOf("octet-stream") >= 0) out.bytes = new Uint8Array(await res.arrayBuffer());
+      else out.text = await res.text();
+      return out;
+    }
+    function stream(p, onData, onErr) {
+      const doFetch = opts.fetch || (typeof fetch !== "undefined" ? fetch.bind(globalThis) : null);
+      return sse((pp, init) => doFetch(root + pp, { method: "GET", headers: Object.assign({ Accept: "text/event-stream" }, init && init.headers), signal: init && init.signal }), p, onData, onErr);
+    }
+    return { request, stream, base: root };
+  }
+  function normB(res) { if (!res || typeof res !== "object") return { status: 502, json: null }; if ("body" in res && !("json" in res) && !("text" in res) && !("bytes" in res)) { const st = res.status == null ? 200 : res.status, b = res.body; if (b instanceof Uint8Array) return { status: st, bytes: b }; if (typeof b === "string") { try { return { status: st, json: JSON.parse(b) }; } catch (_) { return { status: st, text: b }; } } return { status: st, json: b == null ? null : b }; } return res; }
+  function brToResp(o) { if (o.bytes !== undefined) return new Response(o.bytes, { status: o.status, headers: { "content-type": "application/octet-stream" } }); if (o.text !== undefined) return new Response(o.text, { status: o.status, headers: { "content-type": "text/event-stream" } }); return new Response(JSON.stringify(o.json == null ? null : o.json), { status: o.status, headers: { "content-type": "application/json" } }); }
+  function strip(s) { return s.indexOf("data:") === 0 ? s.replace(/^data:\s?/, "").replace(/\n\n$/, "") : s; }
+  function sse(doFetch, path, onData, onErr) { let closed = false, ctrl = null, backoff = 500; (async function loop() { while (!closed) { ctrl = new AbortController(); try { const res = await doFetch(path, { signal: ctrl.signal }); if (!res || !res.ok || !res.body) throw new Error("stream " + path + " -> " + (res && res.status)); backoff = 500; const reader = res.body.getReader(), dec = new TextDecoder(); let buf = ""; for (;;) { const r = await reader.read(); if (r.done) break; buf += dec.decode(r.value, { stream: true }); let nl; while ((nl = buf.indexOf("\n\n")) !== -1) { const frame = buf.slice(0, nl); buf = buf.slice(nl + 2); const data = frame.split("\n").filter((l) => l.indexOf("data:") === 0).map((l) => l.slice(5).replace(/^ /, "")).join("\n"); if (data) { try { onData(data); } catch (_) {} } } } } catch (e) { if (closed) return; if (onErr) try { onErr(e); } catch (_) {} } if (closed) return; await new Promise((rs) => setTimeout(rs, backoff)); backoff = Math.min(backoff * 2, 8000); } })(); return () => { closed = true; if (ctrl) try { ctrl.abort(); } catch (_) {} }; }
+  const HEXC = "0123456789abcdef";
+  function toHex(b) { let s = ""; for (let i = 0; i < b.length; i++) s += HEXC[b[i] >> 4] + HEXC[b[i] & 15]; return s; }
+  function fromHex(h) { const c = h.length % 2 ? "0" + h : h, o = new Uint8Array(c.length / 2); for (let i = 0; i < o.length; i++) o[i] = parseInt(c.substr(i * 2, 2), 16); return o; }
+  const EN = new TextEncoder(), DE = new TextDecoder();
+  function encJson(o) { return toHex(EN.encode(JSON.stringify(o))); }
+  function decJson(h) { try { return JSON.parse(DE.decode(fromHex(h))); } catch (_) { return undefined; } }
+  const appId = String(opts.app || "drift");
+  const nd = node();
+  const byTopic = new Map(); let closeStream = null, refc = 0;
+  function ensureStream() { if (closeStream) return; closeStream = nd.stream("/mesh/messages/stream", (data) => { let msg; try { msg = JSON.parse(data); } catch (_) { return; } const set = byTopic.get(msg.topic); if (!set) return; set.forEach((fn) => { try { fn(msg); } catch (_) {} }); }, () => {}); }
+  function on(topic, fn) { let set = byTopic.get(topic); if (!set) byTopic.set(topic, set = new Set()); set.add(fn); refc++; ensureStream(); return () => { set.delete(fn); if (set.size === 0) byTopic.delete(topic); if (--refc <= 0 && closeStream) { closeStream(); closeStream = null; refc = 0; } }; }
+  function subscribe(topic) { return nd.request("POST", "/mesh/subscribe", { headers: { "content-type": "application/json" }, body: JSON.stringify({ topic }) }); }
+  function publish(topic, obj) { return nd.request("POST", "/mesh/publish", { headers: { "content-type": "application/json" }, body: JSON.stringify({ topic, payload_hex: encJson(obj) }) }); }
+  const writerId = (function () { try { if (globalThis.crypto && globalThis.crypto.getRandomValues) { const b = new Uint8Array(8); globalThis.crypto.getRandomValues(b); return toHex(b); } } catch (_) {} return (Date.now().toString(16) + Math.random().toString(16).slice(2)).slice(0, 16); })();
+  const dbTopic = "ce-coord/app/" + appId + "/db", dbSnapT = dbTopic + "/snapshot";
+  const state = new Map(); let lamport = 0, dbReady = null;
+  function newer(a, b) { if (a.l !== b.l) return a.l > b.l; return a.w > b.w; }
+  function applyOp(op) { if (!op || typeof op.key !== "string" || !op.clock) return false; lamport = Math.max(lamport, op.clock.l); const cur = state.get(op.key); if (cur && !newer(op.clock, cur.clock)) return false; state.set(op.key, { value: op.deleted ? undefined : op.value, deleted: !!op.deleted, clock: op.clock, at: op.at || 0 }); return true; }
+  subscribe(dbTopic).catch(() => {}); subscribe(dbSnapT).catch(() => {});
+  on(dbTopic, (msg) => { const op = decJson(msg.payload_hex || ""); if (op) applyOp(op); });
+  on(dbSnapT, async (msg) => { const m = decJson(msg.payload_hex || ""); if (!m) return; if (m.kind === "request") { const cid = await putSnap().catch(() => null); if (cid) await publish(dbSnapT, { kind: "offer", cid, at: Date.now() }); } else if (m.kind === "offer" && m.cid) { await loadSnap(m.cid).catch(() => {}); } });
+  async function putSnap() { const entries = []; state.forEach((e, k) => entries.push([k, e])); const bytes = EN.encode(JSON.stringify({ v: 1, lamport, entries })); const res = await nd.request("POST", "/blobs", { headers: { "content-type": "application/octet-stream" }, body: bytes }); if (res.json && res.json.hash) return res.json.hash; if (res.text) { try { return JSON.parse(res.text).hash; } catch (_) {} } return null; }
+  async function loadSnap(cid) { const res = await nd.request("GET", "/blobs/" + encodeURIComponent(cid), {}); let snap; if (res.bytes) snap = JSON.parse(DE.decode(res.bytes)); else if (res.text) snap = JSON.parse(res.text); else if (res.json) snap = res.json; if (!snap || !Array.isArray(snap.entries)) return; snap.entries.forEach((p) => applyOp({ key: p[0], value: p[1].value, deleted: p[1].deleted, clock: p[1].clock, at: p[1].at })); }
+  function ensureReady() { if (dbReady) return dbReady; dbReady = (async () => { await publish(dbSnapT, { kind: "request", at: Date.now() }).catch(() => {}); await new Promise((r) => setTimeout(r, 300)); })(); return dbReady; }
+  function nextClock() { lamport += 1; return { l: lamport, w: writerId }; }
+  const db = {
+    async get(key) { await ensureReady(); const e = state.get(String(key)); if (!e || e.deleted) return undefined; return e.value; },
+    async set(key, val) { const k = String(key), op = { key: k, value: val == null ? null : val, deleted: false, clock: nextClock(), at: Date.now() }; applyOp(op); await publish(dbTopic, op); return { ok: true, key: k }; },
+    async del(key) { const k = String(key), op = { key: k, deleted: true, clock: nextClock(), at: Date.now() }; applyOp(op); await publish(dbTopic, op); return { ok: true }; },
+    async list(prefix, limit) { await ensureReady(); const pre = prefix == null ? "" : String(prefix), items = []; state.forEach((e, key) => { if (e.deleted) return; if (pre && key.indexOf(pre) !== 0) return; items.push({ key, value: e.value, at: e.at || 0 }); }); items.sort((a, b) => b.at - a.at || (a.key < b.key ? 1 : -1)); const out = items.map((it) => ({ key: it.key, value: it.value })); return limit != null ? out.slice(0, Number(limit)) : out; },
+  };
+  // JSON room (drift uses these only for the optional onState summary path).
+  function room(name) {
+    const topic = "ce-app/" + appId + "/room/" + name; let opened = false, closed = false; const msgH = new Set(), openH = new Set(); let offInbox = null;
+    function markOpen() { if (opened || closed) return; opened = true; openH.forEach((fn) => { try { fn(); } catch (_) {} }); }
+    subscribe(topic).then(markOpen, markOpen);
+    offInbox = on(topic, (msg) => { const pl = decJson(msg.payload_hex || ""); msgH.forEach((fn) => { try { fn(pl, msg); } catch (_) {} }); });
+    return { send: (o) => publish(topic, o).catch(() => {}), on: (fn) => { msgH.add(fn); return () => msgH.delete(fn); }, onOpen: (fn) => { openH.add(fn); if (opened) try { fn(); } catch (_) {} ; return () => openH.delete(fn); }, close: () => { closed = true; if (offInbox) offInbox(); } };
+  }
+  // Binary room: drift's authoritative StateFrames. Bytes ride a JSON frame {b:<base64>}
+  // on a dedicated mesh topic. on(cb) yields Uint8Array; send(bytes) publishes one frame.
+  function roomRaw(name) {
+    const topic = "ce-app/" + appId + "/raw/" + name; let opened = false, closed = false; const msgH = new Set(), openH = new Set(); let offInbox = null;
+    function markOpen() { if (opened || closed) return; opened = true; openH.forEach((fn) => { try { fn(); } catch (_) {} }); }
+    subscribe(topic).then(markOpen, markOpen);
+    offInbox = on(topic, (msg) => { const m = decJson(msg.payload_hex || ""); if (!m || typeof m.b !== "string") return; let bytes; try { bytes = b64ToBytes(m.b); } catch (_) { return; } msgH.forEach((fn) => { try { fn(bytes, msg); } catch (_) {} }); });
+    return { send: (bytes) => publish(topic, { b: bytesToB64(bytes) }).catch(() => {}), on: (fn) => { msgH.add(fn); return () => msgH.delete(fn); }, onOpen: (fn) => { openH.add(fn); if (opened) try { fn(); } catch (_) {} ; return () => openH.delete(fn); }, close: () => { closed = true; if (offInbox) offInbox(); } };
+  }
+  return { appId, db, room, roomRaw };
 }
 
 // ---- region grid ---------------------------------------------------------------------
@@ -181,6 +279,9 @@ export function createDriftRuntime(opts = {}) {
   const base = resolveBase(opts);
   const WS = pickWebSocket(opts);
   const doFetch = pickFetch(opts);
+  // Mesh-native client for drift's OWN data + state plane (db snapshots/directory/handoff
+  // and the binary StateFrame transport). Same-origin only; see createMeshClient above.
+  const mesh = createMeshClient({ app, ce: opts.ce, fetch: opts.fetch });
   const hz = Math.max(1, Number(opts.hz) || 30);
   const snapshotEvery = Math.max(1, Number(opts.snapshotEvery) || 60);
   const regionSize = Math.max(1, Number(opts.regionSize) || REGION_SIZE_DEFAULT);
@@ -204,9 +305,11 @@ export function createDriftRuntime(opts = {}) {
   // Per-region active session (control plane + state transport). Exactly one at a time.
   let session = null;
 
-  // Cross-region directory cache (region key -> owner host id), refreshed from /db/world/dir.
+  // Cross-region directory cache (region key -> owner host id), refreshed from the mesh db.
   const directory = new Map();
   let dirTimer = null;
+  // Per-region handoff mesh rooms (entity cross-shard transfer), opened lazily.
+  const handoffRooms = new Map();
 
   // =====================================================================================
   // session: everything tied to ONE region (control room + ephemeral state room + host)
@@ -214,25 +317,18 @@ export function createDriftRuntime(opts = {}) {
   function startSession(reg) {
     const room = regionRoom(reg.gx, reg.gy);
     const stateRoom = room + "::st";
-    const wsState =
-      httpToWs(base) +
-      "/rt/" + encodeURIComponent(app) + "/" + encodeURIComponent(stateRoom) +
-      "?ephemeral=1";
     const snapKey = "snap:" + room;
-    const snapURL = base + "/db/" + encodeURIComponent(app) + "/" + encodeURIComponent(snapKey);
 
     const s = {
       reg,
       room,
       stateRoom,
-      snapURL,
+      snapKey,
       // control plane (election) via netgame
       game: null,
-      // ephemeral binary state socket
-      stateWS: null,
+      // mesh binary state room (authoritative StateFrames; base64-wrapped over mesh pub/sub)
+      stateRoomHandle: null,
       stateConnected: false,
-      stateOutbox: [],
-      reconnectDelay: 500,
       closed: false,
       binarySupported: true,
       // hosting
@@ -301,8 +397,8 @@ export function createDriftRuntime(opts = {}) {
       },
     });
 
-    // -------- binary state transport (ephemeral room) --------
-    connectState(s, wsState);
+    // -------- binary state transport (mesh room, base64-wrapped StateFrames) --------
+    connectState(s);
 
     // -------- client cadence: advertise AoI + forward input over the CONTROL room --------
     s.aoiTimer = setInterval(() => advertiseAoi(s), Math.round(1000 / Math.min(hz, 10)));
@@ -319,68 +415,37 @@ export function createDriftRuntime(opts = {}) {
     if (s.aoiTimer) clearInterval(s.aoiTimer);
     if (s.inputTimer) clearInterval(s.inputTimer);
     try { s.game && s.game.leave(); } catch (_) {}
-    if (s.stateWS) {
-      try { s.stateWS.close(); } catch (_) {}
+    if (s.stateRoomHandle) {
+      try { s.stateRoomHandle.close(); } catch (_) {}
     }
-    s.stateWS = null;
+    s.stateRoomHandle = null;
   }
 
-  // ---- binary state socket (auto-reconnect, base64 text fallback) ----------------------
-  function connectState(s, url) {
+  // ---- binary state transport over a mesh room (base64-wrapped StateFrames) -------------
+  // The authoritative host publishes binary StateFrames; clients receive them over the
+  // node's mesh pub/sub (same-origin). Reconnection/backoff is handled inside the mesh
+  // client's SSE loop, so this is just a subscribe + sink.
+  function connectState(s) {
     if (s.closed) return;
-    let sock;
+    let handle;
     try {
-      sock = new WS(url);
+      handle = mesh.roomRaw(s.stateRoom);
     } catch (_) {
-      scheduleStateReconnect(s, url);
       return;
     }
-    try { sock.binaryType = "arraybuffer"; } catch (_) {}
-    s.stateWS = sock;
-    sock.onopen = () => {
-      if (s.stateWS !== sock) return;
-      s.stateConnected = true;
-      s.reconnectDelay = 500;
-      for (const m of s.stateOutbox.splice(0)) trySend(sock, m);
-    };
-    sock.onmessage = (ev) => {
-      try {
-        handleStateFrame(s, ev.data);
-      } catch (_) {
-        /* never crash on a bad frame */
-      }
-    };
-    sock.onerror = () => {
-      try { sock.close(); } catch (_) {}
-    };
-    sock.onclose = () => {
-      if (s.stateWS === sock) {
-        s.stateConnected = false;
-        s.stateWS = null;
-      }
-      scheduleStateReconnect(s, url);
-    };
-  }
-
-  function scheduleStateReconnect(s, url) {
-    if (s.closed) return;
-    const d = s.reconnectDelay;
-    s.reconnectDelay = Math.min(8000, Math.round(s.reconnectDelay * 1.7) + 50);
-    setTimeout(() => connectState(s, url), d);
-  }
-
-  function trySend(sock, data) {
-    try {
-      if (sock && sock.readyState === 1) {
-        sock.send(data);
-        return true;
-      }
-    } catch (_) {}
-    return false;
+    s.stateRoomHandle = handle;
+    handle.onOpen(() => { if (s.stateRoomHandle === handle) s.stateConnected = true; });
+    handle.on((bytes) => {
+      try { handleStateFrame(s, bytes); } catch (_) { /* never crash on a bad frame */ }
+    });
   }
 
   function sendState(s, data) {
-    if (!trySend(s.stateWS, data)) s.stateOutbox.push(data);
+    // `data` is a Uint8Array StateFrame (binary). The mesh room base64-wraps it.
+    const bytes = toBytes(data);
+    if (s.stateRoomHandle && bytes) {
+      try { s.stateRoomHandle.send(bytes); } catch (_) {}
+    }
   }
 
   // A binary StateFrame is: [1-byte tag][bincode Snapshot/Delta...] where the high
@@ -475,6 +540,8 @@ export function createDriftRuntime(opts = {}) {
   // HOSTING — only the elected host runs the wasm sim and streams StateFrames.
   // =====================================================================================
   async function beginHosting(s) {
+    // Subscribe to this region's mesh handoff room so inbound cross-shard entities arrive.
+    ensureHandoffInbox(s);
     // Acquire a wasm host: either the supplied object, or a factory/promise.
     let h = hostFactory;
     if (typeof h === "function") {
@@ -523,6 +590,7 @@ export function createDriftRuntime(opts = {}) {
       clearInterval(s.tickTimer);
       s.tickTimer = null;
     }
+    if (s._handoffOff) { try { s._handoffOff(); } catch (_) {} s._handoffOff = null; }
     if (s.wasmHost && s.wasmHost.free && s.worldHandle) {
       try { s.wasmHost.free(s.worldHandle); } catch (_) {}
     }
@@ -612,12 +680,9 @@ export function createDriftRuntime(opts = {}) {
 
   function emitStateFrame(s, kind, tick, target, payload) {
     const frame = packStateFrame(kind, tick, target, payload);
-    if (s.binarySupported && s.stateWS && s.stateWS.readyState === 1) {
-      sendState(s, frame);
-    } else {
-      // base64 {t:"st2"} fallback over the same (text-capable) ephemeral room.
-      sendState(s, JSON.stringify({ t: "st2", b: bytesToB64(frame) }));
-    }
+    // The mesh state room always carries binary StateFrames (base64-wrapped inside the
+    // mesh client). One path, no text fallback needed.
+    sendState(s, frame);
   }
 
   function aoiSnapshot(s, x, y, r) {
@@ -638,23 +703,20 @@ export function createDriftRuntime(opts = {}) {
     }
   }
 
-  // ---- /db snapshot (CAS via If-Match term) --------------------------------------------
+  // ---- mesh-db snapshot (term-ordered) -------------------------------------------------
+  // The world snapshot is one LWW key (snap:<room>) in the app's mesh map. It carries a
+  // monotonic `term`; a host only overwrites when its next term beats the stored one, so
+  // two hosts racing after a partition converge on the highest term (the mesh map's own
+  // last-writer-wins clock breaks any exact tie).
   async function loadSnapshot(s) {
     try {
-      const res = await doFetch(s.snapURL);
-      if (!res || res.status === 404 || !res.ok) return null;
-      const ct = (res.headers && res.headers.get && res.headers.get("content-type")) || "";
-      if (ct.includes("application/json")) {
-        const j = await res.json();
-        return {
-          tick: Number(j.tick) || 0,
-          term: Number(j.term) || 0,
-          bytes: j.b ? b64ToBytes(j.b) : null,
-        };
-      }
-      // raw binary body: {tick,term} are carried in headers if present, else 0.
-      const buf = new Uint8Array(await res.arrayBuffer());
-      return { tick: 0, term: 0, bytes: buf };
+      const j = await mesh.db.get(s.snapKey);
+      if (!j || typeof j !== "object") return null;
+      return {
+        tick: Number(j.tick) || 0,
+        term: Number(j.term) || 0,
+        bytes: j.b ? b64ToBytes(j.b) : null,
+      };
     } catch (_) {
       return null;
     }
@@ -663,32 +725,14 @@ export function createDriftRuntime(opts = {}) {
   async function writeSnapshot(s) {
     const payload = fullSnapshot(s);
     if (!payload) return;
-    const nextTerm = (s.snapTerm || 0) + 1;
-    const body = JSON.stringify({
-      tick: s.tick,
-      term: nextTerm,
-      host: id,
-      ts: now(),
-      b: bytesToB64(payload),
-    });
     try {
-      const res = await doFetch(s.snapURL, {
-        method: "PUT",
-        headers: {
-          "content-type": "application/json",
-          // CAS: only overwrite if the stored term still matches what we last saw,
-          // so two hosts racing after a partition cannot clobber each other.
-          "If-Match": String(s.snapTerm || 0),
-        },
-        body,
-      });
-      if (res && res.status === 409) {
-        // Lost the race: reload to learn the winning term, do not advance ours.
-        const snap = await loadSnapshot(s);
-        if (snap) s.snapTerm = snap.term || s.snapTerm;
-        return;
-      }
-      if (res && res.ok) s.snapTerm = nextTerm;
+      // Term-CAS: re-read the stored term; only advance if ours would still be ahead.
+      const cur = await loadSnapshot(s);
+      const storedTerm = cur ? (cur.term || 0) : 0;
+      if (storedTerm > (s.snapTerm || 0)) { s.snapTerm = storedTerm; return; }
+      const nextTerm = storedTerm + 1;
+      await mesh.db.set(s.snapKey, { tick: s.tick, term: nextTerm, host: id, ts: now(), b: bytesToB64(payload) });
+      s.snapTerm = nextTerm;
     } catch (_) {
       /* snapshot failure is non-fatal; next tick retries */
     }
@@ -722,68 +766,32 @@ export function createDriftRuntime(opts = {}) {
     }
   }
 
-  // Forward a handoff to the destination region's CONTROL room. We open a brief
-  // control-room connection scoped to the neighbour via a transient netgame-less WS,
-  // since the destination host listens on its own control room. To stay protocol-pure
-  // (no extra socket churn) we instead route through /db/world/handoff/<region> as a
-  // durable mailbox the destination host drains — idempotent and partition-tolerant.
+  // Forward a handoff to the destination region over a mesh handoff ROOM. The destination
+  // host subscribes to "handoff:<region>" (see ensureHandoffInbox) and applies frames
+  // idempotently by xferId, so mesh pub/sub (at-least-once, may dedupe) is exactly right
+  // here — a double-delivery is harmless. No /db RMW mailbox, no cross-origin fetch.
+  function handoffRoom(reg) {
+    const key = "handoff:" + regionRoom(reg.gx, reg.gy);
+    let r = handoffRooms.get(key);
+    if (!r) { r = mesh.room(key); handoffRooms.set(key, r); }
+    return r;
+  }
   function forwardHandoff(dst, msg) {
-    const key = "handoff:" + regionRoom(dst.gx, dst.gy);
-    const url = base + "/db/" + encodeURIComponent(app) + "/" + encodeURIComponent(key);
-    // Append-style: read-modify-write the small mailbox list (best-effort, idempotent
-    // by xferId so a double-append is harmless).
-    void (async () => {
-      try {
-        const cur = await doFetch(url);
-        let arr = [];
-        if (cur && cur.ok) {
-          const j = await cur.json().catch(() => null);
-          if (j && Array.isArray(j.q)) arr = j.q;
-        }
-        if (!arr.find((m) => m.xferId === msg.xferId)) arr.push(msg);
-        // keep the mailbox bounded
-        if (arr.length > 256) arr = arr.slice(arr.length - 256);
-        await doFetch(url, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ q: arr, ts: now() }),
-        });
-      } catch (_) {
-        /* mailbox best-effort */
-      }
-    })();
+    try { handoffRoom(dst).send(Object.assign({ k: "xfer" }, msg, { ts: now() })); } catch (_) {}
   }
 
-  // Drain the inbound handoff mailbox for THIS region while hosting.
-  async function drainHandoffMailbox(s) {
-    const key = "handoff:" + regionRoom(s.reg.gx, s.reg.gy);
-    const url = base + "/db/" + encodeURIComponent(app) + "/" + encodeURIComponent(key);
-    try {
-      const res = await doFetch(url);
-      if (!res || !res.ok) return;
-      const j = await res.json().catch(() => null);
-      if (!j || !Array.isArray(j.q) || j.q.length === 0) return;
-      const remaining = [];
-      for (const msg of j.q) {
-        if (msg && msg.xferId && !s.seenXfer.has("in:" + msg.xferId)) {
-          applyHandoff(s, msg);
-          s.seenXfer.set("in:" + msg.xferId, now());
-          // ack via the source region mailbox-ack key (idempotent)
-          ackHandoff(msg);
-        } else {
-          remaining.push(msg);
-        }
+  // While hosting a region, subscribe to its handoff room and apply inbound xfers once.
+  function ensureHandoffInbox(s) {
+    if (s._handoffOff) return;
+    const r = handoffRoom(s.reg);
+    s._handoffOff = r.on((msg) => {
+      if (!s.amHost) return;
+      if (msg && msg.xferId && !s.seenXfer.has("in:" + msg.xferId)) {
+        applyHandoff(s, msg);
+        s.seenXfer.set("in:" + msg.xferId, now());
+        ackHandoff(msg);
       }
-      // Clear what we consumed (write back only the still-unprocessed tail, if any).
-      await doFetch(url, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ q: [], ts: now() }),
-      });
-      void remaining;
-    } catch (_) {
-      /* best-effort */
-    }
+    });
   }
 
   function applyHandoff(s, msg) {
@@ -795,39 +803,25 @@ export function createDriftRuntime(opts = {}) {
   }
 
   function ackHandoff(msg) {
-    // Acks are advisory (the source clears its outstanding set on its own timer).
-    // We record the ack in a tiny ack key the source can poll; harmless if ignored.
-    const key = "handoff-ack:" + (msg.from || "r:0:0");
-    const url = base + "/db/" + encodeURIComponent(app) + "/" + encodeURIComponent(key);
-    void doFetch(url, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ xferId: msg.xferId, ts: now() }),
-    }).catch(() => {});
+    // Acks are advisory (the source clears its outstanding set on its own timer). Publish
+    // a tiny ack frame on the source region's handoff room; harmless if no one listens.
+    if (!msg || !msg.from) return;
+    const m = msg.from.match(/^r:(-?\d+):(-?\d+)$/);
+    if (!m) return;
+    try { handoffRoom({ gx: Number(m[1]), gy: Number(m[2]) }).send({ k: "xack", xferId: msg.xferId, ts: now() }); } catch (_) {}
   }
 
   // =====================================================================================
-  // REGION DIRECTORY — /db/world/dir maps region -> owning host. Each host publishes its
-  // ownership; clients read it to know which shard hosts which region.
+  // REGION DIRECTORY — the mesh db maps region -> owning host. Each region's owner writes
+  // ITS OWN entry under "world:dir:<room>" (no shared-map RMW), so two hosts updating
+  // different regions never clobber each other. Clients list the "world:dir:" prefix.
   // =====================================================================================
-  const DIR_KEY = "world:dir";
-  const dirURL = base + "/db/" + encodeURIComponent(app) + "/" + encodeURIComponent(DIR_KEY);
+  const DIR_PREFIX = "world:dir:";
 
   async function publishDirectory(s, hostId) {
     if (!s.amHost) return; // only the owning host writes its own region entry
     try {
-      const res = await doFetch(dirURL);
-      let dir = {};
-      if (res && res.ok) {
-        const j = await res.json().catch(() => null);
-        if (j && j.dir && typeof j.dir === "object") dir = j.dir;
-      }
-      dir[s.room] = { host: hostId || id, ts: now() };
-      await doFetch(dirURL, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ dir, ts: now() }),
-      });
+      await mesh.db.set(DIR_PREFIX + s.room, { region: s.room, host: hostId || id, ts: now() });
     } catch (_) {
       /* directory is advisory */
     }
@@ -835,14 +829,12 @@ export function createDriftRuntime(opts = {}) {
 
   async function refreshDirectory() {
     try {
-      const res = await doFetch(dirURL);
-      if (!res || !res.ok) return;
-      const j = await res.json().catch(() => null);
-      if (!j || !j.dir) return;
+      const items = await mesh.db.list(DIR_PREFIX, 4096);
+      if (!Array.isArray(items)) return;
       directory.clear();
-      for (const k of Object.keys(j.dir)) {
-        const v = j.dir[k];
-        if (v && v.host) directory.set(k, v.host);
+      for (const it of items) {
+        const v = it && it.value;
+        if (v && v.region && v.host) directory.set(v.region, v.host);
       }
     } catch (_) {}
   }
@@ -880,10 +872,10 @@ export function createDriftRuntime(opts = {}) {
     if (r.gx !== region.gx || r.gy !== region.gy) switchRegion(r);
   }, 250);
 
-  // periodic: refresh the region directory + (if hosting) drain the handoff mailbox.
+  // periodic: refresh the region directory from the mesh db. Inbound handoffs are now
+  // event-driven over the mesh handoff room (ensureHandoffInbox), not polled.
   dirTimer = setInterval(() => {
     void refreshDirectory();
-    if (session && session.amHost) void drainHandoffMailbox(session);
   }, 1000);
 
   // boot the first session

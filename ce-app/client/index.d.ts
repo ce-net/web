@@ -1,10 +1,13 @@
-// Type definitions for @ce/client — the CE App Platform browser client.
+// Type definitions for @ce/client — the mesh-native CE App Platform browser client.
+// Backed by the local CE node (in-browser window.__ceNode bridge, or a same-origin
+// "/ce" proxy). No remote origins; works under the strict same-origin CSP.
 
 export interface CreateClientOptions {
   /** Override the resolved app id (default: parsed from /apps/<id>/, else 'demo'). */
   app?: string;
-  /** Override the http(s) origin (default: location.origin). */
-  base?: string;
+  /** Same-origin path the local node is reverse-proxied at, when no in-browser bridge
+   *  is present (default: "/ce"). */
+  ce?: string;
 }
 
 export interface DbListItem<V = unknown> {
@@ -13,35 +16,35 @@ export interface DbListItem<V = unknown> {
 }
 
 export interface Db {
-  /** GET /db/<app>/<key> -> stored JSON value, or undefined if 404. */
+  /** Converged value for key (mesh-replicated, last-writer-wins), or undefined. */
   get<V = unknown>(key: string): Promise<V | undefined>;
-  /** PUT /db/<app>/<key> with a JSON value. */
+  /** Publish a set op on "ce-coord/app/<appId>/db"; converges across all clients. */
   set<V = unknown>(key: string, val: V): Promise<{ ok: boolean; key: string }>;
-  /** DELETE /db/<app>/<key>. */
+  /** Publish a tombstone (delete) op; converges across all clients. */
   del(key: string): Promise<{ ok: boolean }>;
-  /** GET /db/<app>?prefix=&limit= -> newest-first items. */
+  /** Newest-first items from the converged map, optionally prefix/limit filtered. */
   list<V = unknown>(prefix?: string, limit?: number): Promise<DbListItem<V>[]>;
 }
 
 export interface Room {
-  /** Send a TEXT frame. Objects are JSON-stringified; strings are sent verbatim. */
+  /** Publish to the room topic. Objects are sent as JSON; strings as text. */
   send(obj: unknown | string): void;
   /** Subscribe to messages. JSON is parsed when possible; returns an unsubscribe fn. */
   on(fn: (msg: unknown) => void): () => void;
-  /** Run a callback when the socket opens (and immediately if already open). */
+  /** Run a callback once the topic subscription is live (and immediately if already). */
   onOpen(fn: () => void): () => void;
-  /** Close the socket and stop reconnecting. */
+  /** Unsubscribe and stop receiving. */
   close(): void;
 }
 
 export interface CeClient {
   /** Resolved app id. */
   appId: string;
-  /** Resolved http(s) origin. */
+  /** Resolved same-origin base (location.origin). */
   base: string;
-  /** Persistent KV namespaced per app. */
+  /** Mesh-replicated KV namespaced per app. */
   db: Db;
-  /** Open (or join) a realtime pub/sub room over websocket. */
+  /** Join a realtime mesh pub/sub room (topic "ce-app/<appId>/room/<name>"). */
   room(name: string): Room;
 }
 

@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Message Wall — a realtime guestbook on the CE mesh</title>
 <meta name="theme-color" content="#03060e" />
-<meta name="description" content="Leave a note. It appears instantly for everyone and is kept on the CE mesh — a realtime guestbook, newest first." />
+<meta name="description" content="Leave a note. It appears instantly for everyone, kept in an append-only log sharded across the CE mesh and sealed against the PoW chain — newest first." />
+<!-- Strict same-origin: the page only ever talks to its own origin (the node bridge / "/ce" proxy). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='5' y='7' width='22' height='15' rx='3' fill='none' stroke='%2337c6ff' stroke-width='2.4'/%3E%3Cpath d='M11 22l-2 4 6-4' fill='%2337c6ff'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -23,7 +25,9 @@ nav{display:flex;align-items:center;gap:10px;height:56px;border-bottom:1px solid
 nav .sp{flex:1}
 .live{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:13px;color:var(--muted)}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);position:relative}
+.dot.off{background:var(--bad)}
 .dot::after{content:"";position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 2px rgba(67,224,160,.5);animation:p 2s infinite}
+.dot.off::after{box-shadow:0 0 0 2px rgba(255,93,114,.5);animation:none}
 @keyframes p{0%{box-shadow:0 0 0 0 rgba(67,224,160,.5)}100%{box-shadow:0 0 0 10px rgba(67,224,160,0)}}
 .live b{color:var(--text);font-weight:600}
 header{padding:28px 0 4px}
@@ -31,7 +35,10 @@ header{padding:28px 0 4px}
 h1{font-family:var(--display);font-weight:600;font-size:clamp(26px,7vw,40px);letter-spacing:-.02em;line-height:1.08;margin:11px 0 0}
 h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
 .lede{color:var(--muted);margin:11px 0 0;font-size:15px}
-.composer{margin-top:20px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:14px}
+.rooms{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}
+.room{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;background:transparent}
+.room.on{color:#021018;background:var(--grad);border-color:transparent;font-weight:600}
+.composer{margin-top:18px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:14px}
 .crow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .crow .nm{flex:0 0 130px}
 input.fld,textarea.fld{width:100%;background:#060b14;color:var(--text);border:1px solid var(--line);border-radius:11px;font-family:var(--body);font-size:15px;padding:12px 13px;outline:none;resize:none}
@@ -43,12 +50,18 @@ input.fld:focus,textarea.fld:focus{border-color:rgba(55,198,255,.45)}
 .btn{font-family:var(--body);font-weight:700;font-size:15px;border:0;border-radius:11px;padding:11px 20px;cursor:pointer;color:#021018;background:var(--grad);transition:.16s}
 .btn:hover{transform:translateY(-1px)}.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
 .swatch{width:26px;height:26px;border-radius:8px;flex:none}
-.feed{margin-top:24px;display:flex;flex-direction:column;gap:11px}
+.bar{margin-top:12px;display:flex;flex-wrap:wrap;gap:10px 16px;font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+.bar b{color:var(--muted);font-weight:500}
+.bar code{color:var(--cyan)}
+.net{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--gold)}
+.net.err{color:var(--bad)}
+.feed{margin-top:22px;display:flex;flex-direction:column;gap:11px}
 .card{border:1px solid var(--line-2);border-radius:14px;background:var(--deep);padding:13px 15px;animation:in .35s cubic-bezier(.2,.8,.2,1)}
 @keyframes in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 .card .top{display:flex;align-items:center;gap:9px;margin-bottom:5px}
 .card .who{font-weight:600;font-size:14px}
 .card .av{width:18px;height:18px;border-radius:6px;flex:none}
+.card .seq{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
 .card .when{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:auto}
 .card .body{font-size:15.5px;color:var(--text);word-break:break-word;white-space:pre-wrap}
 .empty{color:var(--faint);font-size:14px;text-align:center;padding:30px 0;font-family:var(--mono)}
@@ -59,129 +72,331 @@ input.fld:focus,textarea.fld:focus{border-color:rgba(55,198,255,.45)}
   <nav>
     <div class="brand"><span class="ce">CE</span> Message Wall</div>
     <div class="sp"></div>
-    <div class="live"><span class="dot"></span><b id="liveN">1</b>&nbsp;here now</div>
+    <div class="live"><span class="dot" id="dot"></span><b id="liveN">0</b>&nbsp;here now</div>
   </nav>
   <header>
-    <div class="kick">realtime guestbook / mesh</div>
+    <div class="kick">append-only log / sharded across the mesh</div>
     <h1>Leave a <em>note</em></h1>
-    <p class="lede">Post a short message. It appears instantly for everyone and is kept on the CE mesh, newest first.</p>
+    <p class="lede">Post a short message. The room's authoritative host on the mesh assigns it a total-order sequence, mirrors it into a ce-coord replicated log, and seals the history against the PoW chain. Newest first.</p>
+    <div class="rooms" id="rooms"></div>
   </header>
 
   <div class="composer">
     <div class="crow">
       <div class="swatch" id="mySw"></div>
-      <input class="fld nm" id="name" maxlength="16" placeholder="your name" />
+      <input class="fld nm" id="name" maxlength="24" placeholder="your name" />
     </div>
-    <div class="msgbox"><textarea class="fld" id="msg" rows="2" maxlength="200" placeholder="say something nice"></textarea></div>
+    <div class="msgbox"><textarea class="fld" id="msg" rows="2" maxlength="280" placeholder="say something nice"></textarea></div>
     <div class="crow2">
-      <span class="count" id="count">0 / 200</span>
+      <span class="count" id="count">0 / 280</span>
       <div class="sp"></div>
       <span class="count" id="cool"></span>
       <button class="btn" id="post">Post</button>
     </div>
+    <div class="bar">
+      <span><b>room</b> <code id="roomN">main</code></span>
+      <span><b>host</b> <code id="hostN">electing…</code></span>
+      <span><b>posts</b> <code id="headN">0</code></span>
+      <span><b>seal</b> <code id="sealN">unsealed</code></span>
+    </div>
+    <div class="net" id="net">connecting to your local CE node…</div>
   </div>
 
-  <div class="feed" id="feed"><div class="empty" id="empty">Loading the wall...</div></div>
+  <div class="feed" id="feed"><div class="empty" id="empty">Connecting to the mesh…</div></div>
 </div>
 
-<script>
-const APP="wall", LIMIT=80, RATE_MS=6000, MAXLEN=200;
-const id=(localStorage.ce_id ||= Math.random().toString(36).slice(2,10));
-const COLORS=["#37c6ff","#43e0a0","#ffd166","#ff5d72","#7af0e6","#3b82ff","#ff9d4d","#a78bfa","#7ef0bd","#ff8fa3"];
-const myColor=COLORS[[...id].reduce((a,c)=>a+c.charCodeAt(0),0)%COLORS.length];
-function wsURL(app,room){return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room;}
-function dbURL(app,key){return location.origin+"/db/"+app+(key?"/"+encodeURIComponent(key):"");}
+<script type="module">
+const APP = "wall";
+const ROOMS = ["main", "tokyo", "berlin", "lounge"];
+const MAXLEN = 280, MAXNAME = 24;
+const RATE_MS = 6000; // mirror of DEFAULT_RATE_MS (display only; the host is authoritative)
+let room = (location.hash || "").replace(/^#/, "") || "main";
+if (!ROOMS.includes(room)) ROOMS.push(room);
 
-document.getElementById("mySw").style.background=myColor;
-const nameEl=document.getElementById("name"), msgEl=document.getElementById("msg"), countEl=document.getElementById("count"), postBtn=document.getElementById("post"), coolEl=document.getElementById("cool"), feedEl=document.getElementById("feed");
-nameEl.value=localStorage.ce_name||("guest-"+id.slice(0,3));
-nameEl.oninput=()=>localStorage.ce_name=nameEl.value;
-msgEl.oninput=()=>{ countEl.textContent=msgEl.value.length+" / "+MAXLEN; };
+/* ---------- STRICT SAME-ORIGIN node bridge (identical contract to other CE demos) ---------- */
+function connectNode() {
+  const b = (typeof window !== "undefined" && window.__ceNode) || null;
+  if (b && typeof b.request === "function") return bridgeTransport(b);
+  return proxyTransport("/ce");
+}
+function bridgeTransport(bridge) {
+  async function request(method, path, init) {
+    const headers = (init && init.headers) || {};
+    const body = init && init.body;
+    if (bridge.request.length >= 2) return normalize(await bridge.request(method, path, { headers, body }));
+    const req = { method, path, headers, signal: new AbortController().signal };
+    if (typeof body === "string" && body.length) { try { req.jsonBody = JSON.parse(body); } catch { req.jsonBody = body; } }
+    return normalize(await bridge.request(req));
+  }
+  function stream(path, onData, onError) {
+    if (typeof bridge.stream === "function") {
+      const ctrl = new AbortController();
+      (async () => {
+        try { for await (const d of bridge.stream(path, ctrl.signal)) { if (ctrl.signal.aborted) return; if (d) onData(strip(d)); } }
+        catch (e) { if (!ctrl.signal.aborted && onError) onError(e); }
+      })();
+      return () => ctrl.abort();
+    }
+    return fetchStream((p, i) => request("GET", p, i).then(resToResponse), path, onData, onError);
+  }
+  return { request, stream };
+}
+function proxyTransport(prefix) {
+  const root = String(prefix).replace(/\/+$/, "");
+  async function request(method, path, init) {
+    const headers = Object.assign({}, (init && init.headers) || {});
+    const body = init && init.body;
+    if (body != null && !headers["content-type"]) headers["content-type"] = "application/json";
+    const res = await fetch(root + path, { method, headers, body });
+    const ct = res.headers.get("content-type") || "";
+    const out = { status: res.status };
+    if (ct.includes("application/json")) out.json = res.status === 204 ? null : await res.json().catch(() => null);
+    else out.text = await res.text().catch(() => "");
+    return out;
+  }
+  function stream(path, onData, onError) {
+    return fetchStream((p, i) => fetch(root + p, { method: "GET", headers: Object.assign({ Accept: "text/event-stream" }, i && i.headers), signal: i && i.signal }), path, onData, onError);
+  }
+  return { request, stream };
+}
+function normalize(res) {
+  if (!res || typeof res !== "object") return { status: 502, json: null };
+  if ("body" in res && !("json" in res) && !("text" in res)) {
+    const status = res.status ?? 200, body = res.body;
+    if (typeof body === "string") { try { return { status, json: JSON.parse(body) }; } catch { return { status, text: body }; } }
+    return { status, json: body ?? null };
+  }
+  return res;
+}
+function resToResponse(out) {
+  if (out.text !== undefined) return new Response(out.text, { status: out.status, headers: { "content-type": "text/event-stream" } });
+  return new Response(JSON.stringify(out.json ?? null), { status: out.status, headers: { "content-type": "application/json" } });
+}
+function strip(s) { return s.startsWith("data:") ? s.replace(/^data:\s?/, "").replace(/\n\n$/, "") : s; }
+function fetchStream(doFetch, path, onData, onError) {
+  let closed = false, ctrl = null, backoff = 500;
+  (async function loop() {
+    while (!closed) {
+      ctrl = new AbortController();
+      try {
+        const res = await doFetch(path, { signal: ctrl.signal });
+        if (!res || !res.ok || !res.body) throw new Error(`stream ${path} -> ${res && res.status}`);
+        backoff = 500;
+        const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read(); if (done) break;
+          buf += dec.decode(value, { stream: true }); let nl;
+          while ((nl = buf.indexOf("\n\n")) !== -1) {
+            const frame = buf.slice(0, nl); buf = buf.slice(nl + 2);
+            const data = frame.split("\n").filter(l => l.startsWith("data:")).map(l => l.slice(5).replace(/^ /, "")).join("\n");
+            if (data) { try { onData(data); } catch {} }
+          }
+        }
+      } catch (e) { if (closed) return; if (onError) try { onError(e); } catch {} }
+      if (closed) return;
+      await new Promise(r => setTimeout(r, backoff)); backoff = Math.min(backoff * 2, 8000);
+    }
+  })();
+  return () => { closed = true; if (ctrl) try { ctrl.abort(); } catch {} };
+}
 
-function esc(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function ago(t){ const s=Math.max(0,(Date.now()-t)/1000);
-  if(s<60)return Math.floor(s)+"s ago"; if(s<3600)return Math.floor(s/60)+"m ago";
-  if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; }
+/* ---------- hex + payload helpers (the node carries payloads as payload_hex) ---------- */
+const HEX = "0123456789abcdef";
+const ENC = new TextEncoder(), DEC = new TextDecoder();
+function toHex(b) { let s = ""; for (let i = 0; i < b.length; i++) s += HEX[b[i] >> 4] + HEX[b[i] & 15]; return s; }
+function fromHex(h) { const c = h.length % 2 ? "0" + h : h, o = new Uint8Array(c.length / 2); for (let i = 0; i < o.length; i++) o[i] = parseInt(c.substr(i * 2, 2), 16); return o; }
+function encodeJson(o) { return toHex(ENC.encode(JSON.stringify(o))); }
 
-const seen=new Set();
-function card(m){
-  if(!m||!m.id||seen.has(m.id))return null;
-  seen.add(m.id);
-  const el=document.createElement("div"); el.className="card"; el.dataset.t=m.t;
-  el.innerHTML="<div class='top'><span class='av' style='background:"+(m.col||"#37c6ff")+"'></span>"+
-    "<span class='who'>"+esc(m.name||"anon")+"</span>"+
-    "<span class='when' data-t='"+m.t+"'>"+ago(m.t)+"</span></div>"+
-    "<div class='body'>"+esc(m.body)+"</div>";
+/* ---------- mesh wrapper ---------- */
+const node = connectNode();
+async function subscribe(topic) { try { await node.request("POST", "/mesh/subscribe", { body: JSON.stringify({ topic }) }); return true; } catch { return false; } }
+async function publish(topic, obj) { try { await node.request("POST", "/mesh/publish", { body: JSON.stringify({ topic, payload_hex: encodeJson(obj) }) }); return true; } catch { return false; } }
+
+/* one shared inbound SSE stream, fanned out by topic */
+const byTopic = new Map();
+function onTopic(topic, fn) { let s = byTopic.get(topic); if (!s) byTopic.set(topic, (s = new Set())); s.add(fn); return () => s.delete(fn); }
+function startInbox() {
+  return node.stream("/mesh/messages/stream", (data) => {
+    let msg; try { msg = JSON.parse(data); } catch { return; }
+    const set = byTopic.get(msg.topic); if (!set) return;
+    let payload; try { payload = JSON.parse(DEC.decode(fromHex(msg.payload_hex))); } catch { return; }
+    for (const fn of set) { try { fn(payload, msg.from); } catch {} }
+  }, () => setNet("mesh stream dropped — reconnecting…", true));
+}
+
+/* ---------- topic helpers (mirror room.rs::topics) ----------
+   The backend sanitizes a room name to [a-z0-9_-] (<=40) and appends a 4-hex fnv suffix so distinct
+   raw names never collide. We mirror that exactly so our topic strings match the host's. */
+function fnv1a64hex16(s) {
+  // FNV-1a 64-bit via BigInt; return the low 16 bits as 4 hex (matches shard.rs).
+  let h = 0xcbf29ce484222325n; const M = 0x100000001b3n, MASK = (1n << 64n) - 1n;
+  const bytes = ENC.encode(s);
+  for (let i = 0; i < bytes.length; i++) { h = (h ^ BigInt(bytes[i])) & MASK; h = (h * M) & MASK; }
+  return (h & 0xffffn).toString(16).padStart(4, "0");
+}
+function shardName(raw) {
+  let s = raw.toLowerCase().split("").map(c => /[a-z0-9_-]/.test(c) ? c : "_").join("").slice(0, 40);
+  if (!s) s = "_";
+  return s + fnv1a64hex16(raw);
+}
+const svc      = (r) => `ce-game/${APP}/${shardName(r)}`;
+const inTopic  = (r) => `${svc(r)}/in`;
+const stateTop = (r) => `${svc(r)}/state`;
+const sealTop  = (r) => `${svc(r)}/seal`;
+
+/* ---------- identity: the authenticated NodeId is our author id ---------- */
+let myId = null;
+async function resolveIdentity() {
+  try {
+    const res = await node.request("GET", "/status");
+    const j = res && res.json;
+    if (j && j.node_id) { myId = String(j.node_id); return true; }
+  } catch {}
+  return false;
+}
+// stable hue from a NodeId, matching room.rs::hue_for (FNV-1a 32).
+function hueFor(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h % 360; }
+function colorFor(s) { return `hsl(${hueFor(s)} 78% 62%)`; }
+
+/* ---------- DOM ---------- */
+const nameEl = document.getElementById("name"), msgEl = document.getElementById("msg"),
+  countEl = document.getElementById("count"), postBtn = document.getElementById("post"),
+  coolEl = document.getElementById("cool"), feedEl = document.getElementById("feed"),
+  netEl = document.getElementById("net"), dotEl = document.getElementById("dot"),
+  roomsEl = document.getElementById("rooms");
+function setNet(t, err) { netEl.innerHTML = t; netEl.classList.toggle("err", !!err); }
+nameEl.value = localStorage.ce_name || "";
+nameEl.oninput = () => localStorage.ce_name = nameEl.value;
+msgEl.oninput = () => { countEl.textContent = msgEl.value.length + " / " + MAXLEN; };
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+/* room tabs */
+function renderRooms() {
+  roomsEl.innerHTML = "";
+  for (const r of ROOMS) {
+    const el = document.createElement("button");
+    el.className = "room" + (r === room ? " on" : "");
+    el.textContent = "#" + r; el.onclick = () => switchRoom(r);
+    roomsEl.appendChild(el);
+  }
+}
+
+/* ---------- authoritative state render ---------- */
+let connected = false, sawState = false;
+const posted = new Set();        // nonces we've sent this session (for the optimistic echo)
+function applyWallState(s, from) {
+  if (!s || s.t !== "wall" || s.room !== room) return;
+  sawState = true;
+  document.getElementById("hostN").textContent = (s.host || "").slice(0, 10) + "…";
+  document.getElementById("headN").textContent = String(s.head ?? (s.messages || []).length);
+  if (typeof s.posters === "number") { document.getElementById("liveN").textContent = String(Math.max(s.posters, 1)); }
+  renderFeed(s.messages || []);
+}
+function renderFeed(messages) {
+  // The host snapshot IS the source of truth: rebuild the feed newest-first from it.
+  const ordered = messages.slice().sort((a, b) => (b.seq || 0) - (a.seq || 0));
+  if (ordered.length === 0) { feedEl.innerHTML = '<div class="empty">Be the first to sign the wall.</div>'; return; }
+  const frag = document.createDocumentFragment();
+  for (const m of ordered) frag.appendChild(card(m));
+  feedEl.replaceChildren(frag);
+}
+function card(m) {
+  const el = document.createElement("div"); el.className = "card";
+  const col = colorFor(m.by || "");
+  const mine = m.by && m.by === myId;
+  el.innerHTML =
+    "<div class='top'>" +
+    "<span class='av' style='background:" + col + "'></span>" +
+    "<span class='who'>" + esc(m.name || "anon") + (mine ? " (you)" : "") + "</span>" +
+    "<span class='seq'>#" + (m.seq ?? "?") + "</span>" +
+    "<span class='when'>" + esc(String(m.by || "").slice(0, 6)) + "</span></div>" +
+    "<div class='body'>" + esc(m.body || "") + "</div>";
   return el;
 }
-function insert(m){
-  const el=card(m); if(!el)return;
-  const emp=document.getElementById("empty"); if(emp)emp.remove();
-  // newest-first ordered insert
-  let placed=false;
-  for(const child of feedEl.children){ if((+child.dataset.t||0) < (m.t||0)){ feedEl.insertBefore(el,child); placed=true; break; } }
-  if(!placed) feedEl.appendChild(el);
-  // trim
-  while(feedEl.children.length>LIMIT) feedEl.removeChild(feedEl.lastChild);
-}
-setInterval(()=>{ feedEl.querySelectorAll(".when").forEach(w=>w.textContent=ago(+w.dataset.t)); },20000);
 
-async function hydrate(){
-  let res; try{ res=await (await fetch(dbURL(APP)+"?prefix=msg:&limit="+LIMIT)).json(); }catch(_){ res={items:[]}; }
-  const items=(res.items||[]).map(it=>it.value).filter(Boolean);
-  items.sort((a,b)=>(a.t||0)-(b.t||0)); // oldest first so newest ends up on top after insert
-  if(items.length===0){ document.getElementById("empty").textContent="Be the first to sign the wall."; }
-  for(const m of items) insert(m);
+/* ---------- chain seal display ---------- */
+function applySeal(c) {
+  if (!c || c.t !== "seal" || c.room !== room) return;
+  document.getElementById("sealN").textContent =
+    "h" + c.height + " · " + String(c.cid || "").slice(0, 10) + "…";
 }
-hydrate();
 
-// rate limit
-let last=parseInt(localStorage.ce_wall_last||"0",10);
-function refreshCool(){
-  const left=RATE_MS-(Date.now()-last);
-  if(left>0){ postBtn.disabled=true; coolEl.textContent="wait "+Math.ceil(left/1000)+"s"; }
-  else{ postBtn.disabled=false; coolEl.textContent=""; }
+/* ---------- posting: publish an intent to the room's TILE OWNER (its host) ---------- */
+let lastPost = parseInt(localStorage["ce_wall_last_" + room] || "0", 10);
+function refreshCool() {
+  const left = RATE_MS - (Date.now() - lastPost);
+  const ready = left <= 0 && connected && sawState;
+  postBtn.disabled = !ready;
+  coolEl.textContent = !connected ? "offline" : (left > 0 ? "wait " + Math.ceil(left / 1000) + "s" : "");
 }
-setInterval(refreshCool,300); refreshCool();
+setInterval(refreshCool, 300);
 
-async function post(){
-  const body=msgEl.value.trim().slice(0,MAXLEN);
-  const name=(nameEl.value.trim()||("guest-"+id.slice(0,3))).slice(0,16);
-  if(!body) return;
-  if(Date.now()-last<RATE_MS) return;
-  last=Date.now(); localStorage.ce_wall_last=String(last); localStorage.ce_name=name; refreshCool();
-  const mid=id+":"+last.toString(36);
-  const m={id:mid,by:id,name,col:myColor,body,t:last};
-  insert(m);
-  msgEl.value=""; countEl.textContent="0 / "+MAXLEN;
-  // newest-first list: key sorts descending by using inverse timestamp
-  const inv=(9999999999999-last).toString().padStart(13,"0");
-  try{ await fetch(dbURL(APP,"msg:"+inv+":"+id),{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(m)}); }catch(_){}
-  if(ws&&ws.readyState===1) ws.send(JSON.stringify({t:"msg",...m}));
+async function post() {
+  const body = msgEl.value.trim().slice(0, MAXLEN);
+  const name = (nameEl.value.trim() || "guest").slice(0, MAXNAME);
+  if (!body || !connected) return;
+  if (Date.now() - lastPost < RATE_MS) return;
+  lastPost = Date.now(); localStorage["ce_wall_last_" + room] = String(lastPost); localStorage.ce_name = name;
+  refreshCool();
+  // nonce = exactly-once key; the host dedups (identity, nonce) so a retried publish appends once.
+  const nonce = lastPost; posted.add(nonce);
+  msgEl.value = ""; countEl.textContent = "0 / " + MAXLEN;
+  await publish(inTopic(room), { t: "post", name, body, nonce });
 }
-postBtn.onclick=post;
-msgEl.addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") post(); });
+postBtn.onclick = post;
+msgEl.addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") post(); });
 
-// realtime
-let ws; const peers=new Map();
-function liveCount(){ const now=Date.now(); for(const[k,v] of peers) if(now-v>3500) peers.delete(k); document.getElementById("liveN").textContent=peers.size+1; }
-setInterval(liveCount,1000);
-function connect(){
-  ws=new WebSocket(wsURL(APP,"main"));
-  ws.onopen=()=>ws.send(JSON.stringify({t:"join",id}));
-  ws.onmessage=e=>{
-    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
-    if(!m)return;
-    const from = typeof m.by==="string" ? m.by : m.id;
-    if(from && from!==id){ peers.set(from,Date.now()); liveCount(); }
-    if(from===id) return; // skip our own echoed posts
-    if(m.t==="msg"||m.body) insert(m);
-  };
-  ws.onclose=()=>setTimeout(connect,1500);
-  ws.onerror=()=>{ try{ws.close();}catch(_){} };
+/* ---------- room subscription lifecycle ---------- */
+let unsub = [];
+function clearRoom() { for (const u of unsub) try { u(); } catch {} unsub = []; byTopic.clear(); }
+async function joinRoom() {
+  document.getElementById("roomN").textContent = room;
+  document.getElementById("hostN").textContent = "electing…";
+  document.getElementById("sealN").textContent = "unsealed";
+  feedEl.innerHTML = '<div class="empty">Loading #' + esc(room) + '…</div>';
+  sawState = false;
+  unsub.push(onTopic(stateTop(room), applyWallState));
+  unsub.push(onTopic(sealTop(room), applySeal));
+  await subscribe(stateTop(room));
+  await subscribe(sealTop(room));
+  await subscribe(inTopic(room)); // so the node lets us publish post intents there
+  // hello -> the host counts us live and re-sends a snapshot to this new joiner.
+  await publish(inTopic(room), { t: "hello" });
+  lastPost = parseInt(localStorage["ce_wall_last_" + room] || "0", 10);
+  refreshCool();
 }
-connect();
-setInterval(()=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify({t:"ping",id})); },2000);
+function switchRoom(r) {
+  if (r === room) return;
+  publish(inTopic(room), { t: "bye" });
+  clearRoom();
+  room = r; location.hash = r;
+  renderRooms(); joinRoom();
+}
+
+/* ---------- boot ---------- */
+let inboxStop = null;
+async function boot() {
+  document.getElementById("mySw").style.background = "#37c6ff";
+  renderRooms();
+  // wait for the local node
+  let ok = false;
+  for (let i = 0; i < 20 && !ok; i++) { ok = await resolveIdentity(); if (!ok) await new Promise(r => setTimeout(r, 600)); }
+  if (!ok) {
+    dotEl.classList.add("off");
+    setNet("Could not reach a local CE node. Run <code>ce start</code> (or open this through the CE hub), then reload.", true);
+    feedEl.innerHTML = '<div class="empty">No local node.</div>';
+    return;
+  }
+  document.getElementById("mySw").style.background = colorFor(myId);
+  connected = true; dotEl.classList.remove("off");
+  setNet("Connected. You are <code>" + esc(myId.slice(0, 10)) + "…</code> — posting to the room host over the mesh.");
+  inboxStop = startInbox();
+  await joinRoom();
+  // re-hello + re-subscribe periodically so a node restart re-establishes us.
+  setInterval(() => { if (connected) { subscribe(stateTop(room)); subscribe(sealTop(room)); subscribe(inTopic(room)); publish(inTopic(room), { t: "hello" }); } }, 8000);
+}
+addEventListener("beforeunload", () => { try { publish(inTopic(room), { t: "bye" }); } catch {} });
+boot();
 </script>
 </body>
 </html>

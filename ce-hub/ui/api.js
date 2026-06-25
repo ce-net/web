@@ -1,14 +1,24 @@
 /* api.js — thin client over the ce-hub git JSON API (see PLAN/hub-git-contract.md).
- * The UI is served from the same origin as the API (hub.ce-net.com), so all paths
- * are origin-relative. Only the routes defined in the contract are used here. */
+ *
+ * ALLOWED EXCEPTION (hub-admin UI): this is the HUB'S OWN /ui operating the hub itself,
+ * served from the same origin as the hub API (e.g. hub.ce-net.com). It is NOT a stranger
+ * app on the mesh — it is the hub's operator console talking to the hub's git contract
+ * (repos, trees, commits, pulls, signed mutations) which is the hub's own surface and is
+ * deliberately NOT a mesh primitive. All paths are origin-relative (same-origin), so this
+ * file makes ZERO cross-origin requests in production. The `?api=` test override is
+ * pinned to the SAME ORIGIN so it can never be aimed at a third-party host. */
 (function (global) {
   "use strict";
 
-  // Same-origin by default. Override with ?api=https://host for local testing.
+  // Same-origin by default. A `?api=` test override is accepted ONLY when it resolves to
+  // this page's own origin — the hub-admin UI never reaches across origins.
   var API_BASE = (function () {
     try {
       var p = new URLSearchParams(location.search).get("api");
-      return p ? p.replace(/\/$/, "") : "";
+      if (!p) return "";
+      var u = new URL(p, location.origin);
+      if (u.origin !== location.origin) return ""; // refuse cross-origin overrides
+      return (u.pathname + u.search).replace(/\/$/, "");
     } catch (_) { return ""; }
   })();
 

@@ -138,6 +138,82 @@ footer a{color:var(--muted)}
 
 <script>
 "use strict";
+// ====================== mesh-native client (same-origin only) ======================
+// Inlined @ce/client (web/ce-app/client/index.js): talks ONLY to the local node —
+// the in-browser bridge window.__ceNode, else the same-origin "/ce" reverse proxy.
+// db = per-app LWW map over gossipsub (/mesh/publish + /mesh/messages/stream, blob
+// snapshots); room = mesh pub/sub. NO ce-net.com/db, /rt, wss, cast, auth.
+function CE_createClient(opts){
+  opts=opts||{};
+  var BRIDGE_BASE="http://ce-browser-node.local";
+  function bridge(){ try{ var b=globalThis.__ceNode; return (b&&typeof b.request==="function")?b:null; }catch(_){ return null; } }
+  function node(){ var b=bridge(); if(b) return bridgeT(b); return proxyT((opts.ce)||"/ce"); }
+  function bridgeT(b){
+    async function request(m,p,init){ var h=(init&&init.headers)||{}, body=init&&init.body; var res=await b.request(m,p,{headers:h,body:body}); return normB(res); }
+    function stream(p,onData,onErr){
+      if(typeof b.stream==="function"){ var c=new AbortController(); (async function(){ try{ for await(var d of b.stream(p,c.signal)){ if(c.signal.aborted)return; if(d)onData(strip(d)); } }catch(e){ if(!c.signal.aborted&&onErr)onErr(e); } })(); return function(){ c.abort(); }; }
+      return sse(function(pp,init){ return request("GET",pp,init).then(brToResp); },p,onData,onErr);
+    }
+    return { request:request, stream:stream, base:BRIDGE_BASE };
+  }
+  function proxyT(prefix){
+    var root=String(prefix).replace(/\/+$/,"");
+    async function request(m,p,init){ var h=Object.assign({},(init&&init.headers)||{}), body=init&&init.body; if(body!=null&&!h["content-type"]&&!h["Content-Type"]) h["content-type"]="application/json"; var res=await fetch(root+p,{method:m,headers:h,body:body}); var ct=res.headers.get("content-type")||"", out={status:res.status}; if(ct.indexOf("application/json")>=0) out.json=res.status===204?null:await res.json().catch(function(){return null;}); else if(ct.indexOf("octet-stream")>=0) out.bytes=new Uint8Array(await res.arrayBuffer()); else out.text=await res.text(); return out; }
+    function stream(p,onData,onErr){ return sse(function(pp,init){ return fetch(root+pp,{method:"GET",headers:Object.assign({Accept:"text/event-stream"},init&&init.headers),signal:init&&init.signal}); },p,onData,onErr); }
+    return { request:request, stream:stream, base:root };
+  }
+  function normB(res){ if(!res||typeof res!=="object") return {status:502,json:null}; if("body" in res && !("json" in res) && !("text" in res) && !("bytes" in res)){ var st=res.status==null?200:res.status, b=res.body; if(b instanceof Uint8Array) return {status:st,bytes:b}; if(typeof b==="string"){ try{ return {status:st,json:JSON.parse(b)}; }catch(_){ return {status:st,text:b}; } } return {status:st,json:b==null?null:b}; } return res; }
+  function brToResp(o){ if(o.bytes!==undefined) return new Response(o.bytes,{status:o.status,headers:{"content-type":"application/octet-stream"}}); if(o.text!==undefined) return new Response(o.text,{status:o.status,headers:{"content-type":"text/event-stream"}}); return new Response(JSON.stringify(o.json==null?null:o.json),{status:o.status,headers:{"content-type":"application/json"}}); }
+  function strip(s){ return s.indexOf("data:")===0?s.replace(/^data:\s?/,"").replace(/\n\n$/,""):s; }
+  function sse(doFetch,path,onData,onErr){ var closed=false,ctrl=null,backoff=500; (async function loop(){ while(!closed){ ctrl=new AbortController(); try{ var res=await doFetch(path,{signal:ctrl.signal}); if(!res||!res.ok||!res.body) throw new Error("stream "+path+" -> "+(res&&res.status)); backoff=500; var reader=res.body.getReader(),dec=new TextDecoder(),buf=""; for(;;){ var r=await reader.read(); if(r.done)break; buf+=dec.decode(r.value,{stream:true}); var nl; while((nl=buf.indexOf("\n\n"))!==-1){ var frame=buf.slice(0,nl); buf=buf.slice(nl+2); var data=frame.split("\n").filter(function(l){return l.indexOf("data:")===0;}).map(function(l){return l.slice(5).replace(/^ /,"");}).join("\n"); if(data){ try{ onData(data); }catch(_){} } } } }catch(e){ if(closed)return; if(onErr)try{onErr(e);}catch(_){} } if(closed)return; await new Promise(function(rs){setTimeout(rs,backoff);}); backoff=Math.min(backoff*2,8000); } })(); return function(){ closed=true; if(ctrl)try{ctrl.abort();}catch(_){} }; }
+  var HEXC="0123456789abcdef";
+  function toHex(b){ var s=""; for(var i=0;i<b.length;i++)s+=HEXC[b[i]>>4]+HEXC[b[i]&15]; return s; }
+  function fromHex(h){ var c=h.length%2?"0"+h:h,o=new Uint8Array(c.length/2); for(var i=0;i<o.length;i++)o[i]=parseInt(c.substr(i*2,2),16); return o; }
+  var EN=new TextEncoder(),DE=new TextDecoder();
+  function encJson(o){ return toHex(EN.encode(JSON.stringify(o))); }
+  function decJson(h){ try{ return JSON.parse(DE.decode(fromHex(h))); }catch(_){ return undefined; } }
+  function resolveApp(){ if(opts.app) return String(opts.app); try{ var m=location.pathname.match(/\/apps\/([^/]+)\//); if(m&&m[1])return decodeURIComponent(m[1]); var hh=location.hostname.match(/^([a-z0-9][a-z0-9-]*)\./i); if(hh&&["www","relay","docs","p2p","localhost"].indexOf(hh[1].toLowerCase())<0) return hh[1]; }catch(_){} return "demo"; }
+  var appId=resolveApp(), base=(function(){try{return location.origin;}catch(_){return "";}})();
+  var nd=node();
+  var byTopic=new Map(), closeStream=null, refc=0;
+  function ensureStream(){ if(closeStream)return; closeStream=nd.stream("/mesh/messages/stream",function(data){ var msg; try{msg=JSON.parse(data);}catch(_){return;} var set=byTopic.get(msg.topic); if(!set)return; set.forEach(function(fn){try{fn(msg);}catch(_){}}); },function(){}); }
+  function on(topic,fn){ var set=byTopic.get(topic); if(!set)byTopic.set(topic,set=new Set()); set.add(fn); refc++; ensureStream(); return function(){ set.delete(fn); if(set.size===0)byTopic.delete(topic); if(--refc<=0&&closeStream){closeStream();closeStream=null;refc=0;} }; }
+  function subscribe(topic){ return nd.request("POST","/mesh/subscribe",{headers:{"content-type":"application/json"},body:JSON.stringify({topic:topic})}); }
+  function publish(topic,obj){ return nd.request("POST","/mesh/publish",{headers:{"content-type":"application/json"},body:JSON.stringify({topic:topic,payload_hex:encJson(obj)})}); }
+  var writerId=(function(){ try{ if(globalThis.crypto&&globalThis.crypto.getRandomValues){ var b=new Uint8Array(8); globalThis.crypto.getRandomValues(b); return toHex(b); } }catch(_){} return (Date.now().toString(16)+Math.random().toString(16).slice(2)).slice(0,16); })();
+  var dbTopic="ce-coord/app/"+appId+"/db", dbSnap=dbTopic+"/snapshot";
+  var state=new Map(), lamport=0, dbReady=null;
+  function newer(a,b){ if(a.l!==b.l)return a.l>b.l; return a.w>b.w; }
+  function applyOp(op){ if(!op||typeof op.key!=="string"||!op.clock)return false; lamport=Math.max(lamport,op.clock.l); var cur=state.get(op.key); if(cur&&!newer(op.clock,cur.clock))return false; state.set(op.key,{value:op.deleted?undefined:op.value,deleted:!!op.deleted,clock:op.clock,at:op.at||0}); return true; }
+  subscribe(dbTopic).catch(function(){}); subscribe(dbSnap).catch(function(){});
+  on(dbTopic,function(msg){ var op=decJson(msg.payload_hex||""); if(op)applyOp(op); });
+  on(dbSnap,async function(msg){ var m=decJson(msg.payload_hex||""); if(!m)return; if(m.kind==="request"){ var cid=await putSnap().catch(function(){return null;}); if(cid)await publish(dbSnap,{kind:"offer",cid:cid,at:Date.now()}); } else if(m.kind==="offer"&&m.cid){ await loadSnap(m.cid).catch(function(){}); } });
+  async function putSnap(){ var entries=[]; state.forEach(function(e,k){entries.push([k,e]);}); var bytes=EN.encode(JSON.stringify({v:1,lamport:lamport,entries:entries})); var res=await nd.request("POST","/blobs",{headers:{"content-type":"application/octet-stream"},body:bytes}); if(res.json&&res.json.hash)return res.json.hash; if(res.text){try{return JSON.parse(res.text).hash;}catch(_){}} return null; }
+  async function loadSnap(cid){ var res=await nd.request("GET","/blobs/"+encodeURIComponent(cid),{}); var snap; if(res.bytes)snap=JSON.parse(DE.decode(res.bytes)); else if(res.text)snap=JSON.parse(res.text); else if(res.json)snap=res.json; if(!snap||!Array.isArray(snap.entries))return; snap.entries.forEach(function(p){ applyOp({key:p[0],value:p[1].value,deleted:p[1].deleted,clock:p[1].clock,at:p[1].at}); }); }
+  function ensureReady(){ if(dbReady)return dbReady; dbReady=(async function(){ await publish(dbSnap,{kind:"request",at:Date.now()}).catch(function(){}); await new Promise(function(r){setTimeout(r,300);}); })(); return dbReady; }
+  function nextClock(){ lamport+=1; return {l:lamport,w:writerId}; }
+  var db={
+    async get(key){ await ensureReady(); var e=state.get(String(key)); if(!e||e.deleted)return undefined; return e.value; },
+    async set(key,val){ var k=String(key),op={key:k,value:val==null?null:val,deleted:false,clock:nextClock(),at:Date.now()}; applyOp(op); await publish(dbTopic,op); return {ok:true,key:k}; },
+    async del(key){ var k=String(key),op={key:k,deleted:true,clock:nextClock(),at:Date.now()}; applyOp(op); await publish(dbTopic,op); return {ok:true}; },
+    async list(prefix,limit){ await ensureReady(); var pre=prefix==null?"":String(prefix),items=[]; state.forEach(function(e,key){ if(e.deleted)return; if(pre&&key.indexOf(pre)!==0)return; items.push({key:key,value:e.value,at:e.at||0}); }); items.sort(function(a,b){ return b.at-a.at||(a.key<b.key?1:-1); }); var out=items.map(function(it){return {key:it.key,value:it.value};}); return limit!=null?out.slice(0,Number(limit)):out; }
+  };
+  function room(name){
+    var topic="ce-app/"+appId+"/room/"+name, closed=false, opened=false;
+    var msgH=new Set(), openH=new Set(), outbox=[], offInbox=null;
+    function flush(){ outbox.splice(0).forEach(function(d){ publish(topic,d).catch(function(){}); }); }
+    function markOpen(){ if(opened||closed)return; opened=true; flush(); openH.forEach(function(fn){try{fn();}catch(_){}}); }
+    subscribe(topic).then(markOpen,markOpen);
+    offInbox=on(topic,function(msg){ var pl=decJson(msg.payload_hex||""); if(pl===undefined){ try{pl=DE.decode(fromHex(msg.payload_hex||""));}catch(_){return;} } msgH.forEach(function(fn){try{fn(pl);}catch(_){}}); });
+    return {
+      send:function(obj){ if(opened)publish(topic,obj).catch(function(){}); else outbox.push(obj); },
+      on:function(fn){ msgH.add(fn); return function(){msgH.delete(fn);}; },
+      onOpen:function(fn){ openH.add(fn); if(opened){try{fn();}catch(_){}} return function(){openH.delete(fn);}; },
+      close:function(){ closed=true; if(offInbox)offInbox(); }
+    };
+  }
+  return { appId:appId, base:base, db:db, room:room };
+}
 // ------- config -------
 // One feedback app namespace; per-project boards are partitioned by a "target" key.
 // The target comes from ?target=<project> (else "global"). Keys: fb:<target>:<invTs>:<id>.
@@ -153,8 +229,11 @@ function colorFor(s){ return COLORS[[...String(s)].reduce((a,c)=>a+c.charCodeAt(
 const myColor=colorFor(id);
 
 const $=s=>document.getElementById(s);
-function wsURL(app,room){ return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room; }
-function dbURL(app,key){ return location.origin+"/db/"+app+(key?"/"+key.split("/").map(encodeURIComponent).join("/"):""); }
+
+// Mesh-native client: same-origin only (window.__ceNode bridge, else "/ce" proxy).
+// db = per-app LWW map over gossipsub; room = mesh pub/sub. No ce-net.com/db,/rt.
+const ce = CE_createClient({ app: APP });
+const meshRoom = ce.room(ROOM);
 function ago(t){ const s=Math.max(0,(Date.now()-t)/1000);
   if(s<60)return Math.floor(s)+"s ago"; if(s<3600)return Math.floor(s/60)+"m ago";
   if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; }
@@ -326,9 +405,9 @@ function applyFlag(tid,who,on){ const t=threads.get(tid); if(!t)return; t.flags=
 function applyDel(tid){ const t=threads.get(tid); if(t)t.del=true; }
 function applyReply(r){ const t=threads.get(r.tid); if(!t)return; if(!t.replies.has(r.id)) t.replies.set(r.id,r); }
 
-// ------- network helpers -------
-function send(o){ if(ws&&ws.readyState===1){ try{ ws.send(JSON.stringify(o)); }catch(_){} } }
-async function dbPut(key,val){ try{ await fetch(dbURL(APP,key),{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(val)}); }catch(_){} }
+// ------- network helpers (mesh) -------
+function send(o){ try{ meshRoom.send(o); }catch(_){} }
+async function dbPut(key,val){ try{ await ce.db.set(key,val); }catch(_){} }
 
 // ------- post feedback -------
 let last=parseInt(localStorage["ce_fb_last_"+TARGET]||"0",10);
@@ -397,8 +476,8 @@ function softDelete(tid){
 // ------- hydrate from the KV store -------
 async function hydrate(){
   async function list(prefix){
-    try{ const r=await (await fetch(dbURL(APP)+"?prefix="+encodeURIComponent(prefix)+"&limit=1000")).json();
-      return (r.items||[]).map(it=>it.value).filter(Boolean); }
+    try{ const items=await ce.db.list(prefix,1000);
+      return (items||[]).map(it=>it.value).filter(Boolean); }
     catch(_){ return []; }
   }
   const [posts,replies,votes,flags,dels]=await Promise.all([
@@ -413,8 +492,8 @@ async function hydrate(){
 }
 hydrate();
 
-// ------- realtime -------
-let ws; const peers=new Map();
+// ------- realtime (mesh room) -------
+const peers=new Map();
 function liveCount(){ const now=Date.now(); for(const[k,v] of peers) if(now-v>3500) peers.delete(k); $("liveN").textContent=peers.size+1; }
 setInterval(liveCount,1000);
 
@@ -431,11 +510,9 @@ function onFrame(m){
   }
 }
 function connect(){
-  ws=new WebSocket(wsURL(APP,ROOM));
-  ws.onopen=()=>send({t:"join",id});
-  ws.onmessage=e=>{ let m; try{ m=JSON.parse(e.data); }catch(_){ return; } onFrame(m); };
-  ws.onclose=()=>setTimeout(connect,1500);
-  ws.onerror=()=>{ try{ws.close();}catch(_){} };
+  // Inbound mesh frames (mesh pub/sub does not echo our own publishes back).
+  meshRoom.on(m=>{ if(m&&typeof m==="object") onFrame(m); });
+  meshRoom.onOpen(()=>send({t:"join",id}));
 }
 connect();
 setInterval(()=>send({t:"ping",id}),2000);

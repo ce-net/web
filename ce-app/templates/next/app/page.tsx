@@ -62,7 +62,7 @@ export default function Page() {
       </div>
 
       <p className="note">
-        persisted at <code>/db/{ce.appId}/{COUNT_KEY}</code>
+        app <code>{ce.appId}</code>, db key <code>{COUNT_KEY}</code>
       </p>
     </main>
   );

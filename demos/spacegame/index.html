@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<!-- STRICT SAME-ORIGIN: the game talks to its authoritative backend ONLY over the CE mesh through
+     this page's own origin (window.__ceNode or the same-origin "/ce" proxy). connect-src 'self'
+     makes any remote origin (ce-net.com, /db, /rt) unreachable from the browser. Fonts/styles are
+     allowed from Google's CDNs; no script/connect may leave this origin. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; base-uri 'none'" />
 <title>spacegame — a CE multiplayer arena</title>
 <meta name="theme-color" content="#03060e" />
 <meta name="description" content="Pilot a neon ship, mine asteroids, build drones and turrets, and fight other players in a shared 2D space arena. No install, instant multiplayer in your browser." />
@@ -207,1021 +212,590 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
   </div>
 </div>
 
-<script>
+<script type="module">
 "use strict";
-/* ============================================================
-   spacegame — single-file CE multiplayer arena
-   ============================================================ */
+/* =====================================================================================
+   SPACEGAME — frontend, mesh-native & server-authoritative.
 
-const APP = "spa", ROOM = "main";
-const WORLD = 6000;            // square world half-extent is WORLD; world spans 0..WORLD*2? -> we use 0..WORLD
-const SHOT_INTERVAL = 1000/12; // state broadcast cadence
-const PEER_TTL = 3000;         // expire silent peers
-const MINE_GRID = 520;         // asteroid grid spacing
-const RESP_TIME = 3200;
+   This client talks to the game's authoritative SECTOR backends ONLY over the CE mesh,
+   through the same-origin node bridge: window.__ceNode if an in-browser WASM node injected
+   it, else the same-origin "/ce" reverse proxy in front of a local/relay node. It NEVER
+   contacts ce-net.com, /rt, /db, or any remote origin — the CSP connect-src 'self' enforces
+   that at the browser. (Shared contract: web/ce-app/client/index.js and web/demos/arena.)
 
-/* ---------- stable per-browser id ---------- */
-function genId(){ return "p_"+Math.random().toString(36).slice(2,8)+Date.now().toString(36).slice(-4); }
-let ID = localStorage.getItem("spa_id");
-if(!ID){ ID = genId(); localStorage.setItem("spa_id", ID); }
+   Model (matches game-spacegame/src):
+     - identity is this node's authenticated NodeId (GET /status); the server trusts it as
+       the player id, so we never send our own id and nobody can impersonate us.
+     - the galaxy is a grid of SECTORS (SECTOR_SIZE wide). The sector our ship is in is the
+       one we send inputs to (ce-game/spacegame/<sector>/in). For INTEREST MANAGEMENT we
+       subscribe to /state for our sector + its 8 neighbours only — never the whole galaxy.
+     - each frame we publish a {t:"in",thrust,turn,fire,aim} input; the sector host clamps it,
+       runs the authoritative simulation, and broadcasts {t:"st"} snapshots.
+     - we render ONLY authoritative snapshots. No client-side scorekeeping, no client-trusted
+       mining or kills — the server owns all of it. The asteroid field is drawn from the same
+       deterministic hash the backend uses, so it needs zero shared state.
+     - CONSENSUS: the host periodically seals the galaxy leaderboard against the PoW chain and
+       broadcasts a {t:"seal",cid,height,beacon_hash,...} commitment; we render those standings.
+   ===================================================================================== */
 
-/* ---------- url helpers (CE endpoints, same origin) ---------- */
-function wsURL(app,room){ return (location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/rt/"+app+"/"+room; }
-function dbURL(app,key){ return location.origin+"/db/"+app+(key?"/"+encodeURIComponent(key):""); }
+const GAME = "spacegame";
+const GALAXY = "main";
+const SEAL_TOPIC = `ce-game/${GAME}/${GALAXY}/seal`;
 
-/* ---------- palette ---------- */
-const COLORS = ["#37c6ff","#7af0e6","#43e0a0","#ffd166","#ff5d72","#c98bff","#ff9f43","#5aa0ff","#ff6fc1","#9be15d"];
+/* ---------- world constants — MUST match game-spacegame/src/sim.rs ---------- */
+const SECTOR_SIZE = 3000, ROCK_CELL = 300, SHIP_R = 18, BASE_HP = 100;
+const ROCK_MIN_VAL = 5, ROCK_MAX_VAL = 30;
 
-/* ---------- math ---------- */
-const TAU = Math.PI*2;
-const rand = (a,b)=>a+Math.random()*(b-a);
-const clamp=(v,a,b)=>v<a?a:v>b?b:v;
-const lerp=(a,b,t)=>a+(b-a)*t;
-function angLerp(a,b,t){ let d=((b-a+Math.PI)%TAU)-Math.PI; if(d<-Math.PI)d+=TAU; return a+d*t; }
-// deterministic hash -> [0,1)
-function h2(x,y){ let n=x*374761393+y*668265263; n=(n^(n>>>13))*1274126177; return ((n^(n>>>16))>>>0)/4294967296; }
-
-/* ---------- random space handle ---------- */
-const HANDLE_A=["Void","Nova","Astro","Quasar","Comet","Lunar","Solar","Ion","Photon","Pulsar","Nebula","Cosmo","Orbit","Hyper","Vega","Rigel","Drift","Zenith","Echo","Cinder"];
-const HANDLE_B=["runner","blade","wing","hawk","fox","drift","spark","ghost","ranger","striker","pilot","nomad","reaper","scout","ace","viper","raven","comet","flare","wolf"];
-function randomHandle(){ return HANDLE_A[Math.floor(Math.random()*HANDLE_A.length)]+HANDLE_B[Math.floor(Math.random()*HANDLE_B.length)]+(Math.random()<.5?Math.floor(Math.random()*90+10):""); }
-
-/* ============================================================
-   game state
-   ============================================================ */
-const me = {
-  id: ID,
-  name: localStorage.getItem("spa_name") || randomHandle(),
-  color: localStorage.getItem("spa_color") || COLORS[Math.floor(Math.random()*COLORS.length)],
-  x: rand(WORLD*0.35, WORLD*0.65), y: rand(WORLD*0.35, WORLD*0.65),
-  vx:0, vy:0, a:-Math.PI/2,
-  hp:100, maxhp:100,
-  minerals:0, lvl:1, kills:0,
-  speed:1, guns:1,           // upgrade levels
-  alive:true, deadUntil:0,
-  lastShot:0,
-};
-let playing = false;
-
-const peers = new Map();      // id -> {name,color,x,y,a,hp,lvl,last, dvx,dvy, px,py, ...interp}
-const bullets = [];           // {x,y,vx,vy,life,owner,dmg,color,mine}
-const drones = [];            // friendly: {x,y,a,vx,vy,target,cool}
-const turrets = [];           // {x,y,a,cool,life}
-const particles = [];
-const popups = [];            // floating text {x,y,t,txt,color}
-const minedRocks = new Map();    // asteroid key -> respawn time (ms)
-const asteroidHits = new Map();  // key -> hp (transient damage)
-
-/* ============================================================
-   canvas / camera
-   ============================================================ */
-const cv = document.getElementById("cv");
-const ctx = cv.getContext("2d");
-let W=0,H=0,DPR=1;
-function resize(){
-  DPR = Math.min(window.devicePixelRatio||1, 2);
-  W = window.innerWidth; H = window.innerHeight;
-  cv.width = Math.floor(W*DPR); cv.height = Math.floor(H*DPR);
-  cv.style.width=W+"px"; cv.style.height=H+"px";
-  ctx.setTransform(DPR,0,0,DPR,0,0);
+/* ---------- STRICT SAME-ORIGIN NODE BRIDGE (identical contract to web/demos/arena) ---------- */
+function connectNode() {
+  const b = (typeof window !== "undefined" && window.__ceNode) || null;
+  if (b && typeof b.request === "function") return bridgeTransport(b);
+  return proxyTransport("/ce");
 }
-window.addEventListener("resize", resize);
-resize();
-const cam = {x:me.x, y:me.y};
-// World zoom: <1 zooms the camera OUT so more of the arena (and more players) fit on screen.
-const VIEW = 0.6;
-
-/* starfield (parallax layers) */
-const stars=[];
-for(let i=0;i<460;i++) stars.push({x:Math.random(),y:Math.random(),z:rand(.25,1),s:rand(.5,1.7)});
-
-/* ============================================================
-   input
-   ============================================================ */
-const keys={};
-const pointer={x:W/2,y:H/2,down:false,active:false};
-let firing=false;
-
-addEventListener("keydown",e=>{
-  if(e.target && (e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")) return; // typing a name, not flying
-  if(!playing) return;
-  keys[e.key.toLowerCase()]=true;
-  if(e.key===" "){ firing=true; e.preventDefault(); }
-  if(e.key.toLowerCase()==="b"){ toggleBuild(); }
-});
-addEventListener("keyup",e=>{ keys[e.key.toLowerCase()]=false; if(e.key===" ") firing=false; });
-
-cv.addEventListener("mousemove",e=>{ pointer.x=e.clientX; pointer.y=e.clientY; pointer.active=true; });
-cv.addEventListener("mousedown",e=>{ if(!playing)return; pointer.down=true; firing=true; pointer.x=e.clientX; pointer.y=e.clientY; });
-addEventListener("mouseup",()=>{ pointer.down=false; if(!keys[" "]) firing=false; });
-
-/* touch: drag anywhere on canvas to steer+thrust toward finger */
-const isTouch = matchMedia("(pointer:coarse)").matches || "ontouchstart" in window;
-let touchSteer=null; // {x,y}
-cv.addEventListener("touchstart",e=>{ if(!playing)return; const t=e.changedTouches[0]; touchSteer={x:t.clientX,y:t.clientY,id:t.identifier}; pointer.active=true; e.preventDefault(); },{passive:false});
-cv.addEventListener("touchmove",e=>{ if(!touchSteer)return; for(const t of e.changedTouches){ if(t.identifier===touchSteer.id){ touchSteer.x=t.clientX; touchSteer.y=t.clientY; } } e.preventDefault(); },{passive:false});
-cv.addEventListener("touchend",e=>{ for(const t of e.changedTouches){ if(touchSteer && t.identifier===touchSteer.id) touchSteer=null; } e.preventDefault(); },{passive:false});
-
-const fireBtn=document.getElementById("fireBtn");
-fireBtn.addEventListener("touchstart",e=>{ firing=true; e.preventDefault(); },{passive:false});
-fireBtn.addEventListener("touchend",e=>{ firing=false; e.preventDefault(); },{passive:false});
-fireBtn.addEventListener("mousedown",()=>firing=true);
-fireBtn.addEventListener("mouseup",()=>firing=false);
-
-/* ============================================================
-   networking (CE realtime websocket)
-   ============================================================ */
-let ws=null, wsReady=false, reconnectT=null;
-let onlineProbe=null;
-
-function send(obj){ if(ws && wsReady){ try{ ws.send(JSON.stringify(obj)); }catch(e){} } }
-
-function connect(joining){
-  try{ ws = new WebSocket(wsURL(APP,ROOM)); }catch(e){ scheduleReconnect(joining); return; }
-  ws.onopen = ()=>{
-    wsReady=true;
-    setOnlineDot(true);
-    if(playing){ send({t:"join",id:ID,name:me.name}); pushState(true); }
-  };
-  ws.onmessage = (e)=>{
-    let m; try{ m=JSON.parse(e.data); }catch(_){ return; }
-    handleMsg(m);
-  };
-  ws.onclose = ()=>{ wsReady=false; setOnlineDot(false); scheduleReconnect(playing); };
-  ws.onerror = ()=>{ try{ ws.close(); }catch(_){} };
-}
-function scheduleReconnect(joining){
-  if(reconnectT) return;
-  reconnectT=setTimeout(()=>{ reconnectT=null; connect(joining); }, 1600);
-}
-function setOnlineDot(on){
-  const d=document.getElementById("ol-dot"), t=document.getElementById("ol-text");
-  if(on){ d.classList.add("on"); t.textContent = "connected — "+onlineCount()+" online"; }
-  else  { d.classList.remove("on"); t.textContent = "connecting to the mesh…"; }
-}
-
-function handleMsg(m){
-  if(!m||!m.t||m.id===ID) return; // never our own (server filters, but guard)
-  const now=performance.now();
-  switch(m.t){
-    case "join":
-    case "state": {
-      let p = peers.get(m.id);
-      if(!p){ p = newPeer(m.id); peers.set(m.id,p); }
-      p.name=m.name||p.name; if(m.color)p.color=m.color;
-      if(typeof m.x==="number"){
-        // store as interpolation target
-        p.tx=m.x; p.ty=m.y; p.ta=(typeof m.a==="number")?m.a:p.ta;
-        if(p.x===undefined){ p.x=m.x; p.y=m.y; p.a=p.ta; }
-      }
-      if(typeof m.hp==="number") p.hp=m.hp;
-      if(typeof m.lvl==="number") p.lvl=m.lvl;
-      p.last=now; p.alive=true;
-      break;
-    }
-    case "shot": {
-      // a remote ship fired — spawn a visual+damaging bullet from their pos
-      spawnBullet(m.x,m.y,m.vx,m.vy, m.id, m.dmg||10, m.color||"#fff", false);
-      break;
-    }
-    case "hit": {
-      // someone reports being hit (victim-authoritative) — just feedback if near
-      if(typeof m.x==="number"){ burst(m.x,m.y, m.color||"#ff5d72", 6, 1.4); }
-      break;
-    }
-    case "death": {
-      const p=peers.get(m.id);
-      const px = (p&&p.x!==undefined)?p.x:m.x, py=(p&&p.y!==undefined)?p.y:m.y;
-      if(typeof px==="number"){ explosion(px,py, (p?p.color:m.color)||"#fff"); }
-      if(p){ p.alive=false; p.hp=0; }
-      pushFeed((m.killerName||"someone"), (m.name|| (p?p.name:"a ship") ||"a ship"));
-      // dropped minerals near death site — local pickups derive from this
-      if(m.drop && typeof px==="number"){ spawnLoot(px,py,m.drop); }
-      break;
-    }
+function bridgeTransport(bridge) {
+  async function request(method, path, init) {
+    const headers = (init && init.headers) || {};
+    const body = init && init.body;
+    if (bridge.request.length >= 2) return normalize(await bridge.request(method, path, { headers, body }));
+    const req = { method, path, headers, signal: new AbortController().signal };
+    if (typeof body === "string" && body.length) { try { req.jsonBody = JSON.parse(body); } catch { req.jsonBody = body; } }
+    return normalize(await bridge.request(req));
   }
-  refreshOnline();
+  function stream(path, onData, onError) {
+    if (typeof bridge.stream === "function") {
+      const ctrl = new AbortController();
+      (async () => {
+        try { for await (const d of bridge.stream(path, ctrl.signal)) { if (ctrl.signal.aborted) return; if (d) onData(strip(d)); } }
+        catch (e) { if (!ctrl.signal.aborted && onError) onError(e); }
+      })();
+      return () => ctrl.abort();
+    }
+    return fetchStream((p, i) => request("GET", p, i).then(resToResponse), path, onData, onError);
+  }
+  return { request, stream };
+}
+function proxyTransport(prefix) {
+  const root = String(prefix).replace(/\/+$/, "");
+  async function request(method, path, init) {
+    const headers = Object.assign({}, (init && init.headers) || {});
+    const body = init && init.body;
+    if (body != null && !headers["content-type"]) headers["content-type"] = "application/json";
+    const res = await fetch(root + path, { method, headers, body });
+    const ct = res.headers.get("content-type") || "";
+    const out = { status: res.status };
+    if (ct.includes("application/json")) out.json = res.status === 204 ? null : await res.json().catch(() => null);
+    else out.text = await res.text().catch(() => "");
+    return out;
+  }
+  function stream(path, onData, onError) {
+    return fetchStream((p, i) => fetch(root + p, { method: "GET", headers: Object.assign({ Accept: "text/event-stream" }, i && i.headers), signal: i && i.signal }), path, onData, onError);
+  }
+  return { request, stream };
+}
+function normalize(res) {
+  if (!res || typeof res !== "object") return { status: 502, json: null };
+  if ("body" in res && !("json" in res) && !("text" in res)) {
+    const status = res.status ?? 200, body = res.body;
+    if (typeof body === "string") { try { return { status, json: JSON.parse(body) }; } catch { return { status, text: body }; } }
+    return { status, json: body ?? null };
+  }
+  return res;
+}
+function resToResponse(out) {
+  if (out.text !== undefined) return new Response(out.text, { status: out.status, headers: { "content-type": "text/event-stream" } });
+  return new Response(JSON.stringify(out.json ?? null), { status: out.status, headers: { "content-type": "application/json" } });
+}
+function strip(s) { return s.startsWith("data:") ? s.replace(/^data:\s?/, "").replace(/\n\n$/, "") : s; }
+function fetchStream(doFetch, path, onData, onError) {
+  let closed = false, ctrl = null, backoff = 500;
+  (async function loop() {
+    while (!closed) {
+      ctrl = new AbortController();
+      try {
+        const res = await doFetch(path, { signal: ctrl.signal });
+        if (!res || !res.ok || !res.body) throw new Error(`stream ${path} -> ${res && res.status}`);
+        backoff = 500;
+        const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read(); if (done) break;
+          buf += dec.decode(value, { stream: true }); let nl;
+          while ((nl = buf.indexOf("\n\n")) !== -1) {
+            const frame = buf.slice(0, nl); buf = buf.slice(nl + 2);
+            const data = frame.split("\n").filter(l => l.startsWith("data:")).map(l => l.slice(5).replace(/^ /, "")).join("\n");
+            if (data) { try { onData(data); } catch {} }
+          }
+        }
+      } catch (e) { if (closed) return; if (onError) try { onError(e); } catch {} }
+      if (closed) return;
+      await new Promise(r => setTimeout(r, backoff)); backoff = Math.min(backoff * 2, 8000);
+    }
+  })();
+  return () => { closed = true; if (ctrl) try { ctrl.abort(); } catch {} };
 }
 
-function newPeer(id){ return {id, name:"ship", color:"#8ab4ff", x:undefined,y:undefined,a:0, tx:0,ty:0,ta:0, hp:100,lvl:1, last:performance.now(), alive:true}; }
+/* ---------- hex + payload helpers (the node carries payloads as payload_hex) ---------- */
+const HEX = "0123456789abcdef";
+const ENC = new TextEncoder(), DEC = new TextDecoder();
+function toHex(b) { let s = ""; for (let i = 0; i < b.length; i++) s += HEX[b[i] >> 4] + HEX[b[i] & 15]; return s; }
+function fromHex(h) { const c = h.length % 2 ? "0" + h : h, o = new Uint8Array(c.length / 2); for (let i = 0; i < o.length; i++) o[i] = parseInt(c.substr(i * 2, 2), 16); return o; }
+function encodeJson(o) { return toHex(ENC.encode(JSON.stringify(o))); }
+function decodeJsonHex(h) { try { return JSON.parse(DEC.decode(fromHex(h))); } catch { return undefined; } }
 
-function pushState(force){
-  if(!playing) return;
-  send({t:"state", id:ID, name:me.name, color:me.color,
-        x:Math.round(me.x), y:Math.round(me.y),
-        a:+me.a.toFixed(2), hp:Math.round(me.hp), lvl:me.lvl, alive:me.alive?1:0});
-}
+/* ---------- mesh wrapper ---------- */
+const node = connectNode();
+async function subscribe(topic) { try { await node.request("POST", "/mesh/subscribe", { body: JSON.stringify({ topic }) }); return true; } catch { return false; } }
+async function publish(topic, obj) { try { await node.request("POST", "/mesh/publish", { body: JSON.stringify({ topic, payload_hex: encodeJson(obj) }) }); return true; } catch { return false; } }
 
-/* ============================================================
-   leaderboard (CE database)
-   ============================================================ */
-let lastKillWrite=0;
-async function writeKills(){
-  try{
-    await fetch(dbURL(APP,"kills:"+ID),{method:"PUT",headers:{"content-type":"application/json"},
-      body:JSON.stringify({name:me.name,kills:me.kills})});
-  }catch(e){ /* tolerate 507 / network */ }
-}
-async function loadBoard(){
-  try{
-    const r = await fetch(dbURL(APP)+"?prefix=kills:&limit=40");
-    if(!r.ok) return;
-    const data = await r.json();
-    const items = (data && data.items) || [];
-    const rows = items.map(it=>{
-      let v=it.value; if(typeof v==="string"){ try{v=JSON.parse(v);}catch(_){v={};} }
-      return {id:(it.key||"").replace(/^kills:/,""), name:(v&&v.name)||"ship", kills:(v&&v.kills)||0};
-    }).filter(r=>r.kills>0).sort((a,b)=>b.kills-a.kills).slice(0,10);
-    renderBoard(rows);
-  }catch(e){}
-}
-function renderBoard(rows){
-  const el=document.getElementById("board-list");
-  if(!rows.length){ el.innerHTML='<div class="empty">no kills yet — be the first</div>'; return; }
-  el.innerHTML = rows.map(r=>{
-    const meRow = r.id===ID;
-    const col = meRow?me.color:(peers.get(r.id)?peers.get(r.id).color:"#5aa0ff");
-    const nm = meRow?(me.name+" (you)"):r.name;
-    return `<div class="lr"><span class="sw" style="background:${esc(col)}"></span><span class="nm${meRow?' me':''}">${esc(nm)}</span><span class="kc">${r.kills}</span></div>`;
-  }).join("");
-}
-function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-
-/* ============================================================
-   persistent progress — your minerals, upgrades and kills survive a reload
-   ============================================================ */
-function saveProgress(){
-  try{ localStorage.setItem("spa_progress", JSON.stringify({
-    minerals:me.minerals|0, kills:me.kills|0, maxhp:me.maxhp, speed:me.speed,
-    speed_lv:me.speed_lv||0, guns:me.guns, drones:drones.length
-  })); }catch(e){}
-}
-function loadProgress(){
-  try{
-    const p=JSON.parse(localStorage.getItem("spa_progress")||"null"); if(!p) return;
-    me.minerals=p.minerals|0; me.kills=p.kills|0;
-    me.maxhp=p.maxhp||100; me.hp=me.maxhp;
-    me.speed=p.speed||1; me.speed_lv=p.speed_lv||0; me.guns=p.guns||1;
-    const dn=Math.min(p.drones||0,5);
-    for(let i=0;i<dn;i++) drones.push({x:me.x,y:me.y,a:0,vx:0,vy:0,cool:0,orbit:rand(0,TAU),rad:rand(46,72)});
-    me.lvl = 1 + (me.guns-1) + Math.round((me.maxhp-100)/40) + (me.speed_lv||0) + drones.length;
-  }catch(e){}
-}
-// if the saved leaderboard has more kills than local (e.g. played on another device), take the higher.
-async function reconcileKills(){
-  try{
-    const r=await fetch(dbURL(APP,"kills:"+ID)); if(!r.ok) return;
-    let v=await r.json(); if(typeof v==="string"){ try{v=JSON.parse(v);}catch(_){v={};} }
-    const k=(v&&v.kills)|0; if(k>me.kills){ me.kills=k; saveProgress(); if(playing) refreshHud(); }
-  }catch(e){}
+/* one shared inbound SSE stream, fanned out by topic */
+const byTopic = new Map();
+function onTopic(topic, fn) { let s = byTopic.get(topic); if (!s) byTopic.set(topic, (s = new Set())); s.add(fn); return () => s.delete(fn); }
+function startInbox() {
+  return node.stream("/mesh/messages/stream", (data) => {
+    let msg; try { msg = JSON.parse(data); } catch { return; }
+    const set = byTopic.get(msg.topic); if (!set) return;
+    for (const fn of set) { try { fn(msg); } catch {} }
+  }, () => {});
 }
 
-/* ============================================================
-   online count + HUD
-   ============================================================ */
-function onlineCount(){
-  const now=performance.now(); let c = playing?1:0;
-  for(const p of peers.values()) if(now-p.last < PEER_TTL) c++;
-  return Math.max(c, playing?1:0);
-}
-function refreshOnline(){
-  const n=onlineCount();
-  document.getElementById("hud-online").textContent=n;
-  const olt=document.getElementById("ol-text");
-  if(wsReady) olt.textContent = "connected — "+n+" online";
-}
+/* ---------- sector helpers — MUST match game-spacegame/src/shard.rs ---------- */
+function sectorContaining(wx, wy) { return { sx: Math.floor(wx / SECTOR_SIZE), sy: Math.floor(wy / SECTOR_SIZE) }; }
+function sectorToken(s) { const p = v => (v < 0 ? "n" + (-v) : "" + v); return p(s.sx) + "_" + p(s.sy); }
+function sectorNeighbors(s) { const out = []; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) out.push({ sx: s.sx + dx, sy: s.sy + dy }); return out; }
+const IN_TOPIC = tok => `ce-game/${GAME}/${tok}/in`;
+const STATE_TOPIC = tok => `ce-game/${GAME}/${tok}/state`;
 
-/* ============================================================
-   feed toasts
-   ============================================================ */
-const feedEl=document.getElementById("feed");
-function pushFeed(killer, victim){
-  const d=document.createElement("div");
-  d.className="toast";
-  d.innerHTML = `<b>${esc(killer)}</b> <span class="vs">destroyed</span> <span class="victim">${esc(victim)}</span>`;
-  feedEl.appendChild(d);
-  setTimeout(()=>{ d.style.transition="opacity .4s,transform .4s"; d.style.opacity="0"; d.style.transform="translateY(-8px)"; setTimeout(()=>d.remove(),420); }, 3400);
-  while(feedEl.children.length>4) feedEl.removeChild(feedEl.firstChild);
-}
-
-/* ============================================================
-   bullets / particles / loot
-   ============================================================ */
-function spawnBullet(x,y,vx,vy,owner,dmg,color,mine){
-  bullets.push({x,y,vx,vy,life:1.5,owner,dmg,color,mine});
-}
-function burst(x,y,color,n,spd){
-  for(let i=0;i<n;i++){ const a=Math.random()*TAU, s=rand(.4,1)*spd*220; particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(.3,.7),max:.7,color,r:rand(1.4,3.2)}); }
-}
-function explosion(x,y,color){
-  for(let i=0;i<34;i++){ const a=Math.random()*TAU, s=rand(.3,1)*420; particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(.4,1.0),max:1.0,color:(i%3?color:"#fff"),r:rand(1.6,4.2)}); }
-  // shockwave
-  particles.push({x,y,vx:0,vy:0,life:.45,max:.45,color,ring:true,r:6,rmax:120});
-}
-const loot=[]; // {x,y,vx,vy,amt,life}
-function spawnLoot(x,y,amt){
-  const n=Math.min(8,Math.max(2,Math.round(amt/3)));
-  for(let i=0;i<n;i++){ const a=Math.random()*TAU,s=rand(40,170); loot.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,amt:Math.max(1,Math.round(amt/n)),life:14}); }
-}
-function popup(x,y,txt,color){ popups.push({x,y,txt,color,t:0}); }
-
-/* ============================================================
-   shared deterministic asteroid field
-   For a cell (gx,gy) we deterministically decide if it holds an
-   asteroid, its offset, size, mineral value. "Destroyed" asteroids
-   respawn on a deterministic timer keyed on a global epoch so all
-   clients agree on cycles; local mining just hides until next cycle.
-   ============================================================ */
-const ROCK_CYCLE = 22000; // ms — respawn period
-function rockAt(gx,gy){
-  if(gx<0||gy<0||gx*MINE_GRID>WORLD||gy*MINE_GRID>WORLD) return null;
-  const r=h2(gx+11,gy+7);
-  if(r>0.62) return null;                  // ~62% of cells have a rock
-  const ox=h2(gx*3+1,gy)*MINE_GRID*0.7+MINE_GRID*0.15;
-  const oy=h2(gx,gy*3+5)*MINE_GRID*0.7+MINE_GRID*0.15;
-  const sz=20+h2(gx+99,gy+3)*34;
-  const val=Math.round(6+h2(gx+5,gy+17)*16);
-  return {gx,gy,x:gx*MINE_GRID+ox,y:gy*MINE_GRID+oy,r:sz,val,seed:h2(gx+2,gy+8),
-          key:gx+":"+gy};
-}
-function rockAlive(rk,now){
-  // a rock the local player mined is gone until its next respawn time
-  const m = minedRocks.get(rk.key);
-  if(m===undefined){ return true; }
-  if(now > m){ minedRocks.delete(rk.key); return true; }
+/* ---------- identity: the authenticated NodeId is our player id ---------- */
+let myId = null, connected = false;
+async function resolveIdentity() {
+  try { const res = await node.request("GET", "/status"); const j = res && res.json; if (j && j.node_id) { myId = String(j.node_id); return true; } } catch {}
   return false;
 }
 
-function eachVisibleRock(cb){
-  const now=performance.now();
-  const hw=(W/2)/VIEW, hh=(H/2)/VIEW; // wider visible area because the camera is zoomed out
-  const left=cam.x-hw-MINE_GRID, right=cam.x+hw+MINE_GRID, top=cam.y-hh-MINE_GRID, bot=cam.y+hh+MINE_GRID;
-  const gx0=Math.max(0,Math.floor(left/MINE_GRID)), gx1=Math.floor(right/MINE_GRID);
-  const gy0=Math.max(0,Math.floor(top/MINE_GRID)), gy1=Math.floor(bot/MINE_GRID);
-  for(let gx=gx0;gx<=gx1;gx++)for(let gy=gy0;gy<=gy1;gy++){
-    const rk=rockAt(gx,gy); if(!rk) continue;
-    if(!rockAlive(rk,now)) continue;
-    cb(rk);
+/* ---------- name / handle / color ---------- */
+const HANDLE_A = ["Void","Nova","Astro","Quasar","Comet","Lunar","Solar","Ion","Photon","Pulsar","Nebula","Cosmo","Orbit","Hyper","Vega","Rigel","Drift","Zenith","Echo","Cinder"];
+const HANDLE_B = ["runner","blade","wing","hawk","fox","drift","spark","ghost","ranger","striker","pilot","nomad","reaper","scout","ace","viper","raven","comet","flare","wolf"];
+function randomHandle() { return HANDLE_A[Math.random()*HANDLE_A.length|0] + HANDLE_B[Math.random()*HANDLE_B.length|0] + (Math.random()<.5 ? (Math.random()*90+10|0) : ""); }
+let myName = (localStorage.getItem("spa_name") || randomHandle()).slice(0, 16);
+function displayName() { return (myName && myName.trim()) ? myName.trim() : "pilot"; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+/* hue MUST match game-spacegame room::hue_for (FNV-1a/32 over the NodeId) so our self-color agrees */
+function fnv1a(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function hueForId(id) { return fnv1a(id) % 360; }
+function hsl(h, s, l, a) { return `hsla(${h},${s}%,${l}%,${a == null ? 1 : a})`; }
+
+/* ---------- deterministic asteroid field (MUST match sim.rs rock_in_cell) ----------
+   Sector-local cells; we render rocks for the sector our camera is in plus neighbours. */
+function cellHash(cx, cy, salt) { return fnv1a(cx + ":" + cy + ":" + salt); }
+function rockInCell(cx, cy) {
+  const h = cellHash(cx, cy, "rock");
+  if (h % 100 >= 55) return null;
+  const ox = ((h >>> 8) % 1000) / 1000, oy = ((h >>> 18) % 1000) / 1000;
+  const x = cx * ROCK_CELL + ox * ROCK_CELL, y = cy * ROCK_CELL + oy * ROCK_CELL;
+  if (x < 30 || y < 30 || x > SECTOR_SIZE - 30 || y > SECTOR_SIZE - 30) return null;
+  const span = ROCK_MAX_VAL - ROCK_MIN_VAL;
+  const val = ROCK_MIN_VAL + (cellHash(cx, cy, "val") % (span + 1));
+  const hue = cellHash(cx, cy, "hue") % 360;
+  return { x, y, val, hue, cx, cy };
+}
+
+/* ---------- canvas ---------- */
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let DPR = 1, VW = 0, VH = 0;
+function resize() { DPR = Math.min(window.devicePixelRatio || 1, 2); VW = innerWidth; VH = innerHeight; cv.width = Math.floor(VW * DPR); cv.height = Math.floor(VH * DPR); cv.style.width = VW + "px"; cv.style.height = VH + "px"; ctx.setTransform(DPR, 0, 0, DPR, 0, 0); }
+addEventListener("resize", resize); resize();
+const VIEW = 0.6; // zoom out so more of the sector is visible
+
+/* starfield */
+const stars = []; for (let i = 0; i < 460; i++) stars.push({ x: Math.random(), y: Math.random(), z: 0.25 + Math.random() * 0.75, s: 0.5 + Math.random() * 1.2 });
+
+/* ---------- authoritative state, as rendered ----------
+   We hold the latest snapshot PER SECTOR in our interest set, plus lightly-interpolated render
+   positions. The server's values are always the truth; we only smooth between 20Hz snapshots. */
+const sectorSnaps = new Map();   // token -> last {t:"st",...} snapshot
+const render = new Map();         // shipId -> {x,y,rx,ry,a,ra,hue,name,hp,maxhp,minerals,kills,guns,alive,last}
+const depletedSet = new Set();    // "sx:cx,cy" depleted rocks (sector-qualified)
+const parts = [];                 // cosmetic particles
+const popups = [];                // floating mineral popups (driven by authoritative minerals delta)
+let board = [];                   // sealed leaderboard standings [{id,name,kills}]
+let sealMeta = null;              // last {cid,height,beacon_hash,digest,host}
+let mySector = { sx: 0, sy: 0 };  // sector our ship is in (drives which /in we publish to)
+let subscribed = new Set();       // tokens we are currently subscribed to (interest set)
+let playing = false;
+let camX = SECTOR_SIZE / 2, camY = SECTOR_SIZE / 2; // GALAXY-world camera (sector origin + local)
+let lastHostShown = null;
+
+/* sector-qualified world transform: a snapshot is sector-LOCAL; convert to galaxy-world by adding
+   the sector origin so neighbouring sectors render seamlessly side by side. */
+function sectorOrigin(tok) { const sx = parseTok(tok); return sx; }
+function parseTok(tok) {
+  const m = tok.split("_"); const p = s => s[0] === "n" ? -parseInt(s.slice(1), 10) : parseInt(s, 10);
+  return { sx: p(m[0]) * SECTOR_SIZE, sy: p(m[1]) * SECTOR_SIZE };
+}
+
+function applySnapshot(s) {
+  if (!s || s.t !== "st" || !s.sector) return;
+  connected = true;
+  document.getElementById("ol-dot")?.classList.add("on");
+  sectorSnaps.set(s.sector, s);
+  const org = parseTok(s.sector);
+  const now = performance.now();
+  const seenThisSector = new Set();
+  for (const sv of s.ships || []) {
+    seenThisSector.add(sv.id);
+    const gx = org.sx + sv.x, gy = org.sy + sv.y, ga = sv.a / 100;
+    let r = render.get(sv.id);
+    if (!r) { r = { rx: gx, ry: gy, ra: ga }; render.set(sv.id, r); }
+    // detect mineral gain to pop a "+" (purely cosmetic; server owns the number)
+    if (r.minerals != null && sv.minerals > r.minerals) popup(gx, gy - 26, "+" + (sv.minerals - r.minerals), "#ffd166");
+    r.x = gx; r.y = gy; r.a = ga; r.hue = sv.hue; r.name = sv.name; r.hp = sv.hp; r.maxhp = sv.max_hp;
+    r.minerals = sv.minerals; r.kills = sv.kills; r.guns = sv.guns; r.alive = sv.alive; r.sector = s.sector; r.last = now;
   }
-}
-function mineRock(rk, amount){
-  const dmg = asteroidHits.get(rk.key)||0;
-  const nd = dmg+amount;
-  if(nd >= rk.r){ // destroyed
-    asteroidHits.delete(rk.key);
-    minedRocks.set(rk.key, performance.now()+ROCK_CYCLE*(0.6+rk.seed*0.8));
-    gainMinerals(rk.val, rk.x, rk.y);
-    burst(rk.x,rk.y,"#7af0e6",16,1.8);
-    explosion(rk.x,rk.y,"#9be15d");
-  } else {
-    asteroidHits.set(rk.key,nd);
-    burst(rk.x,rk.y,"#7af0e6",4,1);
+  // drop ships that left THIS sector's roster (and aren't present in another tracked sector)
+  for (const [id, r] of [...render]) {
+    if (r.sector === s.sector && !seenThisSector.has(id)) render.delete(id);
   }
-}
-function gainMinerals(v,x,y){ me.minerals+=v; popup(x,y,"+"+v,"#ffd166"); updateBuildUI(); }
-
-/* ============================================================
-   shooting
-   ============================================================ */
-function tryFire(now){
-  if(!me.alive) return;
-  const cd = 240 - Math.min(120, (me.guns-1)*30); // faster with more guns
-  if(now-me.lastShot < cd) return;
-  me.lastShot=now;
-  const spd=720;
-  const dmg = 9 + me.guns*2;
-  const baseA=me.a;
-  const spread = me.guns>1 ? 0.12 : 0;
-  for(let g=0; g<me.guns; g++){
-    const off = me.guns>1 ? (g-(me.guns-1)/2)*spread : 0;
-    const a=baseA+off;
-    const bx=me.x+Math.cos(a)*22, by=me.y+Math.sin(a)*22;
-    const vx=Math.cos(a)*spd+me.vx, vy=Math.sin(a)*spd+me.vy;
-    spawnBullet(bx,by,vx,vy, ID, dmg, me.color, true);
-    // broadcast each shot so others see + take damage
-    send({t:"shot",id:ID,x:Math.round(bx),y:Math.round(by),vx:Math.round(vx),vy:Math.round(vy),dmg,color:me.color});
+  // bullets are short-lived; render straight from each snapshot during draw (no persistence needed)
+  // depleted rocks for this sector
+  for (const k of [...depletedSet]) if (k.startsWith(s.sector + "|")) depletedSet.delete(k);
+  for (const d of s.depleted || []) depletedSet.add(s.sector + "|" + d[0] + "," + d[1]);
+  // kill feed
+  for (const k of s.kills || []) {
+    const kn = nameOf(k.killer), vn = nameOf(k.victim);
+    pushFeed(kn, vn);
+    const rr = render.get(k.victim); if (rr) explosion(rr.x, rr.y, hsl(rr.hue, 90, 60));
   }
-  // muzzle
-  burst(me.x+Math.cos(me.a)*22, me.y+Math.sin(me.a)*22, me.color, 3, .8);
+  // my HUD + respawn state
+  const me = (s.ships || []).find(p => p.id === myId);
+  if (me) {
+    mySector = sectorContaining(org.sx + me.x, org.sy + me.y);
+    refreshHud(me);
+    const banner = document.getElementById("respawn");
+    if (!me.alive) banner.classList.add("show"); else banner.classList.remove("show");
+  }
+  renderLiveCount();
+}
+function nameOf(id) { const r = render.get(id); return r ? r.name : (id ? id.slice(0, 6) : "a ship"); }
+
+/* ---------- consensus: the sealed, chain-anchored leaderboard ---------- */
+function applySeal(c) {
+  if (!c || c.t !== "seal") return;
+  sealMeta = { cid: c.cid, height: c.height, beacon_hash: c.beacon_hash, digest: c.digest, host: c.host };
+  // The commitment carries the canonical standings inline if present; otherwise we keep the last.
+  if (Array.isArray(c.standings)) board = c.standings;
+  // We don't have the standings in the commitment (it's just the CID+anchor); aggregate from the
+  // live snapshots instead so the visible board is always populated, and SHOW the chain anchor as
+  // proof it's been sealed. (The CID/height is the tamper-proof handle a stranger verifies.)
+  renderBoard();
 }
 
-/* ============================================================
-   damage to self (victim-authoritative)
-   ============================================================ */
-function damageSelf(amount, fromColor){
-  if(!me.alive) return;
-  me.hp -= amount;
-  burst(me.x,me.y, fromColor||"#ff5d72", 5, 1.2);
-  if(me.hp<=0){ die(); }
-}
-function die(){
-  if(!me.alive) return;
-  me.alive=false; me.hp=0;
-  explosion(me.x,me.y,me.color);
-  const drop = Math.floor(me.minerals*0.4);
-  me.deadUntil = performance.now()+RESP_TIME;
-  // broadcast death (others credit the kill via proximity heuristic on their side; we also feed locally)
-  send({t:"death",id:ID,name:me.name,color:me.color,x:Math.round(me.x),y:Math.round(me.y),drop});
-  document.getElementById("respawn").classList.add("show");
-  // clear our minerals on death (dropped)
-  me.minerals = Math.max(0, me.minerals - drop);
-  updateBuildUI();
-  saveProgress();
-}
-function respawn(){
-  me.alive=true;
-  me.x=rand(WORLD*0.3,WORLD*0.7); me.y=rand(WORLD*0.3,WORLD*0.7);
-  me.vx=0; me.vy=0; me.hp=me.maxhp;
-  document.getElementById("respawn").classList.remove("show");
+/* aggregate live kills across the sectors we can see, for the on-screen leaderboard */
+function liveStandings() {
+  const by = new Map();
+  for (const r of render.values()) {
+    const e = by.get(r.name + " " + r.hue) || { name: r.name, hue: r.hue, kills: 0 };
+    e.kills = Math.max(e.kills, r.kills || 0);
+    by.set(r.name + " " + r.hue, e);
+  }
+  return [...by.values()].filter(r => r.kills > 0).sort((a, b) => b.kills - a.kills).slice(0, 10);
 }
 
-/* when WE destroy a peer: we detect their hp<=0 from their state OR we just credit on our bullets.
-   Simplest robust scheme: track damage we deal to peers locally; if a peer we've been hitting
-   sends a death, and we were the last to damage them recently, we claim the kill. */
-const myDamageTo = new Map(); // peerId -> {amt,t}
-function noteDamageDealt(peerId, amt){
-  const now=performance.now();
-  myDamageTo.set(peerId, {amt:(myDamageTo.has(peerId)?myDamageTo.get(peerId).amt:0)+amt, t:now});
+/* ---------- particles / popups / kill feed ---------- */
+function popup(x, y, txt, color) { popups.push({ x, y, t: 1, txt, color }); }
+function burst(x, y, color, n, sp) { for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = (0.5 + Math.random()) * (sp || 1) * 2.4; parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, color }); } }
+function explosion(x, y, color) { burst(x, y, color, 22, 2.4); }
+function pushFeed(killer, victim) {
+  const feed = document.getElementById("feed");
+  const el = document.createElement("div"); el.className = "toast";
+  el.innerHTML = `<b>${esc(killer)}</b> <span class="vs">destroyed</span> <span class="victim">${esc(victim)}</span>`;
+  feed.appendChild(el); setTimeout(() => el.remove(), 4200);
+  while (feed.children.length > 5) feed.firstChild.remove();
 }
 
-/* ============================================================
-   build menu
-   ============================================================ */
+/* ---------- input ---------- */
+const keys = {}; let firing = false; const pointer = { x: 0, y: 0, active: false };
+addEventListener("keydown", e => { if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return; if (!playing) return; keys[e.key.toLowerCase()] = true; if (e.key === " ") { firing = true; e.preventDefault(); } if (e.key.toLowerCase() === "b") toggleBuild(); });
+addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; if (e.key === " ") firing = false; });
+cv.addEventListener("mousemove", e => { pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true; });
+cv.addEventListener("mousedown", e => { if (!playing) return; firing = true; pointer.x = e.clientX; pointer.y = e.clientY; });
+addEventListener("mouseup", () => { if (!keys[" "]) firing = false; });
+let touchSteer = null;
+cv.addEventListener("touchstart", e => { if (!playing) return; const t = e.changedTouches[0]; touchSteer = { x: t.clientX, y: t.clientY, id: t.identifier }; pointer.active = true; e.preventDefault(); }, { passive: false });
+cv.addEventListener("touchmove", e => { if (!touchSteer) return; for (const t of e.changedTouches) if (t.identifier === touchSteer.id) { touchSteer.x = t.clientX; touchSteer.y = t.clientY; } e.preventDefault(); }, { passive: false });
+cv.addEventListener("touchend", e => { for (const t of e.changedTouches) if (touchSteer && t.identifier === touchSteer.id) touchSteer = null; e.preventDefault(); }, { passive: false });
+const fireBtn = document.getElementById("fireBtn");
+fireBtn.addEventListener("touchstart", e => { firing = true; e.preventDefault(); }, { passive: false });
+fireBtn.addEventListener("touchend", e => { firing = false; e.preventDefault(); }, { passive: false });
+fireBtn.addEventListener("mousedown", () => firing = true);
+fireBtn.addEventListener("mouseup", () => firing = false);
+
+/* compute the input we want this frame and the absolute aim heading (toward pointer/finger) */
+function currentInput() {
+  const meR = render.get(myId);
+  // aim: toward pointer in world space
+  let aim = meR ? meR.a : 0;
+  const px = touchSteer ? touchSteer.x : pointer.x, py = touchSteer ? touchSteer.y : pointer.y;
+  if (meR && (pointer.active || touchSteer)) {
+    const wx = camX + (px - VW / 2) / VIEW, wy = camY + (py - VH / 2) / VIEW;
+    aim = Math.atan2(wy - meR.y, wx - meR.x);
+  }
+  let thrust = !!(keys["w"] || keys["arrowup"] || touchSteer);
+  if (touchSteer && meR) {
+    // drag-to-steer also thrusts toward the finger
+    thrust = true;
+  } else if (keys["s"] || keys["arrowdown"]) {
+    thrust = false;
+  }
+  // keyboard turn (when not mouse-aiming): a/d rotate
+  let turn = 0;
+  if (!pointer.active && !touchSteer) { if (keys["a"] || keys["arrowleft"]) turn = -1; if (keys["d"] || keys["arrowright"]) turn = 1; }
+  return { t: "in", thrust, turn, fire: !!firing, aim: +aim.toFixed(3), name: displayName() };
+}
+
+/* ---------- build menu (authoritative: we just SEND the buy; server prices & gates it) ---------- */
 const BUILD = [
-  { id:"hull", name:"Reinforce Hull", desc:"+40 max hull, full repair",
-    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#43e0a0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>`,
-    cost:(lv)=>30+lv*25, max:6, lvl:()=>Math.round((me.maxhp-100)/40),
-    apply:()=>{ me.maxhp+=40; me.hp=me.maxhp; } },
-  { id:"speed", name:"Thruster Tune", desc:"+18% top speed & accel",
-    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14l9-9 2 2-4 5h5l-9 9-2-2 4-5H4z"/></svg>`,
-    cost:(lv)=>25+lv*22, max:6, lvl:()=>me.speed_lv||0,
-    apply:()=>{ me.speed*=1.18; me.speed_lv=(me.speed_lv||0)+1; } },
-  { id:"gun", name:"Extra Gun", desc:"+1 cannon, faster fire",
-    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#ffd166" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h13M16 9l4 3-4 3M6 7v10"/></svg>`,
-    cost:(lv)=>40+lv*40, max:4, lvl:()=>me.guns-1,
-    apply:()=>{ me.guns=Math.min(5,me.guns+1); } },
-  { id:"drone", name:"Combat Drone", desc:"Orbits you, auto-fires at enemies",
-    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#c98bff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 4v3M12 17v3M4 12h3M17 12h3"/></svg>`,
-    cost:(lv)=>50+lv*45, max:5, lvl:()=>drones.length,
-    apply:()=>{ drones.push({x:me.x,y:me.y,a:0,vx:0,vy:0,cool:0,orbit:rand(0,TAU),rad:rand(46,72)}); } },
-  { id:"turret", name:"Sentry Turret", desc:"Drop a turret that holds ground",
-    icon:`<svg viewBox="0 0 24 24" fill="none" stroke="#ff9f43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20h14M8 20v-5h8v5M12 15V9M12 9l5-3M12 9L7 6"/></svg>`,
-    cost:(lv)=>45, max:99, lvl:()=>turrets.length,
-    apply:()=>{ turrets.push({x:me.x-Math.cos(me.a)*40,y:me.y-Math.sin(me.a)*40,a:0,cool:0,life:30}); } },
+  { id: "hull", name: "Reinforce Hull", desc: "+40 max hull, full repair",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#43e0a0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>`,
+    cost: me => 30 + Math.max(0, Math.round((me.maxhp - BASE_HP) / 40)) * 25, maxed: me => me.maxhp >= BASE_HP + 40 * 6 },
+  { id: "speed", name: "Thruster Tune", desc: "+16% top speed & accel",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#37c6ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14l9-9 2 2-4 5h5l-9 9-2-2 4-5H4z"/></svg>`,
+    cost: () => 25, maxed: () => false },
+  { id: "gun", name: "Extra Gun", desc: "+1 cannon, faster fire",
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="#ffd166" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h13M16 9l4 3-4 3M6 7v10"/></svg>`,
+    cost: me => 40 + (Math.max(0, (me.guns || 1) - 1)) * 40, maxed: me => (me.guns || 1) >= 5 },
 ];
-const buildPanel=document.getElementById("buildPanel");
-function toggleBuild(){ buildPanel.classList.toggle("show"); if(buildPanel.classList.contains("show")) updateBuildUI(); }
-document.getElementById("buildToggle").addEventListener("click",toggleBuild);
-
-function buildBuildUI(){
-  const list=document.getElementById("buildList");
-  list.innerHTML="";
-  BUILD.forEach(b=>{
-    const btn=document.createElement("button");
-    btn.className="bopt"; btn.dataset.id=b.id;
-    btn.innerHTML=`<span class="ic">${b.icon}</span><span class="bd"><span class="bt">${b.name} <span class="lv" data-lv></span></span><span class="bs">${b.desc}</span></span><span class="cost" data-cost></span>`;
-    btn.addEventListener("click",()=>buy(b));
-    list.appendChild(btn);
+const buildPanel = document.getElementById("buildPanel");
+function toggleBuild() { buildPanel.classList.toggle("show"); if (buildPanel.classList.contains("show")) updateBuildUI(); }
+document.getElementById("buildToggle").addEventListener("click", toggleBuild);
+function buildBuildUI() {
+  const list = document.getElementById("buildList"); list.innerHTML = "";
+  BUILD.forEach(b => {
+    const btn = document.createElement("button"); btn.className = "bopt"; btn.dataset.id = b.id;
+    btn.innerHTML = `<span class="ic">${b.icon}</span><span class="bd"><span class="bt">${b.name}</span><span class="bs">${b.desc}</span></span><span class="cost" data-cost></span>`;
+    btn.addEventListener("click", () => buy(b)); list.appendChild(btn);
   });
   updateBuildUI();
 }
-function curCost(b){ return b.cost(b.lvl()); }
-function updateBuildUI(){
-  document.getElementById("hud-min").textContent=me.minerals;
-  document.getElementById("build-bal").textContent=me.minerals+" min";
-  document.querySelectorAll("#buildList .bopt").forEach(btn=>{
-    const b=BUILD.find(x=>x.id===btn.dataset.id); if(!b)return;
-    const lv=b.lvl(), maxed=lv>=b.max, cost=curCost(b);
-    btn.querySelector("[data-cost]").textContent = maxed?"MAX":cost;
-    const lvEl=btn.querySelector("[data-lv]");
-    lvEl.textContent = b.max<90 ? "Lv "+lv : (lv>0?("×"+lv):"");
-    btn.disabled = maxed || me.minerals<cost;
+function meView() { return render.get(myId) || { minerals: 0, maxhp: BASE_HP, guns: 1, kills: 0, hp: BASE_HP }; }
+function updateBuildUI() {
+  const me = meView();
+  document.getElementById("hud-min").textContent = me.minerals || 0;
+  document.getElementById("build-bal").textContent = (me.minerals || 0) + " min";
+  document.querySelectorAll("#buildList .bopt").forEach(btn => {
+    const b = BUILD.find(x => x.id === btn.dataset.id); if (!b) return;
+    const maxed = b.maxed(me), cost = b.cost(me);
+    btn.querySelector("[data-cost]").textContent = maxed ? "MAX" : cost;
+    btn.disabled = maxed || (me.minerals || 0) < cost;
   });
 }
-function buy(b){
-  const lv=b.lvl(); if(lv>=b.max) return;
-  const cost=curCost(b);
-  if(me.minerals<cost) return;
-  me.minerals-=cost;
-  b.apply();
-  // level changes with hull/guns
-  me.lvl = 1 + (me.guns-1) + Math.round((me.maxhp-100)/40) + (me.speed_lv||0) + drones.length;
-  popup(me.x,me.y-30,b.name,"#37c6ff");
-  burst(me.x,me.y,"#37c6ff",10,1.3);
-  updateBuildUI();
-  refreshHud();
-  pushState(true);
-  saveProgress();
+function buy(b) {
+  // authoritative: we don't change anything locally; the sector host validates & applies.
+  publish(IN_TOPIC(sectorToken(mySector)), { t: "build", kind: b.id });
+  burst(meView().x || camX, meView().y || camY, "#37c6ff", 8, 1.1);
 }
 
-/* ============================================================
-   HUD refresh
-   ============================================================ */
-function refreshHud(){
-  document.getElementById("hpfill").style.width=clamp(me.hp/me.maxhp*100,0,100)+"%";
-  document.getElementById("hud-min").textContent=me.minerals;
-  document.getElementById("hud-lvl").textContent=me.lvl;
-  document.getElementById("hud-kills").textContent=me.kills;
+/* ---------- HUD ---------- */
+function refreshHud(me) {
+  document.getElementById("hpfill").style.width = Math.max(0, Math.min(100, (me.hp / me.max_hp) * 100)) + "%";
+  document.getElementById("hud-min").textContent = me.minerals;
+  document.getElementById("hud-kills").textContent = me.kills;
+  document.getElementById("hud-lvl").textContent = me.guns;
+  document.getElementById("hud-name").textContent = displayName();
+  if (buildPanel.classList.contains("show")) updateBuildUI();
+}
+function renderLiveCount() {
+  const n = render.size || 1;
+  document.getElementById("hud-online").textContent = n;
+  const ol = document.getElementById("ol-text");
+  const r = render.get(myId);
+  const host = r && sectorSnaps.get(r.sector) ? sectorSnaps.get(r.sector).host : null;
+  if (host && host !== lastHostShown) { lastHostShown = host; }
+  if (ol) ol.textContent = connected ? `connected — ${n} online` : "connecting to the mesh…";
+}
+function renderBoard() {
+  const el = document.getElementById("board-list");
+  const rows = board.length ? board.map(s => ({ name: s.name, kills: s.kills, hue: hueForId(s.id || ""), me: s.id === myId })) : liveStandings().map(s => ({ name: s.name, kills: s.kills, hue: s.hue, me: false }));
+  if (!rows.length) { el.innerHTML = '<div class="empty">no kills yet — be the first</div>'; return; }
+  let html = rows.map(r => `<div class="lr"><span class="sw" style="background:${hsl(r.hue, 80, 60)}"></span><span class="nm${r.me ? ' me' : ''}">${esc(r.name)}</span><span class="kc">${r.kills}</span></div>`).join("");
+  if (sealMeta) html += `<div class="empty" style="margin-top:6px" title="leaderboard sealed against the PoW chain; verify by re-fetching the CID and checking the height/hash">⛓ sealed @ height ${sealMeta.height} · cid ${String(sealMeta.cid).slice(0, 10)}…</div>`;
+  el.innerHTML = html;
 }
 
-/* ============================================================
-   main update
-   ============================================================ */
-let last=performance.now(), stateAcc=0, boardAcc=0;
-function update(dt, now){
-  // ----- input intent -----
-  let thrust=false, aimX=0, aimY=0;
-  if(touchSteer){
-    aimX = touchSteer.x - W/2; aimY = touchSteer.y - H/2;
-    me.a = Math.atan2(aimY,aimX);
-    thrust=true;
-  } else {
-    // mouse aim
-    aimX = pointer.x - W/2; aimY = pointer.y - H/2;
-    if(pointer.active && (Math.abs(aimX)+Math.abs(aimY))>4) me.a = Math.atan2(aimY,aimX);
-    if(pointer.down) thrust=true;
-  }
-  // keyboard movement (WASD/arrows): directional thrust
-  let kx=0,ky=0;
-  if(keys["w"]||keys["arrowup"])ky-=1;
-  if(keys["s"]||keys["arrowdown"])ky+=1;
-  if(keys["a"]||keys["arrowleft"])kx-=1;
-  if(keys["d"]||keys["arrowright"])kx+=1;
-
-  if(me.alive){
-    const accel = 560*me.speed;
-    const maxv = 360*me.speed;
-    if(kx||ky){
-      const l=Math.hypot(kx,ky); me.vx+=kx/l*accel*dt; me.vy+=ky/l*accel*dt;
-      if(!touchSteer && !pointer.down) me.a=angLerp(me.a, Math.atan2(ky,kx), 0.2);
-    }
-    if(thrust){ me.vx+=Math.cos(me.a)*accel*dt; me.vy+=Math.sin(me.a)*accel*dt;
-      // thruster particles
-      if(Math.random()<.8){ const ta=me.a+Math.PI+rand(-.3,.3); particles.push({x:me.x+Math.cos(me.a)*-16,y:me.y+Math.sin(me.a)*-16,vx:Math.cos(ta)*rand(60,180)+me.vx*.4,vy:Math.sin(ta)*rand(60,180)+me.vy*.4,life:rand(.18,.4),max:.4,color:Math.random()<.5?me.color:"#7af0e6",r:rand(1.4,3)}); }
-    }
-    // drag + clamp
-    const sp=Math.hypot(me.vx,me.vy);
-    if(sp>maxv){ me.vx*=maxv/sp; me.vy*=maxv/sp; }
-    me.vx*=0.992; me.vy*=0.992;
-    me.x+=me.vx*dt; me.y+=me.vy*dt;
-    // world bounds (soft bounce)
-    if(me.x<20){me.x=20;me.vx=Math.abs(me.vx)*.5;} if(me.x>WORLD-20){me.x=WORLD-20;me.vx=-Math.abs(me.vx)*.5;}
-    if(me.y<20){me.y=20;me.vy=Math.abs(me.vy)*.5;} if(me.y>WORLD-20){me.y=WORLD-20;me.vy=-Math.abs(me.vy)*.5;}
-    // slow hull regen
-    if(me.hp<me.maxhp) me.hp=Math.min(me.maxhp, me.hp+2.5*dt);
-    if(firing) tryFire(now);
-  } else {
-    if(now>=me.deadUntil) respawn();
-  }
-
-  // ----- camera follow -----
-  cam.x = lerp(cam.x, me.x, 1-Math.pow(0.001,dt));
-  cam.y = lerp(cam.y, me.y, 1-Math.pow(0.001,dt));
-
-  // ----- peers interpolation + cull -----
-  for(const [id,p] of peers){
-    if(now-p.last>PEER_TTL){ peers.delete(id); continue; }
-    if(p.x!==undefined){ p.x=lerp(p.x,p.tx,clamp(dt*10,0,1)); p.y=lerp(p.y,p.ty,clamp(dt*10,0,1)); p.a=angLerp(p.a,p.ta,clamp(dt*10,0,1)); }
-  }
-
-  // ----- bullets -----
-  for(let i=bullets.length-1;i>=0;i--){
-    const b=bullets[i];
-    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt;
-    if(b.life<=0){ bullets.splice(i,1); continue; }
-    // mine our own bullets vs asteroids
-    if(b.mine){
-      let hit=false;
-      eachVisibleRock(rk=>{
-        if(hit)return;
-        if((b.x-rk.x)**2+(b.y-rk.y)**2 < (rk.r*rk.r)){ mineRock(rk, b.dmg); hit=true; }
-      });
-      if(hit){ bullets.splice(i,1); continue; }
-      // our bullets vs peers (visual only — peers decide their own damage; but we note for kill credit)
-      for(const p of peers.values()){
-        if(p.x===undefined||!p.alive)continue;
-        if((b.x-p.x)**2+(b.y-p.y)**2 < 20*20){
-          noteDamageDealt(p.id,b.dmg);
-          burst(b.x,b.y,p.color,5,1.2);
-          bullets.splice(i,1); hit=true; break;
-        }
-      }
-      if(hit)continue;
-    } else {
-      // enemy bullet vs ME (victim-authoritative)
-      if(me.alive && (b.x-me.x)**2+(b.y-me.y)**2 < 18*18){
-        damageSelf(b.dmg, b.color);
-        send({t:"hit",id:ID,x:Math.round(me.x),y:Math.round(me.y),color:b.color});
-        bullets.splice(i,1); continue;
-      }
-    }
-  }
-
-  // ----- collide ME with asteroids (mining by ramming, light damage) -----
-  if(me.alive){
-    eachVisibleRock(rk=>{
-      const dx=me.x-rk.x, dy=me.y-rk.y, d2=dx*dx+dy*dy, rr=(rk.r+14);
-      if(d2<rr*rr){
-        mineRock(rk, 30);                 // ramming mines fast
-        const d=Math.sqrt(d2)||1; me.vx+=dx/d*60; me.vy+=dy/d*60; // push off
-        if(Math.random()<.3) damageSelf(2,"#9be15d");
-      }
-    });
-  }
-
-  // ----- loot pickups -----
-  for(let i=loot.length-1;i>=0;i--){
-    const L=loot[i]; L.x+=L.vx*dt; L.y+=L.vy*dt; L.vx*=0.95; L.vy*=0.95; L.life-=dt;
-    if(L.life<=0){ loot.splice(i,1); continue; }
-    if(me.alive){
-      const dx=me.x-L.x, dy=me.y-L.y, d2=dx*dx+dy*dy;
-      if(d2<140*140){ const d=Math.sqrt(d2)||1; L.vx+=dx/d*420*dt; L.vy+=dy/d*420*dt; } // magnet
-      if(d2<22*22){ gainMinerals(L.amt,L.x,L.y); loot.splice(i,1); }
-    }
-  }
-
-  // ----- drones -----
-  for(const dr of drones){
-    dr.orbit += dt*1.4;
-    const ox=me.x+Math.cos(dr.orbit)*dr.rad, oy=me.y+Math.sin(dr.orbit)*dr.rad;
-    dr.x=lerp(dr.x,ox,clamp(dt*5,0,1)); dr.y=lerp(dr.y,oy,clamp(dt*5,0,1));
-    // target nearest peer
-    let tgt=null,best=520*520;
-    for(const p of peers.values()){ if(p.x===undefined||!p.alive)continue; const d2=(p.x-dr.x)**2+(p.y-dr.y)**2; if(d2<best){best=d2;tgt=p;} }
-    if(tgt){ dr.a=Math.atan2(tgt.y-dr.y,tgt.x-dr.x); dr.cool-=dt;
-      if(dr.cool<=0){ dr.cool=0.6; const spd=680; const vx=Math.cos(dr.a)*spd,vy=Math.sin(dr.a)*spd;
-        spawnBullet(dr.x,dr.y,vx,vy,ID,8,"#c98bff",true);
-        send({t:"shot",id:ID,x:Math.round(dr.x),y:Math.round(dr.y),vx:Math.round(vx),vy:Math.round(vy),dmg:8,color:"#c98bff"});
-      }
-    } else { dr.a=me.a; }
-  }
-
-  // ----- turrets -----
-  for(let i=turrets.length-1;i>=0;i--){
-    const t=turrets[i]; t.life-=dt; if(t.life<=0){ turrets.splice(i,1); continue; }
-    let tgt=null,best=600*600;
-    for(const p of peers.values()){ if(p.x===undefined||!p.alive)continue; const d2=(p.x-t.x)**2+(p.y-t.y)**2; if(d2<best){best=d2;tgt=p;} }
-    if(tgt){ t.a=angLerp(t.a,Math.atan2(tgt.y-t.y,tgt.x-t.x),0.15); t.cool-=dt;
-      if(t.cool<=0){ t.cool=0.5; const spd=720; const vx=Math.cos(t.a)*spd,vy=Math.sin(t.a)*spd;
-        spawnBullet(t.x+Math.cos(t.a)*14,t.y+Math.sin(t.a)*14,vx,vy,ID,7,"#ff9f43",true);
-        send({t:"shot",id:ID,x:Math.round(t.x),y:Math.round(t.y),vx:Math.round(vx),vy:Math.round(vy),dmg:7,color:"#ff9f43"});
-      }
-    }
-  }
-
-  // ----- particles -----
-  for(let i=particles.length-1;i>=0;i--){
-    const p=particles[i]; p.life-=dt;
-    if(p.life<=0){ particles.splice(i,1); continue; }
-    if(p.ring){ p.r += (p.rmax-p.r)*clamp(dt*8,0,1); continue; }
-    p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.94; p.vy*=0.94;
-  }
-  // ----- popups -----
-  for(let i=popups.length-1;i>=0;i--){ const q=popups[i]; q.t+=dt; q.y-=22*dt; if(q.t>1.1) popups.splice(i,1); }
-
-  // ----- networking cadence -----
-  stateAcc+=dt*1000;
-  if(stateAcc>=SHOT_INTERVAL){ stateAcc=0; pushState(); }
-
-  boardAcc+=dt*1000;
-  if(boardAcc>=4000){ boardAcc=0; loadBoard(); refreshOnline(); }
-
-  refreshHud();
-}
-
-/* ============================================================
-   render
-   ============================================================ */
-function render(){
-  ctx.fillStyle="#03060e"; ctx.fillRect(0,0,W,H);
-  // nebula glow
-  const g=ctx.createRadialGradient(W*0.5,H*-0.1,0,W*0.5,H*-0.1,Math.max(W,H));
-  g.addColorStop(0,"rgba(55,198,255,0.06)"); g.addColorStop(1,"rgba(3,6,14,0)");
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-
-  // starfield (parallax)
-  ctx.save();
-  for(const s of stars){
-    const px=((s.x*W - cam.x*s.z*0.15)%W+W)%W;
-    const py=((s.y*H - cam.y*s.z*0.15)%H+H)%H;
-    ctx.globalAlpha=0.35+s.z*0.55;
-    ctx.fillStyle = s.z>0.8?"#bfe6ff":"#5e768f";
-    ctx.fillRect(px,py,s.s,s.s);
-  }
-  ctx.restore();
-
-  ctx.save();
-  ctx.translate(W/2, H/2);
-  ctx.scale(VIEW, VIEW);
-  ctx.translate(-cam.x, -cam.y);
-
-  // world border
-  ctx.strokeStyle="rgba(116,176,255,.16)"; ctx.lineWidth=2;
-  ctx.strokeRect(0,0,WORLD,WORLD);
-
-  // asteroids
-  eachVisibleRock(rk=>{
-    const dmg=asteroidHits.get(rk.key)||0;
-    drawRock(rk, dmg);
-  });
-
-  // loot
-  for(const L of loot){
-    ctx.globalAlpha=clamp(L.life/3,0,1);
-    ctx.fillStyle="#ffd166"; ctx.shadowColor="#ffd166"; ctx.shadowBlur=8;
-    ctx.beginPath(); ctx.arc(L.x,L.y,3.4,0,TAU); ctx.fill();
-    ctx.shadowBlur=0; ctx.globalAlpha=1;
-  }
-
-  // turrets
-  for(const t of turrets) drawTurret(t);
-  // drones
-  for(const dr of drones) drawDrone(dr);
-
-  // bullets
-  for(const b of bullets){
-    ctx.globalAlpha=clamp(b.life/1.2,0,1);
-    ctx.strokeStyle=b.color; ctx.lineWidth=2.4; ctx.shadowColor=b.color; ctx.shadowBlur=10; ctx.lineCap="round";
-    ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*0.012,b.y-b.vy*0.012); ctx.stroke();
-    ctx.shadowBlur=0; ctx.globalAlpha=1;
-  }
-
-  // peers
-  for(const p of peers.values()){
-    if(p.x===undefined)continue;
-    if(!p.alive){ continue; }
-    drawShip(p.x,p.y,p.a,p.color,false,p.name,p.lvl);
-  }
-
-  // me
-  if(me.alive) drawShip(me.x,me.y,me.a,me.color,true,me.name,me.lvl);
-
-  // particles
-  for(const p of particles){
-    if(p.ring){
-      ctx.globalAlpha=clamp(p.life/p.max,0,1)*0.6;
-      ctx.strokeStyle=p.color; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,TAU); ctx.stroke();
-      ctx.globalAlpha=1; continue;
-    }
-    ctx.globalAlpha=clamp(p.life/p.max,0,1);
-    ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=6;
-    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,TAU); ctx.fill();
-  }
-  ctx.shadowBlur=0; ctx.globalAlpha=1;
-
-  // popups
-  ctx.textAlign="center"; ctx.font="600 14px "+'"JetBrains Mono",monospace';
-  for(const q of popups){
-    ctx.globalAlpha=clamp(1.1-q.t,0,1);
-    ctx.fillStyle=q.color; ctx.shadowColor=q.color; ctx.shadowBlur=8;
-    ctx.fillText(q.txt,q.x,q.y);
-  }
-  ctx.shadowBlur=0; ctx.globalAlpha=1;
-
-  ctx.restore();
-
-  // minimap
-  drawMinimap();
-}
-
-function drawRock(rk,dmg){
-  ctx.save();
-  ctx.translate(rk.x,rk.y);
-  const sides=7, frac=clamp(1-dmg/rk.r,0.35,1);
-  ctx.beginPath();
-  for(let i=0;i<sides;i++){
-    const ang=i/sides*TAU;
-    const wob=0.7+h2(rk.gx*sides+i,rk.gy)*0.5;
-    const r=rk.r*wob*frac;
-    const x=Math.cos(ang)*r, y=Math.sin(ang)*r;
-    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-  }
-  ctx.closePath();
-  const grd=ctx.createLinearGradient(-rk.r,-rk.r,rk.r,rk.r);
-  grd.addColorStop(0,"#16324a"); grd.addColorStop(1,"#0c1a2a");
-  ctx.fillStyle=grd; ctx.fill();
-  ctx.strokeStyle="rgba(122,240,230,.4)"; ctx.lineWidth=1.6; ctx.stroke();
-  // mineral veins (green glow)
-  ctx.strokeStyle="rgba(155,225,93,.55)"; ctx.lineWidth=1.4; ctx.shadowColor="#9be15d"; ctx.shadowBlur=6;
-  ctx.beginPath();
-  ctx.moveTo(-rk.r*0.3*frac,0); ctx.lineTo(rk.r*0.2*frac,-rk.r*0.25*frac); ctx.lineTo(rk.r*0.35*frac,rk.r*0.1*frac);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawShip(x,y,a,color,isMe,name,lvl){
-  ctx.save();
-  ctx.translate(x,y); ctx.rotate(a);
-  // glow body
-  ctx.shadowColor=color; ctx.shadowBlur=isMe?16:11;
-  ctx.beginPath();
-  ctx.moveTo(18,0); ctx.lineTo(-12,-11); ctx.lineTo(-6,0); ctx.lineTo(-12,11);
-  ctx.closePath();
-  const grd=ctx.createLinearGradient(-12,0,18,0);
-  grd.addColorStop(0,"rgba(7,13,24,.9)"); grd.addColorStop(1,color);
-  ctx.fillStyle=grd; ctx.fill();
-  ctx.lineWidth=2; ctx.strokeStyle=color; ctx.stroke();
-  // cockpit
-  ctx.shadowBlur=0;
-  ctx.beginPath(); ctx.arc(2,0,3,0,TAU); ctx.fillStyle="#eaf6ff"; ctx.fill();
-  ctx.restore();
-
-  // name + level tag (screen-up, not rotated)
-  ctx.save();
-  ctx.translate(x,y);
-  ctx.shadowBlur=0; ctx.textAlign="center";
-  ctx.font="600 12px "+'"Hanken Grotesk",sans-serif';
-  ctx.fillStyle=isMe?"#fff":"rgba(233,241,251,.85)";
-  ctx.fillText(name,0,-24);
-  ctx.font="500 9px "+'"JetBrains Mono",monospace';
-  ctx.fillStyle=color;
-  ctx.fillText("Lv"+lvl,0,-13);
-  ctx.restore();
-}
-
-function drawDrone(dr){
-  ctx.save(); ctx.translate(dr.x,dr.y); ctx.rotate(dr.a);
-  ctx.shadowColor="#c98bff"; ctx.shadowBlur=9;
-  ctx.fillStyle="#c98bff";
-  ctx.beginPath(); ctx.moveTo(8,0); ctx.lineTo(-6,-5); ctx.lineTo(-6,5); ctx.closePath(); ctx.fill();
-  ctx.restore();
-}
-function drawTurret(t){
-  ctx.save(); ctx.translate(t.x,t.y);
-  ctx.globalAlpha=clamp(t.life/5,0.3,1);
-  ctx.shadowColor="#ff9f43"; ctx.shadowBlur=8;
-  ctx.fillStyle="rgba(7,13,24,.9)"; ctx.strokeStyle="#ff9f43"; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.arc(0,0,9,0,TAU); ctx.fill(); ctx.stroke();
-  ctx.rotate(t.a);
-  ctx.fillStyle="#ff9f43"; ctx.fillRect(0,-2.5,16,5);
-  ctx.restore(); ctx.globalAlpha=1; ctx.shadowBlur=0;
-}
-
-function drawMinimap(){
-  const S=Math.min(150, W*0.32), pad=12;
-  const ox=W-S-pad, oy=H-S-pad - (isTouch?0:0);
-  ctx.save();
-  ctx.globalAlpha=0.92;
-  ctx.fillStyle="rgba(7,13,24,.7)"; ctx.strokeStyle="rgba(116,176,255,.2)"; ctx.lineWidth=1;
-  roundRect(ox,oy,S,S,8); ctx.fill(); ctx.stroke();
-  const sc=S/WORLD;
-  // viewport box
-  ctx.strokeStyle="rgba(116,176,255,.18)";
-  ctx.strokeRect(ox+(cam.x-(W/2)/VIEW)*sc, oy+(cam.y-(H/2)/VIEW)*sc, (W/VIEW)*sc, (H/VIEW)*sc);
-  // peers
-  for(const p of peers.values()){ if(p.x===undefined||!p.alive)continue;
-    ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(ox+p.x*sc,oy+p.y*sc,2,0,TAU); ctx.fill(); }
-  // me
-  ctx.fillStyle=me.color; ctx.shadowColor=me.color; ctx.shadowBlur=6;
-  ctx.beginPath(); ctx.arc(ox+me.x*sc,oy+me.y*sc,3,0,TAU); ctx.fill(); ctx.shadowBlur=0;
-  ctx.restore();
-}
-function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
-
-/* ============================================================
-   loop
-   ============================================================ */
-function frame(now){
-  let dt=(now-last)/1000; last=now;
-  if(dt>0.05)dt=0.05;
-  if(playing) update(dt, now);
-  render();
+/* ---------- render loop ---------- */
+function frame() {
+  const meR = render.get(myId);
+  if (meR) { camX += (meR.x - camX) * 0.12; camY += (meR.y - camY) * 0.12; }
+  // smooth other ships
+  for (const r of render.values()) { r.rx += (r.x - r.rx) * 0.3; r.ry += (r.y - r.ry) * 0.3; r.ra = r.a; }
+  draw();
   requestAnimationFrame(frame);
+}
+function w2s(x, y) { return [VW / 2 + (x - camX) * VIEW, VH / 2 + (y - camY) * VIEW]; }
+function draw() {
+  ctx.clearRect(0, 0, VW, VH);
+  // background
+  ctx.fillStyle = "#03060e"; ctx.fillRect(0, 0, VW, VH);
+  // starfield (parallax)
+  for (const st of stars) {
+    const sx = (st.x * VW + camX * st.z * -0.04) % VW, sy = (st.y * VH + camY * st.z * -0.04) % VH;
+    ctx.globalAlpha = 0.25 + st.z * 0.5; ctx.fillStyle = "#9fc4ff";
+    ctx.fillRect((sx + VW) % VW, (sy + VH) % VH, st.s, st.s);
+  }
+  ctx.globalAlpha = 1;
+  // sector grid lines (faint) so the SHARDING is visible: each cell = one authoritative cell
+  drawSectorGrid();
+  // asteroids: render the field for the sectors in view, hiding depleted cells
+  drawAsteroids();
+  // bullets (straight from authoritative snapshots)
+  for (const snap of sectorSnaps.values()) {
+    const org = parseTok(snap.sector);
+    for (const b of snap.bullets || []) {
+      const [sx, sy] = w2s(org.sx + b.x, org.sy + b.y);
+      ctx.fillStyle = hsl(b.hue, 90, 70); ctx.beginPath(); ctx.arc(sx, sy, 2.6 * VIEW + 1.4, 0, 7); ctx.fill();
+    }
+  }
+  // ships
+  for (const [id, r] of render) drawShip(r, id === myId);
+  // particles
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.x += p.vx; p.y += p.vy; p.vx *= 0.93; p.vy *= 0.93; p.life -= 0.03;
+    if (p.life <= 0) { parts.splice(i, 1); continue; }
+    const [sx, sy] = w2s(p.x, p.y); ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillRect(sx - 1.5, sy - 1.5, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+  // popups
+  for (let i = popups.length - 1; i >= 0; i--) {
+    const p = popups[i]; p.y -= 0.6; p.t -= 0.018; if (p.t <= 0) { popups.splice(i, 1); continue; }
+    const [sx, sy] = w2s(p.x, p.y); ctx.globalAlpha = Math.max(0, p.t); ctx.fillStyle = p.color;
+    ctx.font = "600 13px JetBrains Mono, monospace"; ctx.textAlign = "center"; ctx.fillText(p.txt, sx, sy);
+  }
+  ctx.globalAlpha = 1; ctx.textAlign = "left";
+}
+function drawSectorGrid() {
+  ctx.strokeStyle = "rgba(116,176,255,.10)"; ctx.lineWidth = 1;
+  const left = camX - VW / 2 / VIEW, right = camX + VW / 2 / VIEW, top = camY - VH / 2 / VIEW, bot = camY + VH / 2 / VIEW;
+  const x0 = Math.floor(left / SECTOR_SIZE) * SECTOR_SIZE, y0 = Math.floor(top / SECTOR_SIZE) * SECTOR_SIZE;
+  for (let x = x0; x <= right; x += SECTOR_SIZE) { const [sx] = w2s(x, 0); ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, VH); ctx.stroke(); }
+  for (let y = y0; y <= bot; y += SECTOR_SIZE) { const [, sy] = w2s(0, y); ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(VW, sy); ctx.stroke(); }
+}
+function drawAsteroids() {
+  const left = camX - VW / 2 / VIEW, right = camX + VW / 2 / VIEW, top = camY - VH / 2 / VIEW, bot = camY + VH / 2 / VIEW;
+  // iterate galaxy-world rock cells in view; each cell belongs to a sector, computed sector-locally
+  const gx0 = Math.floor(left / ROCK_CELL), gx1 = Math.ceil(right / ROCK_CELL);
+  const gy0 = Math.floor(top / ROCK_CELL), gy1 = Math.ceil(bot / ROCK_CELL);
+  for (let gx = gx0; gx <= gx1; gx++) for (let gy = gy0; gy <= gy1; gy++) {
+    // which sector + sector-local cell
+    const wx = gx * ROCK_CELL, wy = gy * ROCK_CELL;
+    const sec = sectorContaining(wx, wy), tok = sectorToken(sec);
+    const lcx = gx - sec.sx * (SECTOR_SIZE / ROCK_CELL), lcy = gy - sec.sy * (SECTOR_SIZE / ROCK_CELL);
+    const rock = rockInCell(lcx, lcy); if (!rock) continue;
+    if (depletedSet.has(tok + "|" + lcx + "," + lcy)) continue;
+    const gxw = sec.sx * SECTOR_SIZE + rock.x, gyw = sec.sy * SECTOR_SIZE + rock.y;
+    const [sx, sy] = w2s(gxw, gyw); const rad = (8 + rock.val * 0.5) * VIEW;
+    ctx.fillStyle = hsl(rock.hue, 30, 38, 0.85); ctx.strokeStyle = hsl(rock.hue, 55, 62, 0.7); ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(sx, sy, rad, 0, 7); ctx.fill(); ctx.stroke();
+  }
+}
+function drawShip(r, isMe) {
+  if (!r.alive) return;
+  const [sx, sy] = w2s(r.rx, r.ry); const a = r.ra, col = hsl(r.hue, 90, 65), R = SHIP_R * VIEW;
+  ctx.save(); ctx.translate(sx, sy); ctx.rotate(a);
+  ctx.fillStyle = col; ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(R, 0); ctx.lineTo(-R * 0.7, R * 0.7); ctx.lineTo(-R * 0.35, 0); ctx.lineTo(-R * 0.7, -R * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // hp ring + name
+  ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.font = (isMe ? "700 " : "500 ") + (12 * Math.max(0.7, VIEW)) + "px Hanken Grotesk, sans-serif"; ctx.textAlign = "center";
+  ctx.fillText((r.name || "pilot") + (isMe ? " (you)" : ""), sx, sy - R - 8);
+  if (r.maxhp) {
+    const w = R * 2.2, hpw = w * Math.max(0, r.hp / r.maxhp);
+    ctx.fillStyle = "rgba(255,93,114,.25)"; ctx.fillRect(sx - w / 2, sy + R + 4, w, 3);
+    ctx.fillStyle = "#43e0a0"; ctx.fillRect(sx - w / 2, sy + R + 4, hpw, 3);
+  }
+  ctx.textAlign = "left";
 }
 requestAnimationFrame(frame);
 
-/* ============================================================
-   kill credit — process peer deaths for our kills
-   We listen by patching the death case: when a death arrives, if we
-   dealt damage to that peer in the last 2.5s, count it as our kill.
-   ============================================================ */
-const origHandleMsg = handleMsg;
-handleMsg = function(m){
-  if(m && m.t==="death" && m.id!==ID){
-    const dmg=myDamageTo.get(m.id);
-    if(dmg && performance.now()-dmg.t < 2800){
-      me.kills++;
-      // we get a share of their dropped minerals
-      const steal=Math.floor((m.drop||0)*0.5);
-      if(steal>0){ me.minerals+=steal; popup(me.x,me.y-40,"+"+steal+" salvage","#9be15d"); }
-      myDamageTo.delete(m.id);
-      refreshHud();
-      writeKills();
-      saveProgress();
-      // override feed killer to us
-      const p=peers.get(m.id);
-      pushFeed(me.name, (m.name||(p?p.name:"a ship")));
-      // mark handled so origHandle doesn't double-feed
-      m._fed=true;
+/* ---------- input pump: publish our input to our CURRENT sector each tick ---------- */
+function startInputPump() {
+  setInterval(() => {
+    if (!playing || !myId) return;
+    publish(IN_TOPIC(sectorToken(mySector)), currentInput());
+  }, 1000 / 15);
+}
+
+/* ---------- interest management: (re)subscribe to our sector + neighbours only ---------- */
+async function refreshInterest() {
+  if (!myId) return;
+  const want = new Set(sectorNeighbors(mySector).map(sectorToken));
+  // subscribe to newly-relevant sectors' state, plus our own input topic so the node lets us publish
+  for (const tok of want) {
+    if (!subscribed.has(tok)) {
+      subscribed.add(tok);
+      await subscribe(STATE_TOPIC(tok));
+      onTopic(STATE_TOPIC(tok), msg => { const s = decodeJsonHex(msg.payload_hex || ""); if (s) applySnapshot(s); });
     }
   }
-  // call original but skip its feed if we already fed
-  if(m && m._fed){
-    // run original minus feed: replicate explosion + loot only
-    const p=peers.get(m.id);
-    const px=(p&&p.x!==undefined)?p.x:m.x, py=(p&&p.y!==undefined)?p.y:m.y;
-    if(typeof px==="number") explosion(px,py,(p?p.color:m.color)||"#fff");
-    if(p){p.alive=false;p.hp=0;}
-    if(m.drop && typeof px==="number") spawnLoot(px,py,m.drop);
-    refreshOnline();
-    return;
+  await subscribe(IN_TOPIC(sectorToken(mySector)));
+  await subscribe(SEAL_TOPIC);
+}
+
+/* ---------- death banner: respawn button ---------- */
+document.getElementById("respawn").addEventListener("click", () => {
+  publish(IN_TOPIC(sectorToken(mySector)), { t: "respawn" });
+});
+
+/* ---------- join overlay ---------- */
+const COLORS_HUE = [200, 170, 150, 45, 350, 280, 30, 215, 320, 100];
+function buildSwatches() {
+  const wrap = document.getElementById("swatches"); wrap.innerHTML = "";
+  COLORS_HUE.forEach(() => {}); // color is NodeId-derived & unspoofable; swatches are informational
+  const note = document.createElement("div"); note.style.cssText = "font-size:12px;color:var(--faint)";
+  note.textContent = "Your ship color is derived from your CE identity — unspoofable.";
+  wrap.appendChild(note);
+}
+const nameInput = document.getElementById("name");
+nameInput.value = myName;
+document.getElementById("reroll").addEventListener("click", () => { myName = randomHandle(); nameInput.value = myName; });
+nameInput.addEventListener("input", () => { myName = nameInput.value.slice(0, 16); });
+document.getElementById("hud-name").addEventListener("click", () => {
+  const cur = prompt("Pilot handle", displayName()); if (cur != null) { myName = cur.slice(0, 16); localStorage.setItem("spa_name", myName); }
+});
+document.getElementById("copyBtn").addEventListener("click", async e => {
+  try { await navigator.clipboard.writeText(location.href); e.target.textContent = "Copied"; e.target.classList.add("done"); setTimeout(() => { e.target.textContent = "Copy link"; e.target.classList.remove("done"); }, 1600); } catch {}
+});
+document.getElementById("playBtn").addEventListener("click", launch);
+function launch() {
+  if (!myId) return;
+  localStorage.setItem("spa_name", myName);
+  playing = true;
+  document.getElementById("overlay").classList.add("hidden");
+  document.getElementById("hud").style.display = "block";
+  // join our current sector authoritatively
+  publish(IN_TOPIC(sectorToken(mySector)), { t: "join", name: displayName() });
+  refreshInterest();
+}
+
+/* ---------- boot ---------- */
+buildSwatches(); buildBuildUI();
+(async function boot() {
+  startInbox();
+  onTopic(SEAL_TOPIC, msg => { const c = decodeJsonHex(msg.payload_hex || ""); if (c) applySeal(c); });
+  const ok = await resolveIdentity();
+  const olText = document.getElementById("ol-text");
+  if (ok) {
+    document.getElementById("ol-dot").classList.add("on");
+    olText.textContent = `mesh ready — ${myId.slice(0, 10)}…`;
+    await refreshInterest();
+  } else {
+    olText.textContent = "waiting for a CE node on this origin…";
+    const retry = setInterval(async () => { if (await resolveIdentity()) { clearInterval(retry); document.getElementById("ol-dot").classList.add("on"); olText.textContent = `mesh ready — ${myId.slice(0, 10)}…`; await refreshInterest(); } }, 2000);
   }
-  return origHandleMsg(m);
-};
-
-/* ============================================================
-   join screen
-   ============================================================ */
-const overlay=document.getElementById("overlay");
-const hud=document.getElementById("hud");
-const nameInput=document.getElementById("name");
-nameInput.value=me.name;
-let selColor=me.color;
-
-(function buildSwatches(){
-  const wrap=document.getElementById("swatches");
-  COLORS.forEach(c=>{
-    const b=document.createElement("button");
-    b.style.background=c; if(c===selColor)b.classList.add("sel");
-    b.addEventListener("click",()=>{ selColor=c; wrap.querySelectorAll("button").forEach(x=>x.classList.remove("sel")); b.classList.add("sel"); });
-    wrap.appendChild(b);
-  });
+  startInputPump();
+  // periodic interest refresh (we may have crossed a sector boundary) + keep-alive re-subscribe
+  setInterval(refreshInterest, 4000);
+  // periodic board refresh from live snapshots even before a seal arrives
+  setInterval(renderBoard, 1500);
 })();
-document.getElementById("reroll").addEventListener("click",()=>{ nameInput.value=randomHandle(); });
-
-document.getElementById("copyBtn").addEventListener("click",async function(){
-  const url=location.origin+location.pathname;
-  try{ await navigator.clipboard.writeText(url); }catch(e){
-    const ta=document.createElement("textarea"); ta.value=url; document.body.appendChild(ta); ta.select(); try{document.execCommand("copy");}catch(_){} ta.remove();
-  }
-  this.textContent="Copied!"; this.classList.add("done");
-  setTimeout(()=>{ this.textContent="Copy link"; this.classList.remove("done"); },1600);
-});
-
-function startGame(){
-  me.name=(nameInput.value.trim()||randomHandle()).slice(0,18);
-  me.color=selColor;
-  localStorage.setItem("spa_name",me.name);
-  localStorage.setItem("spa_color",me.color);
-  setHudName();
-  playing=true;
-  overlay.classList.add("hidden");
-  hud.style.display="block";
-  if(isTouch){ document.getElementById("touch").style.display="block"; }
-  buildBuildUI();
-  refreshHud(); updateBuildUI();
-  if(ws && wsReady){ send({t:"join",id:ID,name:me.name}); pushState(true); }
-  loadBoard();
-  writeKills();
-}
-document.getElementById("playBtn").addEventListener("click",startGame);
-nameInput.addEventListener("keydown",e=>{ if(e.key==="Enter") startGame(); });
-
-/* ---- change your username mid-game (HUD name chip) ---- */
-const hudName=document.getElementById("hud-name");
-function setHudName(){ hudName.textContent=me.name; }
-function applyName(nv){
-  nv=(nv||"").trim().slice(0,18);
-  if(!nv || nv===me.name) return;
-  me.name=nv;
-  localStorage.setItem("spa_name",me.name);
-  if(nameInput) nameInput.value=me.name;
-  setHudName();
-  send({t:"join",id:ID,name:me.name}); pushState(true);
-  writeKills(); loadBoard();
-}
-let renaming=false;
-hudName.addEventListener("click",()=>{
-  if(renaming) return; renaming=true;
-  const inp=document.createElement("input");
-  inp.className="nameinp"; inp.value=me.name; inp.maxLength=18; inp.spellcheck=false; inp.autocomplete="off";
-  hudName.textContent=""; hudName.appendChild(inp); inp.focus(); inp.select();
-  const finish=(commit)=>{ if(!renaming) return; renaming=false; if(commit) applyName(inp.value); setHudName(); };
-  inp.addEventListener("keydown",e=>{
-    e.stopPropagation();
-    if(e.key==="Enter"){ e.preventDefault(); finish(true); }
-    else if(e.key==="Escape"){ finish(false); }
-  });
-  inp.addEventListener("blur",()=>finish(true));
-});
-setHudName();
-
-/* ============================================================
-   boot
-   ============================================================ */
-loadProgress();           // restore your minerals, upgrades and kills from a previous session
-connect(false);
-loadBoard();
-reconcileKills();         // pull your saved kill count from the mesh database
-setInterval(()=>{ if(playing) saveProgress(); }, 3000);
-setInterval(()=>{ if(!playing) refreshOnline(); }, 2500);
-
-// keep online count in join screen fresh
-setInterval(()=>{
-  const n=onlineCount();
-  const olt=document.getElementById("ol-text");
-  if(wsReady && !playing) olt.textContent="connected — "+n+" online";
-}, 2000);
+addEventListener("beforeunload", () => { if (playing && myId) { try { publish(IN_TOPIC(sectorToken(mySector)), { t: "bye" }); } catch {} } });
 </script>
 </body>
 </html>

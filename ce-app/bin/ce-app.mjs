@@ -35,6 +35,7 @@ import { promises as fs } from "node:fs";
 import fssync from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import http from "node:http";
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -53,24 +54,97 @@ import { runDebugCli } from "./debug.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_HUB = "https://ce-net.com";
 
+// The local CE node HTTP API. ce-app serve reverse-proxies a same-origin "/ce"
+// path to this so a page under the STRICT CSP (connect-src 'self') can still
+// reach a native local/relay node — the documented non-bridge transport.
+const DEFAULT_NODE_API = process.env.CE_NODE_API || "http://127.0.0.1:8844";
+
+// The STRICT confinement CSP. This is the EXACT string shared across the SDK
+// (@ce-net/sdk CE_STRICT_CSP) and the in-browser node: connect-src 'self' means
+// the page can reach ONLY its own origin (the in-process bridge or the /ce
+// reverse proxy) and nothing else — no arbitrary fetch, no third-party origin.
+// ce-app serve injects it on every response so "stranger code talks ONLY to the
+// local node" holds for any app it hosts, identical to the in-browser confinement.
+const CE_STRICT_CSP =
+  "default-src 'self'; connect-src 'self'; script-src 'self' 'wasm-unsafe-eval'; " +
+  "img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; " +
+  "base-uri 'self'; object-src 'none'; frame-ancestors 'none'";
+
+// The same-origin path that reverse-proxies to the local node API (see above).
+const CE_PROXY_PREFIX = "/ce";
+
+// The same-origin bridge bootstrap script ce-app serve injects into every HTML
+// document. It is a NO-OP shim that documents the contract and degrades cleanly:
+//   - If a WASM in-browser node has already injected window.__ceNode, it is left
+//     untouched (the in-process bridge wins).
+//   - Otherwise the page uses connectNode()'s documented fallback: a CeClient
+//     pointed at the same-origin "/ce" reverse proxy (a native local/relay node).
+// Both transports are SAME-ORIGIN, which is exactly what lets one strict CSP hold.
+// The script is served from /__ce/bridge.js (same-origin => allowed by script-src
+// 'self'); a real WASM-node host page overrides window.__ceNode before this runs.
+const CE_BRIDGE_BOOTSTRAP = `// ce-app bridge bootstrap (same-origin, CSP script-src 'self').
+// Contract: window.__ceNode is a CeNodeBridge with
+//   request(method, path, init?) => Promise<{ status, headers, body }>
+// dispatching IN-PROCESS to an in-browser WASM CE node (sentinel base URL
+// "http://ce-browser-node.local"). When no WASM node is present, apps reach a
+// native local/relay node through the same-origin "${CE_PROXY_PREFIX}" reverse proxy
+// this server provides — connectNode() picks that path automatically.
+(function () {
+  if (typeof window === "undefined") return;
+  window.__ceProxyBase = "${CE_PROXY_PREFIX}";
+  if (window.__ceNode) return; // an in-browser WASM node already bound the bridge.
+  // No in-process bridge: leave window.__ceNode undefined so connectNode() falls
+  // back to the same-origin "${CE_PROXY_PREFIX}" proxy (a native node). Nothing here
+  // ever touches a cross-origin URL, so the strict CSP stays intact.
+})();
+`;
+
+const CE_BRIDGE_PATH = "/__ce/bridge.js";
+
 // ---------------------------------------------------------------------------
 // arg parsing
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { _: [], hub: process.env.CE_HUB || DEFAULT_HUB, app: undefined, project: undefined, help: false };
+  const opts = {
+    _: [],
+    hub: process.env.CE_HUB || DEFAULT_HUB,
+    app: undefined,
+    project: undefined,
+    help: false,
+    // mesh-serve flags
+    sub: undefined,
+    port: undefined,
+    domain: undefined,
+    expose: false,
+    noBuild: false,
+    hubDeploy: false,
+    nodeApi: process.env.CE_NODE_API || undefined,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") opts.help = true;
     else if (a === "--hub") opts.hub = argv[++i];
     else if (a.startsWith("--hub=")) opts.hub = a.slice("--hub=".length);
+    else if (a === "--hub-deploy") opts.hubDeploy = true;
     else if (a === "--app") opts.app = argv[++i];
     else if (a.startsWith("--app=")) opts.app = a.slice("--app=".length);
     else if (a === "--project") opts.project = argv[++i];
     else if (a.startsWith("--project=")) opts.project = a.slice("--project=".length);
+    else if (a === "--sub") opts.sub = argv[++i];
+    else if (a.startsWith("--sub=")) opts.sub = a.slice("--sub=".length);
+    else if (a === "--port") opts.port = argv[++i];
+    else if (a.startsWith("--port=")) opts.port = a.slice("--port=".length);
+    else if (a === "--domain") opts.domain = argv[++i];
+    else if (a.startsWith("--domain=")) opts.domain = a.slice("--domain=".length);
+    else if (a === "--expose") opts.expose = true;
+    else if (a === "--no-build") opts.noBuild = true;
+    else if (a === "--node-api") opts.nodeApi = argv[++i];
+    else if (a.startsWith("--node-api=")) opts.nodeApi = a.slice("--node-api=".length);
     else opts._.push(a);
   }
   if (opts.hub) opts.hub = String(opts.hub).replace(/\/+$/, "");
+  if (opts.nodeApi) opts.nodeApi = String(opts.nodeApi).replace(/\/+$/, "");
   return opts;
 }
 
@@ -1279,6 +1353,258 @@ async function esbuildBuild(cwd, outDir) {
 }
 
 // ---------------------------------------------------------------------------
+// mesh registration + per-app frontend host (serve) + mesh ingress (expose)
+//
+// This is the post-hub model. Instead of PUTting static files to a central hub,
+// an app:
+//   1. registers on the mesh   — claims its name on-chain (the SAME claim_name
+//      path ce-expose uses: POST /names/claim) + advertises discovery, so the
+//      app is reachable BY NAME with no central index. (`ce-app register`)
+//   2. is served locally        — a tiny static host serves the built output,
+//      injects the STRICT CSP on every response, injects the window.__ceNode
+//      bridge bootstrap into HTML, and reverse-proxies a same-origin "/ce" to
+//      the local node so same-origin mesh calls work under CSP. (`ce-app serve`)
+//   3. is exposed over ingress  — the ce-expose ORIGIN agent (its own binary,
+//      `ce-expose http <servePort> --name <name>`) carries that local host onto
+//      https://<name>.user.ce-net.com over mesh HTTP ingress. (`ce-app expose`)
+// ---------------------------------------------------------------------------
+
+// POST a JSON body to the local node API. Returns { ok, status, json|text } and
+// never throws (the node may be down — registration is best-effort, like the
+// ce-expose agent's claim_name which is explicitly best-effort).
+async function nodePost(api, pathOnly, body) {
+  try {
+    const res = await fetch(`${api}${pathOnly}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    let json = null;
+    let text = "";
+    try { json = await res.clone().json(); } catch (_) { try { text = await res.text(); } catch (_) {} }
+    return { ok: res.ok, status: res.status, json, text };
+  } catch (e) {
+    return { ok: false, status: 0, json: null, text: String(e && e.message ? e.message : e) };
+  }
+}
+
+async function nodeGet(api, pathOnly) {
+  try {
+    const res = await fetch(`${api}${pathOnly}`);
+    let json = null;
+    try { json = await res.json(); } catch (_) {}
+    return { ok: res.ok, status: res.status, json };
+  } catch (e) {
+    return { ok: false, status: 0, json: null, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+// Derive the mesh endpoint name for an app. Names are 3-32 chars, lowercase
+// a-z/0-9/hyphen (the on-chain NameClaim rule the node enforces). We reuse the
+// app id (already a DNS-safe label) and clamp it to 32.
+function meshNameFor(appId) {
+  let n = dnsLabelPart(appId);
+  if (n.length > 32) n = dnsLabelPart(n.slice(0, 32));
+  if (n.length < 3) n = (n + "-app").slice(0, 32);
+  return n;
+}
+
+// Inject the strict CSP, the bridge bootstrap script tag, and a same-origin
+// <base> awareness into an HTML document. The bridge tag points at the
+// same-origin bootstrap (CE_BRIDGE_PATH), so script-src 'self' allows it.
+function injectIntoHtml(html) {
+  const bridgeTag = `<script src="${CE_BRIDGE_PATH}"></script>`;
+  // The CSP also rides as a <meta http-equiv> so it survives even when a request
+  // is served without our header (e.g. fetched then re-hosted). The HTTP header
+  // is still set on every response; the meta is belt-and-suspenders.
+  const metaCsp = `<meta http-equiv="Content-Security-Policy" content="${CE_STRICT_CSP}">`;
+  let out = html;
+  // Insert the bridge bootstrap as early as possible so window.__ceNode /
+  // window.__ceProxyBase are set before app modules run.
+  if (/<head[^>]*>/i.test(out)) {
+    out = out.replace(/<head[^>]*>/i, (m) => `${m}\n    ${metaCsp}\n    ${bridgeTag}`);
+  } else if (/<html[^>]*>/i.test(out)) {
+    out = out.replace(/<html[^>]*>/i, (m) => `${m}\n${metaCsp}\n${bridgeTag}`);
+  } else {
+    out = `${metaCsp}\n${bridgeTag}\n${out}`;
+  }
+  return out;
+}
+
+// Resolve a request path to a file inside the served root, with the usual
+// directory-index + traversal-safety rules. Returns an absolute path or null.
+function resolveServedFile(root, urlPath) {
+  let rel = decodeURIComponent(urlPath.split("?")[0]);
+  if (rel.endsWith("/")) rel += "index.html";
+  // Normalize and confine to root (no "..").
+  const abs = path.normalize(path.join(root, rel));
+  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  return abs;
+}
+
+// Forward a request to the local node API for the same-origin "/ce" reverse
+// proxy. Strips the CE_PROXY_PREFIX, preserves method/headers/body, and pipes
+// the node's response back. This is what makes same-origin mesh calls work under
+// connect-src 'self'.
+function proxyToNode(req, res, nodeApi) {
+  const sub = req.url.slice(CE_PROXY_PREFIX.length) || "/";
+  const target = nodeApi.replace(/\/+$/, "") + (sub.startsWith("/") ? sub : "/" + sub);
+  let targetUrl;
+  try {
+    targetUrl = new URL(target);
+  } catch (_) {
+    res.writeHead(502, { "content-type": "text/plain" });
+    res.end("bad /ce proxy target");
+    return;
+  }
+  const headers = { ...req.headers };
+  delete headers.host; // let the upstream client set it
+  const upstream = http.request(
+    {
+      protocol: targetUrl.protocol,
+      hostname: targetUrl.hostname,
+      port: targetUrl.port || 80,
+      method: req.method,
+      path: targetUrl.pathname + targetUrl.search,
+      headers,
+    },
+    (up) => {
+      // Re-assert the strict CSP on proxied responses too (defense in depth).
+      const outHeaders = { ...up.headers, "content-security-policy": CE_STRICT_CSP };
+      res.writeHead(up.statusCode || 502, outHeaders);
+      up.pipe(res);
+    }
+  );
+  upstream.on("error", (e) => {
+    if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
+    res.end(`/ce proxy: local node unreachable (${nodeApi}): ${e.message}`);
+  });
+  req.pipe(upstream);
+}
+
+// Start the per-app frontend host. Serves `root` statically, injects CSP +
+// bridge into HTML, reverse-proxies CE_PROXY_PREFIX to the local node, and
+// serves the same-origin bridge bootstrap. Resolves to { server, port, url }.
+function startServeServer(root, { port = 0, nodeApi = DEFAULT_NODE_API, spa = true } = {}) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(async (req, res) => {
+      try {
+        const urlPath = (req.url || "/").split("?")[0];
+
+        // (a) the same-origin bridge bootstrap script.
+        if (urlPath === CE_BRIDGE_PATH) {
+          res.writeHead(200, {
+            "content-type": "text/javascript; charset=utf-8",
+            "content-security-policy": CE_STRICT_CSP,
+            "cache-control": "no-store",
+          });
+          res.end(CE_BRIDGE_BOOTSTRAP);
+          return;
+        }
+
+        // (b) same-origin reverse proxy to the local node.
+        if (urlPath === CE_PROXY_PREFIX || urlPath.startsWith(CE_PROXY_PREFIX + "/")) {
+          proxyToNode(req, res, nodeApi);
+          return;
+        }
+
+        // (c) static file serving from the built output.
+        const file = resolveServedFile(root, req.url || "/");
+        if (!file) {
+          res.writeHead(403, { "content-type": "text/plain", "content-security-policy": CE_STRICT_CSP });
+          res.end("forbidden");
+          return;
+        }
+        let target = file;
+        let stat = await fs.stat(target).catch(() => null);
+        if (stat && stat.isDirectory()) {
+          target = path.join(target, "index.html");
+          stat = await fs.stat(target).catch(() => null);
+        }
+        // SPA fallback: serve index.html for unknown non-asset routes.
+        if (!stat || !stat.isFile()) {
+          if (spa && !path.extname(urlPath)) {
+            target = path.join(root, "index.html");
+            stat = await fs.stat(target).catch(() => null);
+          }
+        }
+        if (!stat || !stat.isFile()) {
+          res.writeHead(404, { "content-type": "text/plain", "content-security-policy": CE_STRICT_CSP });
+          res.end("not found");
+          return;
+        }
+
+        const ct = contentType(target);
+        const isHtml = ct.startsWith("text/html");
+        const baseHeaders = {
+          "content-type": ct,
+          "content-security-policy": CE_STRICT_CSP,
+          "x-content-type-options": "nosniff",
+        };
+        if (isHtml) {
+          const html = await fs.readFile(target, "utf8");
+          const injected = injectIntoHtml(html);
+          const buf = Buffer.from(injected, "utf8");
+          res.writeHead(200, { ...baseHeaders, "content-length": buf.length, "cache-control": "no-store" });
+          res.end(buf);
+        } else {
+          const buf = await fs.readFile(target);
+          res.writeHead(200, { ...baseHeaders, "content-length": buf.length });
+          res.end(buf);
+        }
+      } catch (e) {
+        if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain", "content-security-policy": CE_STRICT_CSP });
+        res.end(`serve error: ${e && e.message ? e.message : e}`);
+      }
+    });
+    server.on("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      const actual = server.address().port;
+      resolve({ server, port: actual, url: `http://127.0.0.1:${actual}/` });
+    });
+  });
+}
+
+// Build the sub-app the user asked for (default: the detected frontend at cwd)
+// and return its absolute output dir. `sub` selects a subdirectory (a monorepo
+// sub-app) to build/serve instead of cwd.
+async function buildSubApp(cwd, sub, { skipBuild = false } = {}) {
+  const root = sub ? path.resolve(cwd, sub) : cwd;
+  if (!fssync.existsSync(root)) {
+    throw new Error(`sub-app directory not found: ${path.relative(cwd, root) || root}`);
+  }
+  const recipe = detectFramework(root);
+  if (!skipBuild) {
+    console.log(`Detected: ${recipe.label}`);
+    await recipe.build(root);
+  }
+  const outDir = resolveOutDir(root, recipe);
+  if (!fssync.existsSync(outDir)) {
+    throw new Error(
+      `build output not found (looked for: ${recipe.outDirs.join(", ")} in ${root}). ` +
+        `Check your framework's build config.`
+    );
+  }
+  return { root, recipe, outDir };
+}
+
+// Locate the ce-expose binary. Honors $CE_EXPOSE_BIN, then PATH ("ce-expose"),
+// then a sibling target/release build in the ce-net workspace.
+function ceExposeBin() {
+  if (process.env.CE_EXPOSE_BIN) return process.env.CE_EXPOSE_BIN;
+  if (hasBin("ce-expose")) return "ce-expose";
+  // Best-effort: a local cargo build of the sibling ce-expose repo.
+  const guesses = [
+    path.join(__dirname, "..", "..", "..", "ce-expose", "target", "release", "ce-expose"),
+    path.join(os.homedir(), "ce-net", "ce-expose", "target", "release", "ce-expose"),
+  ];
+  for (const g of guesses) {
+    try { if (fssync.existsSync(g)) return g; } catch (_) {}
+  }
+  return "ce-expose"; // let spawn surface ENOENT with a clear message
+}
+
+// ---------------------------------------------------------------------------
 // commands
 // ---------------------------------------------------------------------------
 
@@ -1409,12 +1735,15 @@ export {};
   await fs.writeFile(path.join(target, ".gitignore"), "node_modules\ndist\nout\n.ce\n");
 }
 
-async function cmdDeploy(opts) {
+// Legacy hub deploy: PUT the built files to the central hub. Kept as an escape
+// hatch behind --hub-deploy / --hub <base> for the wave-1 hub; the default
+// `ce-app deploy` now serves over the mesh (cmdDeploy below).
+async function cmdHubDeploy(opts) {
   const cwd = process.cwd();
   const appId = await resolveAppId(cwd, opts);
   const recipe = detectFramework(cwd);
 
-  console.log(`ce-app deploy  app=${appId}  hub=${opts.hub}`);
+  console.log(`ce-app deploy (hub)  app=${appId}  hub=${opts.hub}`);
   console.log(`Detected: ${recipe.label}`);
   await recipe.build(cwd);
   const outDir = resolveOutDir(cwd, recipe);
@@ -1450,7 +1779,153 @@ async function cmdDeploy(opts) {
   return urls.subdomain;
 }
 
-async function cmdDev(opts) {
+// ---------------------------------------------------------------------------
+// register — claim this app's name on the mesh + advertise discovery (no hub)
+// ---------------------------------------------------------------------------
+
+async function cmdRegister(opts) {
+  const cwd = process.cwd();
+  const appId = await resolveAppId(cwd, opts);
+  const name = meshNameFor(appId);
+  const nodeApi = opts.nodeApi || DEFAULT_NODE_API;
+
+  console.log(`ce-app register  app=${appId}  name=${name}  node=${nodeApi}`);
+
+  // Who are we on the mesh? (best-effort — the node may be down.)
+  const status = await nodeGet(nodeApi, "/status");
+  const nodeId = status.json && (status.json.node_id || status.json.nodeId);
+  if (nodeId) console.log(`mesh node id: ${nodeId}`);
+  else console.log("mesh node id: (local node not reachable — is `ce start` running?)");
+
+  // 1) Claim the name on-chain — the SAME path ce-expose uses (POST /names/claim).
+  //    First claim wins; takes effect once mined. Best-effort: a re-claim of a
+  //    name we already own (or one taken) is non-fatal, exactly like ce-expose.
+  const claim = await nodePost(nodeApi, "/names/claim", { name });
+  if (claim.ok) {
+    console.log(`name claimed: ${name} (pending mine; first claim wins)`);
+  } else {
+    const why = (claim.json && (claim.json.error || claim.json.message)) || claim.text || `HTTP ${claim.status}`;
+    console.log(`name claim skipped: ${why} (may already be yours or taken — non-fatal)`);
+  }
+
+  // 2) Advertise discovery so peers can find the app by name with no central index.
+  //    Mirror ce-expose's "expose:<name>" + add an "app:<name>" service tag.
+  for (const svc of [`expose:${name}`, `app:${name}`]) {
+    const adv = await nodePost(nodeApi, "/discovery/advertise", { service: svc });
+    if (adv.ok) console.log(`advertised: ${svc}`);
+    else console.log(`advertise skipped (${svc}): ${(adv.json && adv.json.error) || adv.text || adv.status}`);
+  }
+
+  console.log("");
+  console.log("Mesh identity:");
+  console.log(`  name:    ${name}`);
+  if (nodeId) console.log(`  node:    ${nodeId}`);
+  console.log(`  serve:   ce-app serve            # host this app locally under the strict CSP`);
+  console.log(`  expose:  ce-app expose --domain ${name}   # serve over mesh HTTP ingress`);
+  console.log("");
+  console.log("No central hub: the app is reachable by its mesh name once mined + advertised.");
+  return name;
+}
+
+// ---------------------------------------------------------------------------
+// serve — build a sub-app and run the per-app frontend host (CSP + bridge + /ce)
+// ---------------------------------------------------------------------------
+
+async function cmdServe(opts) {
+  const cwd = process.cwd();
+  const sub = opts.sub;
+  const wantPort = opts.port ? Number(opts.port) : 0;
+  const nodeApi = opts.nodeApi || DEFAULT_NODE_API;
+
+  console.log(`ce-app serve${sub ? `  sub=${sub}` : ""}  node=${nodeApi}`);
+  const { outDir, recipe } = await buildSubApp(cwd, sub, { skipBuild: opts.noBuild });
+  console.log(`Serving: ${path.relative(cwd, outDir) || "."}  (${recipe.label})`);
+
+  const { server, port, url } = await startServeServer(outDir, { port: wantPort, nodeApi });
+
+  console.log("");
+  console.log(`Frontend host:   ${url}`);
+  console.log(`Strict CSP:      injected on every response (connect-src 'self')`);
+  console.log(`Bridge:          ${CE_BRIDGE_PATH} (window.__ceNode bootstrap)`);
+  console.log(`Node proxy:      ${CE_PROXY_PREFIX}  ->  ${nodeApi}  (same-origin mesh calls)`);
+  console.log("");
+  console.log(`Next: ce-app expose --domain <name>  (serves this over https://<name>.user.ce-net.com)`);
+  console.log("Ctrl-C to stop.");
+
+  // Keep the process alive; clean shutdown on SIGINT. Return the live port so
+  // callers (dev/deploy) can chain `expose` against it.
+  await new Promise((resolve) => {
+    process.on("SIGINT", () => {
+      try { server.close(); } catch (_) {}
+      resolve();
+    });
+  });
+  return { port, url };
+}
+
+// ---------------------------------------------------------------------------
+// expose — run the ce-expose ORIGIN agent against the serve port (mesh ingress)
+//
+// We do NOT touch the ce-expose repo. We build + serve the app locally, then
+// shell out to the ce-expose binary: `ce-expose http <servePort> --name <name>`.
+// That carries this local host onto https://<name>.user.ce-net.com over mesh
+// HTTP ingress (the relay-tier ingress feature ce-expose already implements).
+// ---------------------------------------------------------------------------
+
+async function cmdExpose(opts) {
+  const cwd = process.cwd();
+  const domain = (opts.domain || "").trim();
+  if (!domain) throw new Error("usage: ce-app expose --domain <name> [--sub <which>]");
+  const name = meshNameFor(domain);
+  const sub = opts.sub;
+  const wantPort = opts.port ? Number(opts.port) : 0;
+  const nodeApi = opts.nodeApi || DEFAULT_NODE_API;
+
+  console.log(`ce-app expose  domain=${name}${sub ? `  sub=${sub}` : ""}`);
+
+  // 1) Build + serve the app locally (the ce-expose ORIGIN points at this port).
+  const { outDir, recipe } = await buildSubApp(cwd, sub, { skipBuild: opts.noBuild });
+  console.log(`Serving: ${path.relative(cwd, outDir) || "."}  (${recipe.label})`);
+  const { server, port, url } = await startServeServer(outDir, { port: wantPort, nodeApi });
+  console.log(`Frontend host:   ${url}  (CSP + bridge + ${CE_PROXY_PREFIX} proxy)`);
+
+  // 2) Shell out to the ce-expose ORIGIN agent against the serve port. We do not
+  //    edit ce-expose — just invoke its binary with the chosen name.
+  const bin = ceExposeBin();
+  const args = ["http", String(port), "--name", name];
+  console.log(`Origin agent:    ${bin} ${args.join(" ")}`);
+  console.log("");
+  console.log(`URL:  https://${name}.user.ce-net.com/`);
+  console.log("");
+
+  const child = spawn(bin, args, { cwd, stdio: "inherit" });
+  const cleanup = () => {
+    try { child.kill(); } catch (_) {}
+    try { server.close(); } catch (_) {}
+  };
+  process.on("SIGINT", () => { cleanup(); process.exit(0); });
+
+  await new Promise((resolve) => {
+    child.on("error", (e) => {
+      console.error(
+        `ce-app: could not launch ce-expose (${e.code === "ENOENT" ? "binary not found" : e.message}).\n` +
+          `Install/build ce-expose, or set CE_EXPOSE_BIN to its path. ` +
+          `The local frontend host is still running at ${url}.`
+      );
+      // Keep serving locally even if expose could not start; the user can Ctrl-C.
+    });
+    child.on("exit", (code) => {
+      console.log(`ce-expose exited (${code}); stopping local frontend host.`);
+      try { server.close(); } catch (_) {}
+      resolve();
+    });
+  });
+  return { name, port, url: `https://${name}.user.ce-net.com/` };
+}
+
+// Legacy hub dev: build + watch + live-upload to the central hub. Kept behind
+// --hub <base>; the default `ce-app dev` now serves over the mesh (cmdDev below).
+async function cmdHubDev(opts) {
   const cwd = process.cwd();
   const appId = await resolveAppId(cwd, opts);
   const recipe = detectFramework(cwd);
@@ -1557,6 +2032,56 @@ async function cmdDev(opts) {
     });
     console.log("\nWatching for changes (Ctrl-C to stop)…");
   }
+}
+
+// ---------------------------------------------------------------------------
+// deploy / dev — mesh-first (default), with --hub as the legacy escape hatch
+//
+// deploy:  register on the mesh, then serve (+ expose if --domain/--expose).
+// dev:     register on the mesh, then serve with the frontend host.
+// Both default to the mesh; pass --hub <base> (or --hub-deploy) to use the old
+// central-hub static upload path instead.
+// ---------------------------------------------------------------------------
+
+// True when the user explicitly opted into the legacy central-hub path: either
+// --hub-deploy, or an explicit --hub <base> on the command line (NOT the default
+// that parseArgs fills in). We detect the explicit form from raw argv.
+function wantsHub(opts) {
+  if (opts.hubDeploy) return true;
+  const argv = process.argv.slice(2);
+  return argv.some((a) => a === "--hub" || a.startsWith("--hub="));
+}
+
+async function cmdDeploy(opts) {
+  if (wantsHub(opts)) return cmdHubDeploy(opts);
+
+  // Mesh path: register the app, then serve it (optionally expose over ingress).
+  await cmdRegister(opts);
+  console.log("");
+
+  // If the user asked to expose (a domain), run the origin agent (which also
+  // builds + serves). Otherwise just run the local frontend host.
+  if (opts.domain || opts.expose) {
+    const domain = opts.domain || (await resolveAppId(process.cwd(), opts));
+    return cmdExpose({ ...opts, domain });
+  }
+  return cmdServe(opts);
+}
+
+async function cmdDev(opts) {
+  if (wantsHub(opts)) return cmdHubDev(opts);
+
+  // Mesh path: register, then run the per-app frontend host. Hot-reload of the
+  // built output happens through the framework's own --watch (run it alongside);
+  // the serve host always reads fresh from disk (no-store), so rebuilds appear on
+  // reload. (The legacy live-upload loop is the --hub path.)
+  await cmdRegister(opts);
+  console.log("");
+  if (opts.domain || opts.expose) {
+    const domain = opts.domain || (await resolveAppId(process.cwd(), opts));
+    return cmdExpose({ ...opts, domain });
+  }
+  return cmdServe(opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -2039,8 +2564,11 @@ Usage:
   ce-app new [template] [dir]   Scaffold a template (no name -> list available)
   ce-app whoami                 Print your ONE identity + nodeprefix + where it came from
   ce-app link [token]           Print the device-pairing flow (capability/QR) — design stub
-  ce-app dev                    Build + watch + live-upload; prints the public URL(s)
-  ce-app deploy                 Auto-detect framework, build, upload, enable SPA routing
+  ce-app register               Register this app on the mesh: claim its name + advertise (no hub)
+  ce-app serve [--sub <w>]      Build + run the per-app frontend host (strict CSP, bridge, /ce proxy)
+  ce-app expose --domain <name> Run the ce-expose origin agent over serve: https://<name>.user.ce-net.com
+  ce-app dev                    Mesh: register + serve the frontend host (--hub for legacy live-upload)
+  ce-app deploy                 Mesh: register + serve (+ --domain to expose) (--hub for legacy upload)
   ce-app domain add <domain>    Register a custom production domain for this app
   ce-app domain rm <domain>     Unregister a custom domain
   ce-app domain ls              List this app's custom domains
@@ -2058,10 +2586,27 @@ Usage:
   own usage and flags.
 
 Options:
-  --hub <base>      Hub base URL (default: ${DEFAULT_HUB}, or $CE_HUB)
+  --sub <which>     Sub-app subdirectory to build/serve (default: the detected frontend)
+  --port <N>        Port for the serve frontend host (default: an ephemeral port)
+  --domain <name>   Mesh ingress name for expose (https://<name>.user.ce-net.com)
+  --expose          On dev/deploy, also run the ce-expose origin agent
+  --node-api <url>  Local CE node HTTP API for the /ce proxy (default: ${DEFAULT_NODE_API}, or $CE_NODE_API)
+  --no-build        Serve the existing build output without rebuilding
+  --hub <base>      LEGACY: central-hub static upload base (default: ${DEFAULT_HUB}, or $CE_HUB)
+  --hub-deploy      LEGACY: force the central-hub static upload path on deploy/dev
   --project <name>  Project name for the app id (default: package.json name / dir)
   --app <id>        Override the full app id (default: ./.ce/app-id, then derived)
   -h, --help        Show this help
+
+Mesh serve (the default for dev/deploy):
+  ce-app serve hosts the built output locally and injects the STRICT CSP on every
+  response (connect-src 'self'), the window.__ceNode bridge bootstrap (${CE_BRIDGE_PATH}),
+  and a same-origin "${CE_PROXY_PREFIX}" reverse proxy to the local node (${DEFAULT_NODE_API}).
+  Under that CSP a page reaches ONLY its own origin — the in-process node bridge or
+  the "${CE_PROXY_PREFIX}" proxy — so stranger code can talk to the local CE node and nothing
+  else. ce-app register claims the app's name on-chain (POST /names/claim, the same
+  path ce-expose uses) and advertises it; ce-app expose carries the serve host onto
+  https://<name>.user.ce-net.com via the ce-expose origin agent (its own binary).
 
 Frameworks auto-detected on deploy: Rust -> wasm (+wgpu) via Trunk / wasm-pack /
 raw cargo, Vite (vanilla/React/Vue/Svelte), SvelteKit (static adapter), Next.js
@@ -2120,6 +2665,15 @@ async function main() {
     case "link":
       await cmdLink(opts);
       break;
+    case "register":
+      await cmdRegister(opts);
+      break;
+    case "serve":
+      await cmdServe(opts);
+      break;
+    case "expose":
+      await cmdExpose(opts);
+      break;
     case "dev":
       await cmdDev(opts);
       break;
@@ -2155,8 +2709,12 @@ async function main() {
   }
 
   // One-shot commands must not be kept alive by esbuild's persistent service.
-  // `dev` runs forever (until Ctrl-C); everything else should exit promptly.
-  if (cmd !== "dev") {
+  // Long-running hosts (`dev`, `serve`, `expose`) run until Ctrl-C. The mesh
+  // `deploy` also blocks (its await above never resolves — it ends in
+  // serve/expose), so it never reaches here; the legacy hub `deploy` returns and
+  // SHOULD exit, so `deploy` is intentionally NOT in this set.
+  const longRunning = new Set(["dev", "serve", "expose"]);
+  if (!longRunning.has(cmd)) {
     await disposeEsbuild();
     process.exit(process.exitCode || 0);
   }

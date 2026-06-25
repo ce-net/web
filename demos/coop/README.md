@@ -1,97 +1,86 @@
-# coop — server-authoritative multiplayer on CE netgame
+# coop — a CE supercomputer showcase (server-authoritative + leaderless CRDT)
 
-A fully **server-authoritative** top-down arena. The game logic does not run in
-your browser — it runs on the **best mesh node** (lowest latency, highest uptime,
-strongest benchmark, most trusted), elected automatically from the live CE node
-metrics. Clients send only input; the elected host simulates movement,
-projectiles, collisions, score and respawns; every client just renders the
-authoritative state it receives. If the host disconnects or fails, the arena
-**migrates** to the next-best node and restores from a CE `/db` snapshot.
+A fully **server-authoritative** top-down arena that doubles as a flagship demo of CE as a global
+supercomputer. The per-room game logic does NOT run in your browser — it runs in the **`game-coop`
+Rust backend** (`/Users/07lead01/ce-net/game-coop`, crate `game-coop`) that hosts the room on the CE
+mesh. Clients send only input; the authoritative backend simulates movement, projectiles, the rift's
+hostile **drones**, collisions, score and respawns; every client renders the snapshots it receives.
 
-Open the page, watch the banner: `logic running on node <short> (server, <rtt>ms)`.
-Hit **Force host failover** to drop the local candidacy and see migration live.
+On top of the per-room arena, every room across the whole mesh contributes to **one shared mission** —
+waves cleared and energy shards banked — that is a **leaderless multi-writer CRDT** (`ce-coord`
+`Merged`) converging with **no central server**. The HUD's "Global mission · CRDT" panel renders that
+converged objective; the backend also snapshots the world to CE's content-addressed blob store and
+replicates it to nearby hosts for failover.
+
+Open the page, watch the banner: `logic on node <short> (server, <rtt>ms) · wave N`.
 
 - Single self-contained `index.html` — vanilla JS, no build, no npm.
-- Serve it via the CE hub at `ce-net.com/apps/coop/` (it uses same-origin
-  `/rt/<app>/<room>`, `/db/<app>/<key>`, `/nodes`, `/stats`).
-- The framework is **inlined** in `index.html` with a header comment pointing at
-  the canonical source: `web/ce-app/client/netgame.js`. Keep the two in sync.
+- Talks to the local CE node **over the same origin only**: `window.__ceNode` if a
+  browser node is injected, else the same-origin `/ce` proxy. It never contacts
+  `ce-net.com`, `/db`, `/rt`, `/nodes`, `/stats`, or any remote origin.
 
 ## The model
 
-- **Realtime room** (`/rt/coop/g1`): clients broadcast `{t:"in", input}`; the host
-  broadcasts `{t:"st", state}` every tick. Candidacy `{t:"cand", score, server}` is
-  broadcast ~1/s. You never receive your own frames.
-- **Election** is deterministic on every client: the candidate with the highest
-  host-score wins (server-class beats browsers), ties broken by smallest id, so
-  all clients agree on the same host without a coordinator.
-- **Host score** (default): `(1000/(40+latencyMs)) * (0.5 + uptimePct/100) *
-  (1 + cpuMark/300) * (server ? 1.6 : 1)`. A registered mesh node uses its real
-  `rtt_ms` / `uptime_pct` / `caps.cpu_mark` / `device_class` from `GET /nodes`; a
-  plain browser measures latency (median `GET /stats` round-trips) and a ~20ms CPU
-  micro-bench, with a low uptime/trust default.
-- **Failover**: the host PUTs a snapshot to `/db/coop/snap:g1` every
-  `snapshotEvery` ticks. If the host goes silent >1s, clients re-elect; whoever
-  becomes the new host loads that snapshot and continues (at most
-  `snapshotEvery/hz` seconds of state loss). Never crashes on 404/507/parse error.
+- **Transport:** the local CE node's mesh app-messaging surface.
+  - Clients publish inputs on `ce-game/coop/<room>/in` via `POST /mesh/publish`.
+  - The backend publishes snapshots on `ce-game/coop/<room>/state`; the client
+    `POST /mesh/subscribe`s to it and reads `GET /mesh/messages/stream` (SSE).
+- **Authority:** the `game-coop` backend is the only thing that produces world
+  state. A client cannot move another ship, fake a position, or award itself a
+  kill — it only expresses input intent (`{a, th, fire, name, color}`).
+- **Identity:** every mesh message is signed by the sender's CE NodeId, so players
+  are authenticated for free; there is no auth server.
+- **Discovery / scale:** rooms are keyed by `<room>`. The backend
+  `advertise_service("game-coop/<room>")`s so clients/backends can find the host.
+  Many rooms and many backend instances run independently across the mesh.
 
-A dedicated operator can pin authoritative hosting to a stable machine by joining
-a headless, hostable, high-priority participant (`host.mjs` — a Node 22+ runner).
+## Wire protocol
 
-## The minimal version (~30 lines)
+Client → backend, on `ce-game/coop/<room>/in`:
 
-This is the whole framework contract — `init` + `tick` + `input` + `onState`:
-
-```js
-import { createGame } from "./netgame.js";   // canonical: web/ce-app/client/netgame.js
-
-const id = crypto.randomUUID();
-const keys = {};
-addEventListener("keydown", e => keys[e.key] = true);
-addEventListener("keyup",   e => keys[e.key] = false);
-const W = 800, H = 600;
-
-const game = createGame({
-  app: "coop", room: "g1", id, hz: 20,
-  init: () => ({ p: {} }),                              // authoritative state (host only)
-  input: () => ({ x: (keys.d?1:0)-(keys.a?1:0), y: (keys.s?1:0)-(keys.w?1:0) }),
-  tick: (s, inputs) => {                                // runs ONLY on the elected host
-    for (const pid in inputs) {
-      const me = s.p[pid] || (s.p[pid] = { x: W/2, y: H/2 });
-      me.x = Math.max(0, Math.min(W, me.x + inputs[pid].x * 6));
-      me.y = Math.max(0, Math.min(H, me.y + inputs[pid].y * 6));
-    }
-    return s;
-  },
-  onState: (s, meta) => {                               // every client renders this
-    const c = canvas.getContext("2d"); c.clearRect(0,0,W,H);
-    for (const pid in s.p) { c.fillStyle = pid===id ? "#37c6ff" : "#fff";
-      c.fillRect(s.p[pid].x-6, s.p[pid].y-6, 12, 12); }
-    label.textContent = "host: " + meta.hostShort + " (" + meta.rttToHostMs + "ms)";
-  },
-});
+```json
+{ "t": "in", "id": "<player id>", "seq": 42,
+  "input": { "a": 1.57, "th": true, "fire": false, "name": "Nova", "color": "#37c6ff" } }
+{ "t": "bye", "id": "<player id>" }
 ```
 
-That is the entire surface: send input, the best node simulates, everyone renders,
-and it fails over by itself.
+Backend → clients, on `ce-game/coop/<room>/state` (full snapshot each tick; `mission` is the
+converged cross-room CRDT objective the client renders in the global-mission panel):
 
-## createGame API
-
+```json
+{ "t": "st", "host": "<nodeId>", "seq": 7, "tick": 140, "full": true, "ts": 1718900000000,
+  "state": { "t": 140, "wave": 3, "wavesCleared": 2, "shardsBanked": 41,
+             "ships": { "...": { "x":0,"y":0,"vx":0,"vy":0,"a":0,"hp":100,
+             "name":"Nova","color":"#37c6ff","score":3,"alive":true,
+             "deadUntil":0,"lastShot":0,"seen":0 } },
+             "bullets": [ ... ],
+             "drones": [ { "x":1100,"y":1100,"vx":-40,"vy":12,"hp":18,"lastHit":0 } ] },
+  "mission": { "total_waves": 9, "shard_pool": 188,
+               "rooms": { "g1": { "pilots": 4, "at_ms": 1718900000000 } } } }
 ```
-createGame({ app, room="g1", id, hz=20, init, tick, input, onState,
-             onHostChange, snapshotEvery=40, canHost=true, hostScore=null,
-             base, WebSocket, fetch })
-  -> { setInput, sendEvent, state, isHost, hostId, hostShort, online,
-       players, metrics, leave }
+
+## Running the backend
+
+```bash
+# Requires a local CE node (`ce start`). Then host the room:
+cd /Users/07lead01/ce-net
+cargo run -p game-coop -- --room g1
 ```
 
-- `tick(state, inputs, dt, ctx)` — advance one tick on the host. `inputs={pid:lastInput}`,
-  `ctx={now,tick,events,host}`. Return the new state.
-- `onState(state, meta)` — client render hook. `meta={host,hostShort,isHost,online,
-  tick,rttToHostMs}`.
-- `setInput(obj)` — alternative to the `input()` callback.
-- `leave()` — drop local host candidacy (used by the demo's force-failover button);
-  `leave({hard:true})` also closes the socket.
+Serve `index.html` from the same origin as your node bridge and open it; the
+client subscribes to `g1` and renders whatever the `game-coop` host broadcasts.
 
-Inline framework copy lives at the top of `index.html`. The canonical, importable
-ESM source is `web/ce-app/client/netgame.js`.
+## What lives where
+
+| Piece | Location |
+|---|---|
+| Authoritative simulation (ships, bullets, rift waves + drones, scoring, respawn) | `game-coop/src/sim.rs` |
+| Shared cross-room mission CRDT (state machine + live `Merged`) | `game-coop/src/objective.rs`, `game-coop/src/mission.rs` |
+| Rendezvous sharding + latency-aware host ranking | `game-coop/src/placement.rs` |
+| Content-addressed snapshots + redundancy replication | `game-coop/src/replication.rs` |
+| Mesh wire protocol (`{t:"in"}` / `{t:"st"}` incl. `mission`, topics) | `game-coop/src/wire.rs` |
+| Room host loop (subscribe, tick, publish, mission, replicate, advertise) | `game-coop/src/room.rs` |
+| This client (input + render ships/drones/mission over the same-origin node) | `web/demos/coop/index.html` |
+
+The full showcase (CRDT convergence across hosts, snapshot replication, sharding) is visible on a
+**live multi-node mesh**; see `game-coop/README.md` for the capability→code map and what each needs.

@@ -4,8 +4,9 @@ import { StatusBar } from "expo-status-bar";
 import { createClient } from "./ce";
 
 // One React Native UI. `expo export --platform web` compiles it through
-// react-native-web into a static bundle the CE hub can host. The CE client is
-// browser-only; on web (the export target) it persists to the CE database.
+// react-native-web into a static bundle served by your local CE node. The CE
+// client is browser-only and mesh-native; on web (the export target) it persists
+// to the CE database (a mesh-replicated map) and talks only to the same-origin node.
 const ce = createClient();
 const COUNT_KEY = "count";
 
@@ -55,7 +56,7 @@ export default function App() {
       </View>
 
       <Text style={styles.note}>
-        persisted at /db/{ce.appId}/{COUNT_KEY}
+        app {ce.appId}, db key {COUNT_KEY}
       </Text>
     </View>
   );

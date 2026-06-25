@@ -60,7 +60,7 @@
     <button on:click={() => bump(1)} aria-label="increment">+</button>
   </div>
 
-  <p class="note">Persisted at <code>/db/{ce.appId}/{COUNT_KEY}</code></p>
+  <p class="note">App <code>{ce.appId}</code>, db key <code>{COUNT_KEY}</code></p>
 </main>
 
 <style>

@@ -41,8 +41,8 @@ function Home() {
       </h1>
       <p className="lede">
         This is a real single-page app with three routes. Navigate around, then copy the URL and
-        refresh — the CE hub serves <code>index.html</code> for any route that has no extension, so
-        deep links survive a hard reload. That is the SPA fallback.
+        refresh — the static server serves <code>index.html</code> for any route that has no
+        extension, so deep links survive a hard reload. That is the SPA fallback.
       </p>
       <p className="note">
         current route <code>{loc.pathname}</code>
@@ -77,8 +77,8 @@ function Counter() {
         A route backed by <em>ce.db</em>
       </h1>
       <p className="lede">
-        The count persists to the CE database. Refresh this route, or open it on another device — it
-        resumes where you left off.
+        The count persists to the CE database — a mesh-replicated key/value map served by your
+        local node. Refresh this route, or open it on another device — it resumes where you left off.
       </p>
       <div className="card">
         <button onClick={() => setCount((c) => c - 1)} aria-label="decrement">
@@ -90,7 +90,7 @@ function Counter() {
         </button>
       </div>
       <p className="note">
-        persisted at <code>/db/{ce.appId}/{COUNT_KEY}</code>
+        app <code>{ce.appId}</code>, db key <code>{COUNT_KEY}</code>
       </p>
     </section>
   );
@@ -103,9 +103,9 @@ function About() {
         Why this <em>template</em>
       </h1>
       <p className="lede">
-        It exists to prove the hub's SPA fallback end to end: multiple routes, hard-refresh on a deep
-        link, relative asset base so it works under <code>/apps/&lt;id&gt;/</code> and on a custom
-        domain alike.
+        It exists to prove the static server's SPA fallback end to end: multiple routes, hard-refresh
+        on a deep link, relative asset base so it works under <code>/apps/&lt;id&gt;/</code> and on a
+        custom domain alike.
       </p>
     </section>
   );
