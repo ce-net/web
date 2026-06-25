@@ -20,6 +20,7 @@ use rand::RngCore;
 mod flag_sink;
 mod git_http;
 mod instances;
+mod mesh_bridge;
 mod mirror;
 mod pulls;
 mod repo_read;
@@ -692,6 +693,9 @@ async fn main() {
     let app = Router::new()
         .route("/", get(|| async { "ce-hub ok" }))
         .route("/node", get(node_ws))
+        // Dumb, allowlisted browser<->mesh transport: forwards mesh primitives to the co-located
+        // node so a frontend reaches the real mesh with no app-tier HTTP backend. See mesh_bridge.rs.
+        .route("/mesh-bridge", get(mesh_bridge::mesh_bridge_ws))
         .route("/tasks", post(submit_task))
         .route("/stats", get(stats_json))
         .route("/hub/stats", get(stats_json))
