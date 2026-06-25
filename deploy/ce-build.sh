@@ -54,6 +54,24 @@ case "$cmd" in
     echo "==> ce-hub built on the relay and live on :8970"
     ;;
 
+  serve) # build + install the ce-serve HTTP edge (and ce-serve-publish) on the relay
+    echo "==> sync ce-serve + its ce-rs dep, build natively on the relay, install + restart"
+    sync "$HERE/../ce-rs" ce-rs
+    sync "$HERE/../ce-serve" ce-serve
+    "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE"'/ce-serve && (cargo build --release > /tmp/ce-serve-build.log 2>&1; rc=$?; tail -25 /tmp/ce-serve-build.log; exit $rc)'
+    rsync -az -e "$RSH" "$HERE"/../ce-serve/deploy/ce-serve.service "$RELAY:/etc/systemd/system/ce-serve.service" 2>/dev/null || true
+    "${SSH[@]}" "$RELAY" '
+      mkdir -p /opt/ce-serve/site &&
+      install -m755 '"$REMOTE"'/ce-serve/target/release/ce-serve /opt/ce-serve/ce-serve.new &&
+      mv -f /opt/ce-serve/ce-serve.new /opt/ce-serve/ce-serve &&
+      install -m755 '"$REMOTE"'/ce-serve/target/release/ce-serve-publish /opt/ce-serve/ce-serve-publish &&
+      systemctl daemon-reload && systemctl enable ce-serve >/dev/null 2>&1 &&
+      systemctl restart ce-serve && sleep 1 &&
+      printf "service: " && systemctl is-active ce-serve &&
+      printf "health:  " && curl -s http://127.0.0.1:8790/healthz && echo'
+    echo "==> ce-serve built on the relay and live on :8790"
+    ;;
+
   wasm) # ce-build wasm <project-dir-rel-to-web> <app-id>
     dir="${1:?usage: ce-build wasm <dir> <app-id>}"; app="${2:?missing app id}"
     name="$(basename "$dir")"
