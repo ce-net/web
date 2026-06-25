@@ -35,7 +35,9 @@ case "$cmd" in
     # ship ce-rs to $REMOTE/ce-rs alongside ce-hub for the relative path to resolve on the relay.
     sync "$HERE/../ce-rs" ce-rs
     sync "$HERE/../ce-hub" ce-hub
-    "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE"'/ce-hub && cargo build --release 2>&1 | tail -20'
+    # Capture cargo's real exit code (a bare `| tail` would mask a failed build and then redeploy the
+    # stale binary). set -euo pipefail aborts the script here on a non-zero build before install.
+    "${SSH[@]}" "$RELAY" 'source $HOME/.cargo/env; cd '"$REMOTE"'/ce-hub && (cargo build --release > /tmp/ce-hub-build.log 2>&1; rc=$?; tail -25 /tmp/ce-hub-build.log; exit $rc)'
     echo "==> install binary + ensure modules/data + restart service"
     # refresh builtin wasm modules from the repo too
     "${SSH[@]}" "$RELAY" "mkdir -p /opt/ce-hub/modules /opt/ce-hub/data"
