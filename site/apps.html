@@ -103,10 +103,13 @@ footer a{color:var(--muted)}
   <h2 class="sec">Build your own</h2>
   <div class="build">
     <div class="txt">
-      <h3>One file. The whole mesh.</h3>
-      <p>Every demo above is a single HTML file using two mesh primitives: a pub/sub room via <code>room('main')</code>
-        for realtime, and a namespaced gossipsub KV map via <code>db</code> for anything durable — both same-origin to your node.
-        Ship yours to the network and it gets its own <code>ce-net.com/apps/&lt;name&gt;/</code>.</p>
+      <h3>Your browser is a node.</h3>
+      <p>Open any demo and your browser joins the mesh as a real node. From there the apps talk over the mesh
+        itself &mdash; pub/sub for live events, content-addressed blobs for durable state, request/reply to ask a
+        peer &mdash; not to any app database or realtime server of ours. State converges across everyone in the room
+        with no central writer. Authoritative games run their simulation as a mesh service the network places and
+        keeps alive; your tab is a thin client. Ship your own the same way: one bundle, and it joins the mesh like
+        every other app &mdash; <code>ce-net.com</code> included.</p>
     </div>
     <div class="acts">
       <a class="btn primary" href="/deploy">Deploy an app &rarr;</a>
