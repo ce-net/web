@@ -1,0 +1,23 @@
+[Unit]
+Description=drift pinned authoritative host (simulates region 0:0)
+After=network.target ce-hub.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ce-build/drift
+# The drift game needs an always-on authoritative host that runs the sim: a browser elected host has
+# no sim wasm (the browser bundle ships only the renderer), so without this the world never advances
+# ("tick 0"). This pins the relay as the server-class host for region 0:0; browsers render its state.
+#
+# Notes for the relay:
+#   - host.mjs auto-detects the `ws` package (node 20 has no global WebSocket). Make it resolvable:
+#       ln -sfn /opt/ce-worker/node_modules /opt/ce-build/drift/node_modules
+#   - The sim wasm is fetched over HTTP from the local hub (Node's fetch cannot read file:// URLs):
+#       --wasm http://127.0.0.1:8970/apps/drift/pkg/drift_sim.wasm
+#   - The project + sim wasm are placed by deploy/ce-build.sh drift (under /opt/ce-build/drift).
+ExecStart=/usr/bin/node /opt/ce-build/drift/host.mjs --hub http://127.0.0.1:8970 --regions 0:0 --wasm http://127.0.0.1:8970/apps/drift/pkg/drift_sim.wasm
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
