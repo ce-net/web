@@ -1,0 +1,40 @@
+[package]
+name = "ce-bucket"
+version = "0.1.0"
+edition = "2021"
+description = "Geo/owner-diverse replicated bucket storage on CE — composes ce-storage (the bucket/object namespace) with ce-pin (fault-domain-diverse replication, proof-of-retrievability, paid auto-repair). The durable bucket primitive other apps build on. An application built ON CE primitives, not part of the node."
+license = "MIT"
+repository = "https://github.com/ce-net/ce-bucket"
+keywords = ["ce", "storage", "bucket", "replication", "p2p"]
+categories = ["command-line-utilities", "network-programming"]
+authors = ["Leif Rydenfalk <ledamecrydenfalk@gmail.com>"]
+
+# ce-bucket is both a reusable library (the ReplicatedStore + the durable replica index + the
+# per-bucket replication policy) and the `ce-bucket` CLI binary over it. The pure index + policy
+# logic is unit-tested; the binary is a thin shell.
+[lib]
+name = "ce_bucket"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ce-bucket"
+path = "src/main.rs"
+
+[dependencies]
+# The S3-verb namespace layer: buckets, objects, key -> CID binding over CE content-addressed blobs.
+ce-storage = { path = "../ce-storage" }
+# The replication layer: fault-domain-diverse placement, proof-of-retrievability audits, paid pins,
+# auto-repair. We DRIVE these — we do not reimplement replication.
+ce-pin = { path = "../ce-pin" }
+# The CE SDK. We need `locate` for mesh-native instance selection (the keystone) and the base client
+# for status/height. `serve`/`locate` are feature-gated on ce-rs.
+ce-rs = { path = "../ce-rs", features = ["locate"] }
+
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "signal"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "5"

@@ -1,0 +1,27 @@
+{
+  "name": "ce-explorer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ce-explorer — a live network and economy explorer for the CE mesh. A read-only block explorer for CE: blocks, transactions, atlas, jobs, channels, and a share-ratio leaderboard, streamed live from a local node via @ce-net/sdk.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
+  "repository": { "type": "git", "url": "https://github.com/ce-net/ce-explorer.git" },
+  "homepage": "https://ce-net.com",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ce-net/sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}

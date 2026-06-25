@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ce-cast</title>
+<style>
+  :root { color-scheme: dark; --accent: #d8543b; --bg: #0b0b0c; --panel: #161618; --line: #26262a; --ink: #e9e7e2; --dim: #8a8780; --ok:#9fe6b6; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); font: 15px/1.4 -apple-system, "Schibsted Grotesk", system-ui, sans-serif; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 14px 14px 48px; display: flex; flex-direction: column; gap: 12px; }
+  header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  #status { margin-left: auto; }
+  #status[data-on="true"] { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  #mesh[data-on="true"] { color: var(--ok); border-color: #2c4a39; }
+  .stage { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; outline: 1px solid #1c1c1f; }
+  canvas#stage { width: 100%; height: 100%; display: block; }
+  .badge { position:absolute; top:8px; left:8px; font-size:11px; letter-spacing:.04em; padding:3px 8px; border-radius:6px; background:rgba(0,0,0,.55); color:#cfccc6; }
+  .group { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .group h2 { font-size: 12px; font-weight: 600; color: var(--dim); margin: 0; text-transform: uppercase; letter-spacing: .06em; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; border-radius: 10px; border: 1px solid #2a2a2f; background: #1c1c1e; color: var(--ink); padding: 11px 12px; cursor: pointer; flex: 1; min-width: 0; }
+  button:active { transform: translateY(1px); }
+  button[aria-pressed="true"] { background: #20201f; border-color: var(--accent); color: #fff; }
+  .seg { display:flex; gap:6px; flex:0 0 auto; }
+  .seg button { flex:0 0 auto; padding:8px 10px; font-size:13px; }
+  .corner { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-width: 120px; }
+  .corner button { padding: 14px; }
+  label { font-size: 12px; color: var(--dim); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  select { font: inherit; color: var(--ink); background:#111113; border:1px solid var(--line); border-radius:8px; padding:8px 9px; }
+  .hint { font-size: 12px; color: #6f6c66; margin: 0; }
+  .warn { font-size: 13px; color: #e2654f; }
+  .mono { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--dim); word-break: break-all; }
+  a { color: var(--accent); }
+</style>
+<script src="log.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ce-cast</h1>
+    <span class="pill" id="enc">encoder: this device</span>
+    <span class="pill" id="mesh" data-on="false">mesh: …</span>
+    <span class="pill" id="status" data-on="false">preview</span>
+  </header>
+
+  <div class="stage">
+    <canvas id="stage" width="1280" height="720"></canvas>
+    <span class="badge" id="badge">preview</span>
+  </div>
+
+  <div class="group">
+    <span class="mono" id="deviceId">device: …</span>
+    <span class="hint" id="roleInfo"></span>
+    <p class="warn" id="authWarn" hidden>This device isn't paired with your vault yet. Pair code:
+      <strong id="pairCode">…</strong> — approve it from an enrolled device (run
+      <code>ce-secrets device approve-all</code>, or use the vault app). This page continues
+      automatically once approved.</p>
+  </div>
+
+  <div class="group" id="sources">
+    <h2>Sources</h2>
+    <div class="row">
+      <button id="camOn">Camera</button>
+      <button id="micOn">Mic</button>
+      <button id="scrOn">Screen</button>
+    </div>
+    <label>Camera source
+      <span class="seg">
+        <button class="camMode" data-v="local">this device</button>
+        <button class="camMode" data-v="cenet">ce-net feed</button>
+      </span>
+    </label>
+    <label>Screen source
+      <span class="seg">
+        <button class="scrMode" data-v="local">this device</button>
+        <button class="scrMode" data-v="cenet">ce-net feed</button>
+      </span>
+    </label>
+    <p class="hint">Default is <b>this device</b> — capture your own camera / mic / screen and stream.
+      Switch to <b>ce-net feed</b> to pull a source another authorized device is publishing.
+      (Screen capture isn't available in iOS Safari — camera + mic still work.)</p>
+  </div>
+
+  <div class="group" id="compose">
+    <h2>Compose</h2>
+    <div class="row" id="layouts">
+      <button class="lay" data-v="pip">Screen + cam</button>
+      <button class="lay" data-v="fullface">Face full</button>
+      <button class="lay" data-v="screen">Screen only</button>
+      <button class="lay" data-v="side">Side by side</button>
+      <button class="lay" data-v="camonly">Cam only</button>
+    </div>
+    <div class="row" style="align-items:flex-start; gap:16px">
+      <div style="flex:1; min-width:130px; display:flex; flex-direction:column; gap:8px">
+        <label>Camera corner</label>
+        <div class="corner">
+          <button class="corner-b" data-v="topLeft">&#8598;</button>
+          <button class="corner-b" data-v="topRight">&#8599;</button>
+          <button class="corner-b" data-v="bottomLeft">&#8601;</button>
+          <button class="corner-b" data-v="bottomRight">&#8600;</button>
+        </div>
+      </div>
+      <div style="flex:1; min-width:130px; display:flex; flex-direction:column; gap:14px">
+        <label>Cam size <span id="pipPct">28%</span><input id="pipSize" type="range" min="12" max="60" value="28" /></label>
+        <button id="mirror">Mirror cam</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="group" id="output">
+    <h2>Output &amp; destinations</h2>
+    <div class="row">
+      <button id="go" style="background:var(--accent); border-color:var(--accent); color:var(--bg); font-weight:600">Go Live</button>
+      <button id="stop" hidden style="background:#2a1614; border-color:#5a2a22; color:#f0c3b8">Stop</button>
+    </div>
+    <div class="row" id="plats">
+      <button class="plat" data-v="youtube">YouTube</button>
+      <button class="plat" data-v="kick">Kick</button>
+      <button class="plat" data-v="x">X</button>
+    </div>
+    <label>Resolution
+      <select id="res">
+        <option value="720-30">720p30</option>
+        <option value="1080-30">1080p30</option>
+        <option value="1080-60">1080p60</option>
+      </select>
+    </label>
+    <p class="hint">Encoder is selectable. "this device" composites here and publishes one clean program
+      (relay copies it out, no re-decode). A remote encoder node composites via ce-adapter. All controls
+      are live over the mesh — edit from any authorized device.</p>
+  </div>
+</div>
+<script type="module" src="secrets.js"></script>
+<script src="config.js"></script>
+<script type="module" src="app.js?v=6"></script>
+</body>
+</html>

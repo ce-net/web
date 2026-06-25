@@ -1,0 +1,1248 @@
+/*
+ * ce-chat — visual system.
+ *
+ * Identity: the CE "Sea". An abyssal blue-green ground, with depth conveyed by
+ * layered translucent panels rather than borders. The accent is a luminous
+ * aqua ("bioluminescence") used sparingly for the active channel, presence, and
+ * the send action; a coral-amber "signal" hue marks warnings/you/pending.
+ * Type pairing: "Space Grotesk" (geometric, slightly quirky display sans) for UI,
+ * "IBM Plex Mono" for node ids / topics. Both are loaded from the system stack if
+ * the webfonts are unavailable, so the app never blocks on the network.
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  /* abyss palette */
+  --abyss-900: #061417;
+  --abyss-850: #08191d;
+  --abyss-800: #0b1f24;
+  --abyss-700: #0f2a30;
+  --abyss-600: #15393f;
+  --abyss-500: #1d4a51;
+  --line: #1c3a40;
+
+  --ink-100: #eaf6f4;
+  --ink-200: #cfe6e3;
+  --ink-300: #9fc1bd;
+  --ink-400: #6f928e;
+  --ink-500: #4f6f6b;
+
+  /* bioluminescent aqua accent */
+  --aqua-400: #34d0c4;
+  --aqua-300: #5fe3d6;
+  --aqua-500: #1fa99e;
+  --aqua-glow: rgba(52, 208, 196, 0.18);
+
+  /* coral signal */
+  --coral-400: #ff8a5c;
+  --coral-300: #ffb088;
+  --coral-soft: rgba(255, 138, 92, 0.14);
+
+  --danger: #ff6b6b;
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 28px rgba(0, 0, 0, 0.36);
+  --font-ui: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  color: var(--ink-200);
+  background:
+    radial-gradient(1200px 800px at 12% -10%, #0d2a30 0%, transparent 55%),
+    radial-gradient(1000px 700px at 110% 120%, #0a2228 0%, transparent 60%),
+    var(--abyss-900);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#app {
+  height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+::selection {
+  background: var(--aqua-glow);
+}
+
+/* ---------- shell layout ---------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr) 232px;
+  grid-template-rows: 100vh;
+  height: 100vh;
+}
+
+@media (max-width: 920px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .roster {
+    display: none;
+  }
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    max-height: 42vh;
+  }
+}
+
+/* ---------- sidebar ---------- */
+
+.sidebar {
+  background: linear-gradient(180deg, var(--abyss-850), var(--abyss-900));
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.brand {
+  padding: 18px 18px 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.brand .mark {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink-100);
+}
+
+.brand .tag {
+  margin: 1px 0 0;
+  font-size: 11px;
+  color: var(--ink-400);
+  letter-spacing: 0.02em;
+}
+
+.identity {
+  margin: 4px 14px 10px;
+  padding: 11px 12px;
+  border-radius: var(--r-md);
+  background: var(--abyss-800);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.identity .avatar {
+  flex: none;
+}
+
+.identity .who {
+  min-width: 0;
+}
+
+.identity .name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-100);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity .nid {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-400);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.identity .nid button {
+  color: var(--ink-400);
+  font-size: 11px;
+  text-decoration: underline dotted;
+}
+.identity .nid button:hover {
+  color: var(--aqua-300);
+}
+
+.nav-section {
+  padding: 6px 18px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nav-section h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+}
+
+.nav-section .add {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--ink-300);
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  line-height: 1;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.nav-section .add:hover {
+  background: var(--aqua-glow);
+  color: var(--aqua-300);
+}
+
+.channel-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.chan {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  color: var(--ink-300);
+  text-align: left;
+  transition: background 0.13s var(--ease), color 0.13s var(--ease);
+  position: relative;
+}
+
+.chan:hover {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--ink-100);
+}
+
+.chan[aria-current="true"] {
+  background: var(--aqua-glow);
+  color: var(--ink-100);
+}
+
+.chan[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--aqua-400);
+}
+
+.chan .sigil {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  font-family: var(--font-mono);
+  color: var(--ink-500);
+  font-size: 14px;
+}
+.chan[aria-current="true"] .sigil {
+  color: var(--aqua-400);
+}
+
+.chan .label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+
+.chan .lock {
+  font-size: 11px;
+  color: var(--coral-300);
+}
+
+.chan .count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-500);
+  background: var(--abyss-700);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.chan[aria-current="true"] .count {
+  color: var(--aqua-300);
+  background: rgba(52, 208, 196, 0.12);
+}
+
+.sidebar-foot {
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-500);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot.on {
+  background: var(--aqua-400);
+  box-shadow: 0 0 0 3px var(--aqua-glow);
+}
+.dot.off {
+  background: var(--ink-500);
+}
+.dot.warn {
+  background: var(--coral-400);
+  box-shadow: 0 0 0 3px var(--coral-soft);
+}
+
+/* ---------- main pane ---------- */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: linear-gradient(180deg, rgba(13, 42, 48, 0.25), transparent 220px);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.topbar .title {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+.topbar .title .sigil {
+  font-family: var(--font-mono);
+  color: var(--aqua-400);
+  font-size: 18px;
+}
+
+.topbar h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink-100);
+  letter-spacing: -0.01em;
+}
+
+.topbar .topic {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+.presence-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-300);
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--abyss-800);
+  border: 1px solid var(--line);
+}
+
+/* ---------- messages ---------- */
+
+.stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 22px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream {
+    scroll-behavior: auto;
+  }
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.daydiv {
+  align-self: center;
+  margin: 14px 0 8px;
+  font-size: 11px;
+  color: var(--ink-500);
+  letter-spacing: 0.04em;
+  background: var(--abyss-800);
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+}
+
+.msg {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 11px;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  animation: rise 0.18s var(--ease);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.msg:hover {
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.msg.grouped {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+.msg.grouped .avatar-cell {
+  visibility: hidden;
+  height: 0;
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #04181a;
+  flex: none;
+  user-select: none;
+}
+
+.msg .head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 1px;
+}
+
+.msg .author {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-100);
+}
+
+.msg .author.self {
+  color: var(--aqua-300);
+}
+
+.msg .stamp {
+  font-size: 11px;
+  color: var(--ink-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.msg .nid {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-500);
+}
+
+.msg .body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-200);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg .body a {
+  color: var(--aqua-300);
+}
+
+.msg.pending {
+  opacity: 0.62;
+}
+
+.msg.failed .body {
+  color: var(--danger);
+}
+
+.msg .pending-tag,
+.msg .failed-tag {
+  font-size: 10px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+.msg .pending-tag {
+  color: var(--coral-300);
+  background: var(--coral-soft);
+}
+.msg .failed-tag {
+  color: var(--danger);
+  background: rgba(255, 107, 107, 0.14);
+}
+
+/* ---------- composer ---------- */
+
+.composer {
+  padding: 12px 22px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.composer .box {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  background: var(--abyss-800);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 8px 8px 8px 14px;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.composer .box:focus-within {
+  border-color: var(--aqua-500);
+  box-shadow: 0 0 0 3px var(--aqua-glow);
+}
+
+.composer textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--ink-100);
+  font-size: 14px;
+  line-height: 1.5;
+  max-height: 160px;
+  padding: 5px 0;
+}
+
+.composer textarea::placeholder {
+  color: var(--ink-500);
+}
+
+.send {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--aqua-500);
+  color: #04181a;
+  display: grid;
+  place-items: center;
+  transition: transform 0.12s var(--ease), background 0.15s var(--ease), opacity 0.15s;
+}
+.send:hover:not(:disabled) {
+  background: var(--aqua-400);
+  transform: translateY(-1px);
+}
+.send:active:not(:disabled) {
+  transform: translateY(0);
+}
+.send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.composer .meta {
+  display: flex;
+  justify-content: space-between;
+  margin: 6px 4px 0;
+  font-size: 11px;
+  color: var(--ink-500);
+}
+.composer .meta .over {
+  color: var(--danger);
+}
+
+/* ---------- roster ---------- */
+
+.roster {
+  background: var(--abyss-850);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.roster h3 {
+  margin: 0;
+  padding: 18px 18px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-500);
+}
+
+.roster ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 14px;
+  overflow-y: auto;
+}
+
+.member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+}
+
+.member .avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  font-size: 10px;
+}
+
+.member .info {
+  min-width: 0;
+  flex: 1;
+}
+
+.member .mname {
+  font-size: 13px;
+  color: var(--ink-200);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.member.offline .mname {
+  color: var(--ink-500);
+}
+.member .mid {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-500);
+}
+
+.member .pdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.member .pdot.on {
+  background: var(--aqua-400);
+  box-shadow: 0 0 0 3px var(--aqua-glow);
+}
+.member .pdot.off {
+  background: var(--ink-500);
+}
+
+/* ---------- empty / loading / error states ---------- */
+
+.placeholder {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  text-align: center;
+}
+
+.placeholder .card {
+  max-width: 420px;
+}
+
+.placeholder .glyph {
+  font-size: 40px;
+  margin-bottom: 12px;
+  filter: drop-shadow(0 4px 14px var(--aqua-glow));
+}
+
+.placeholder h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: var(--ink-100);
+}
+
+.placeholder p {
+  margin: 0 0 6px;
+  color: var(--ink-400);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.placeholder code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--abyss-800);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 7px;
+  color: var(--aqua-300);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px;
+}
+.skel-row {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 11px;
+}
+.skel-line {
+  height: 11px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--abyss-700), var(--abyss-600), var(--abyss-700));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+.skel-av {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: var(--abyss-700);
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 22px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+}
+.banner.error {
+  background: rgba(255, 107, 107, 0.1);
+  color: var(--coral-300);
+}
+.banner.warn {
+  background: var(--coral-soft);
+  color: var(--coral-300);
+}
+.banner .hint {
+  color: var(--ink-300);
+}
+.banner code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-100);
+}
+.banner button {
+  margin-left: auto;
+  color: var(--ink-200);
+  text-decoration: underline;
+  font-size: 12px;
+}
+
+/* ---------- modal ---------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 10, 12, 0.66);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 50;
+  animation: fade 0.14s var(--ease);
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal {
+  width: 100%;
+  max-width: 440px;
+  background: var(--abyss-800);
+  border: 1px solid var(--abyss-500);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  padding: 22px;
+  animation: pop 0.16s var(--ease);
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.modal h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  color: var(--ink-100);
+}
+.modal p.sub {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--ink-400);
+  line-height: 1.5;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--abyss-900);
+  padding: 4px;
+  border-radius: 10px;
+}
+.tabs button {
+  flex: 1;
+  padding: 7px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--ink-400);
+  transition: background 0.13s, color 0.13s;
+}
+.tabs button[aria-selected="true"] {
+  background: var(--abyss-700);
+  color: var(--ink-100);
+}
+
+.field {
+  margin-bottom: 14px;
+}
+.field label {
+  display: block;
+  font-size: 12px;
+  color: var(--ink-300);
+  margin-bottom: 6px;
+}
+.field input {
+  width: 100%;
+  background: var(--abyss-900);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.13s, box-shadow 0.13s;
+}
+.field input:focus {
+  border-color: var(--aqua-500);
+  box-shadow: 0 0 0 3px var(--aqua-glow);
+}
+.field input.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.field .err {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--danger);
+}
+.field .help {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ink-500);
+  line-height: 1.45;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.btn {
+  padding: 9px 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.13s, color 0.13s, transform 0.1s;
+}
+.btn.ghost {
+  color: var(--ink-300);
+}
+.btn.ghost:hover {
+  background: var(--abyss-700);
+  color: var(--ink-100);
+}
+.btn.primary {
+  background: var(--aqua-500);
+  color: #04181a;
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--aqua-400);
+}
+.btn.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+:focus-visible {
+  outline: 2px solid var(--aqua-300);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------ feature styles
+   Added in the hardening pass: reactions, threads, typing, mentions, unread
+   badges, message actions, edit/delete markers, retry. All use the existing
+   design tokens so the look stays consistent. */
+
+/* Unread badge + channel highlight in the sidebar. */
+.chan.unread .label {
+  font-weight: 600;
+  color: var(--ink-100);
+}
+.chan .badge {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #06181b;
+  background: var(--aqua-400);
+  border-radius: 9px;
+}
+
+/* Message hover actions. */
+.msg {
+  position: relative;
+}
+.msg-actions {
+  position: absolute;
+  top: -10px;
+  right: 12px;
+  display: none;
+  gap: 2px;
+  padding: 2px;
+  background: var(--abyss-700);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-panel);
+}
+.msg:hover .msg-actions {
+  display: flex;
+}
+.msg-actions button {
+  background: transparent;
+  border: 0;
+  color: var(--ink-300);
+  font-size: 12px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.msg-actions button:hover {
+  background: var(--abyss-600);
+  color: var(--ink-100);
+}
+
+/* Reactions. */
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.reactions .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--abyss-700);
+  color: var(--ink-200);
+  cursor: pointer;
+}
+.reactions .chip.mine {
+  border-color: var(--aqua-500);
+  background: var(--aqua-glow);
+  color: var(--ink-100);
+}
+
+/* Emoji popover. */
+.emoji-pop {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--abyss-700);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-panel);
+}
+.emoji-pop button {
+  font-size: 18px;
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.emoji-pop button:hover {
+  background: var(--abyss-600);
+}
+
+/* Mentions + inline code in message bodies. */
+.body .mention {
+  color: var(--aqua-300);
+  font-weight: 600;
+}
+.body .mention.self {
+  background: var(--aqua-glow);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.body .inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--abyss-850);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+/* Edited / deleted markers. */
+.head .edited {
+  font-size: 11px;
+  color: var(--ink-400);
+  margin-left: 6px;
+}
+.msg.deleted .body .tombstone {
+  font-style: italic;
+  color: var(--ink-400);
+}
+
+/* Retry button on a failed send. */
+.retry-btn {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--coral-300);
+  background: transparent;
+  border: 1px solid var(--coral-400);
+  border-radius: 5px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+/* Typing indicator bar. */
+.typing-bar {
+  height: 0;
+  overflow: hidden;
+  padding: 0 24px;
+  font-size: 12px;
+  color: var(--ink-400);
+  font-style: italic;
+  transition: height 0.15s var(--ease);
+}
+.typing-bar.active {
+  height: 22px;
+  display: flex;
+  align-items: center;
+}
+
+/* Unread divider in the stream. */
+.unread-div {
+  text-align: center;
+  font-size: 11px;
+  color: var(--coral-300);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 10px 0;
+  position: relative;
+}
+.unread-div::before,
+.unread-div::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 38%;
+  height: 1px;
+  background: var(--coral-soft);
+}
+.unread-div::before { left: 0; }
+.unread-div::after { right: 0; }
+
+/* Thread side-pane. */
+.main-with-thread {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.main-with-thread > .main {
+  flex: 1;
+  min-width: 0;
+}
+.thread-pane {
+  width: 340px;
+  border-left: 1px solid var(--line);
+  background: var(--abyss-850);
+  display: flex;
+  flex-direction: column;
+}
+.thread-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.thread-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.thread-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+.thread-sep {
+  font-size: 11px;
+  color: var(--ink-400);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 10px 0;
+}
+.thread-composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+.thread-composer textarea {
+  flex: 1;
+  resize: none;
+  background: var(--abyss-800);
+  color: var(--ink-100);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  font-family: inherit;
+}
+.thread-link {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--aqua-300);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Misc small buttons (topbar history, thread reply). */
+.ghost-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-300);
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.ghost-btn:hover {
+  color: var(--ink-100);
+  border-color: var(--aqua-500);
+}
+.btn.sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}

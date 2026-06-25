@@ -1,0 +1,23 @@
+keys.env
+*.log
+.DS_Store
+screen-feed.ts
+# iOS / Xcode (project is generated from project.yml via xcodegen)
+ios/build/
+ios/DerivedData/
+*.xcodeproj
+*.xcworkspace
+.build/
+Pods/
+xcuserdata/
+trash/
+hls/
+relay/auto.crt
+relay/auto.key
+
+# build / runtime artifacts
+web/out/
+out/
+__pycache__/
+*.pyc
+relay/run/

@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+# clip — shared clipboard across your machines, over the hub (works through any NAT/firewall).
+#   clip            send: push this machine's clipboard (or piped stdin) to the shared clipboard
+#   clip p          paste: pull the shared clipboard into THIS machine's clipboard (and print it)
+# macOS uses pbcopy/pbpaste; Linux uses wl-clipboard / xclip / xsel (falls back to printing).
+import sys, json, subprocess, urllib.request, urllib.error
+
+HUB = "https://ce-net.com"; NS = "clip-c0be11e0ce"; KEY = "text"; UA = "clip/0.1"
+
+def hub_put(v):
+    req = urllib.request.Request(f"{HUB}/db/{NS}/{KEY}", data=json.dumps(v).encode(),
+                                 headers={"Content-Type": "application/json", "User-Agent": UA}, method="PUT")
+    urllib.request.urlopen(req, timeout=10).read()
+def hub_get():
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f"{HUB}/db/{NS}/{KEY}", headers={"User-Agent": UA}), timeout=10) as r:
+            return r.read().decode()  # value is a JSON string
+    except urllib.error.HTTPError as e:
+        if e.code == 404: return '""'
+        raise
+
+def read_clipboard():
+    for cmd in (["pbpaste"], ["wl-paste", "-n"], ["xclip", "-selection", "clipboard", "-o"], ["xsel", "-b"]):
+        try: return subprocess.run(cmd, capture_output=True, text=True).stdout
+        except FileNotFoundError: continue
+    return None
+def write_clipboard(t):
+    for cmd in (["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "-bi"]):
+        try: subprocess.run(cmd, input=t, text=True); return cmd[0]
+        except FileNotFoundError: continue
+    return None
+
+def main():
+    op = sys.argv[1] if len(sys.argv) > 1 else "copy"
+    if op in ("p", "paste", "get"):
+        t = json.loads(hub_get())
+        where = write_clipboard(t)
+        sys.stdout.write(t)
+        if where: sys.stderr.write(f"\n(also in your clipboard via {where})\n")
+        else: sys.stderr.write("\n(no clipboard tool — text printed above; `apt-get install -y wl-clipboard` for auto-copy)\n")
+    else:
+        t = sys.stdin.read() if not sys.stdin.isatty() else (read_clipboard() or "")
+        if not t: sys.exit("clip: nothing to send (clipboard empty / no clipboard tool — pipe text in: echo hi | clip)")
+        hub_put(t)
+        sys.stderr.write(f"sent {len(t)} chars. On the other machine:  clip p\n")
+
+if __name__ == "__main__":
+    main()

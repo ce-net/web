@@ -1,0 +1,37 @@
+# MediaMTX config for ce-cast.
+# Ingests two WHIP (WebRTC) publishers — the phone (camera+mic) on path `cam`, the laptop
+# (screen) on path `screen` — and re-serves them over RTSP so compose-fanout.sh can pull,
+# composite, and fan out to the platforms + ce-net HLS.
+#
+# Run:  mediamtx mediamtx.yml
+# WHIP publish URLs:  https://<host>:8889/cam/whip   and   https://<host>:8889/screen/whip
+# (HTTPS required: phones only grant camera/mic in a secure context.)
+
+logLevel: info
+
+# --- WebRTC / WHIP ingest (the phone + laptop publish here) ---
+webrtc: yes
+webrtcAddress: :8889
+# For real phones over the internet, terminate TLS (Cloudflare in front, or set certs here):
+# webrtcEncryption: optional
+# webrtcServerKey: /etc/ce-cast/server.key
+# webrtcServerCert: /etc/ce-cast/server.crt
+# Advertise the public IP so ICE works through NAT (set on the relay):
+# webrtcAdditionalHosts: [relay.ce-net.com]
+
+# --- RTSP (compose-fanout.sh pulls from here; carries Opus audio losslessly) ---
+rtsp: yes
+rtspAddress: :8554
+
+# --- RTMP ingest (optional: laptop screen via screen-send.sh instead of the browser) ---
+rtmp: yes
+rtmpAddress: :1935
+
+# --- HLS (optional direct preview straight from MediaMTX) ---
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+
+paths:
+  cam:
+  screen:

@@ -1,0 +1,29 @@
+{
+  "name": "ce-drive-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CE Drive web app — the open-source Google Drive UI over CE primitives. Framework-free TypeScript + Vite. File browser over a DriveTree (Kleppmann move-CRDT) model, chunked CID-verified upload/download via @ce-net/sdk, capability-based sharing.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
+  "repository": { "type": "git", "url": "https://github.com/ce-net/ce-drive.git" },
+  "homepage": "https://ce-net.com",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:wasm": "wasm-pack build --target web --release --out-dir \"$PWD/src/wasm\" --out-name ce_drive_wasm ../ce-drive/crates/ce-drive-wasm && rm -f src/wasm/.gitignore src/wasm/package.json src/wasm/README.md",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ce-net/sdk": "file:../ce-ts"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}

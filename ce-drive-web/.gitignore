@@ -1,0 +1,7 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# Generated ce-drive-wasm bundle (produced by `npm run build:wasm`).
+src/wasm/

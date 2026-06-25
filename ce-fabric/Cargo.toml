@@ -1,0 +1,48 @@
+[workspace]
+members = [
+    "crates/ce-identity",
+    "crates/ce-cap",
+    "crates/ce-tls",
+    "crates/ce-runtime",
+    "crates/ce-guard",
+    "crates/ce-wasm",
+    "crates/ce-chain",
+    "crates/ce-mesh",
+    "crates/ce-container",
+    "crates/ce-node",
+    "crates/ce-protocol",
+    "crates/ce-deploy",
+]
+resolver = "2"
+
+[package]
+name = "ce"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ce"
+path = "src/main.rs"
+
+[dependencies]
+ce-node = { path = "crates/ce-node" }
+ce-identity = { path = "crates/ce-identity" }
+ce-cap = { path = "crates/ce-cap" }
+ce-chain = { path = "crates/ce-chain" }
+futures-util = "0.3"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "5"
+dirs-next = "2"
+hex = "0.4"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+rand = "0.8"

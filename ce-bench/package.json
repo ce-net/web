@@ -1,0 +1,27 @@
+{
+  "name": "@ce-net/bench",
+  "version": "0.0.1",
+  "description": "Portable compute/memory/network/disk/LLM benchmarks for CE fabric nodes. Assembles signed NodeProfiles and the FabricStats scoreboard. Runs in Node and in ce-net.com/node browser nodes. Zero dependencies.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
+  "exports": {
+    ".": "./src/index.js",
+    "./benchmarks": "./src/benchmarks.js",
+    "./runner": "./src/runner.js",
+    "./profile": "./src/profile.js",
+    "./fabricstats": "./src/fabricstats.js",
+    "./types": "./src/types.js",
+    "./ce": "./src/ce.js"
+  },
+  "files": [
+    "src",
+    "docs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "dependencies": {}
+}

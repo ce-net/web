@@ -1,0 +1,13 @@
+error: failed to get `ce-rs` as a dependency of package `ce-adapter v0.1.0 (/home/asdfghj/ce-net/ce-adapter)`
+
+Caused by:
+  failed to load source for dependency `ce-rs`
+
+Caused by:
+  Unable to update /home/asdfghj/ce-net/ce-rs
+
+Caused by:
+  failed to read `/home/asdfghj/ce-net/ce-rs/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)

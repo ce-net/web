@@ -1,0 +1,12 @@
+[Unit]
+Description=ce-cast MediaMTX (WHIP ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/mediamtx /opt/ce-cast/relay/mediamtx.prod.yml
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

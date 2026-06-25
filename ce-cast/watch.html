@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rheo — Live</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0b0c; color: #e9e7e2;
+    font: 15px/1.5 -apple-system, "Schibsted Grotesk", system-ui, sans-serif; }
+  .wrap { display: flex; flex-direction: column; min-height: 100%; }
+  header { display: flex; align-items: center; gap: .6rem; padding: 14px 18px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #d8543b;
+    box-shadow: 0 0 0 0 rgba(216,84,59,.7); animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(216,84,59,.6) } 70% { box-shadow: 0 0 0 10px rgba(216,84,59,0) } 100% { box-shadow: 0 0 0 0 rgba(216,84,59,0) } }
+  .live { letter-spacing: .14em; font-size: 12px; text-transform: uppercase; color: #d8543b; }
+  .spacer { flex: 1; }
+  .host { font-size: 12px; color: #8a8780; }
+  main { flex: 1; display: grid; place-items: center; padding: 0 16px 24px; }
+  video { width: min(100%, 1280px); aspect-ratio: 16/9; background: #000;
+    border-radius: 12px; outline: 1px solid #1c1c1f; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="dot" aria-hidden="true"></span>
+    <span class="live" id="state">connecting</span>
+    <span class="spacer"></span>
+    <span class="host">over ce-net</span>
+  </header>
+  <main>
+    <video id="v" controls autoplay muted playsinline></video>
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<script>
+  // Long-running, memory-bounded live player. Never gives up: retries the manifest forever,
+  // recovers from media/network errors, prunes back-buffer so it stays fast for hours, and
+  // snaps back to the live edge after stalls.
+  const params = new URLSearchParams(location.search);
+  const src = params.get('src') || './hls/index.m3u8';
+  const v = document.getElementById('v');
+  const stateEl = document.getElementById('state');
+  let hls = null, lastT = 0, stalls = 0;
+
+  function setState(s) { stateEl.textContent = s; }
+
+  function buildHls() {
+    return new Hls({
+      lowLatencyMode: false,
+      backBufferLength: 30,            // <- the key fix: evict old buffer so memory stays flat for hours
+      maxBufferLength: 20,
+      maxMaxBufferLength: 40,
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 12,
+      manifestLoadingMaxRetry: Infinity,
+      manifestLoadingRetryDelay: 1000,
+      manifestLoadingMaxRetryTimeout: 8000,
+      levelLoadingMaxRetry: Infinity,
+      fragLoadingMaxRetry: Infinity,
+    });
+  }
+
+  function teardown() { if (hls) { try { hls.destroy(); } catch {} hls = null; } }
+  function hardReload() { teardown(); setState('reconnecting'); setTimeout(attach, 2000); }
+
+  function attach() {
+    // Safari / iOS: native HLS handles long sessions + memory itself.
+    if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      v.src = src; v.play().catch(() => {});
+      v.onerror = () => { setState('reconnecting'); setTimeout(() => { v.src = src; v.play().catch(() => {}); }, 2000); };
+      setState('live');
+      return;
+    }
+    if (!window.Hls || !Hls.isSupported()) { setState('unsupported'); return; }
+    hls = buildHls();
+    hls.loadSource(src);
+    hls.attachMedia(v);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => { v.play().catch(() => {}); setState('live'); });
+    hls.on(Hls.Events.ERROR, (_e, d) => {
+      if (!d.fatal) return;
+      if (d.type === Hls.ErrorTypes.NETWORK_ERROR) { setState('reconnecting'); try { hls.startLoad(); } catch { hardReload(); } }
+      else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) { try { hls.recoverMediaError(); } catch { hardReload(); } }
+      else hardReload();
+    });
+  }
+
+  function snapToLive() {
+    try {
+      if (hls && typeof hls.liveSyncPosition === 'number') { v.currentTime = hls.liveSyncPosition; v.play().catch(() => {}); }
+      else if (v.seekable && v.seekable.length) { v.currentTime = v.seekable.end(v.seekable.length - 1); }
+    } catch {}
+  }
+
+  // Stall watchdog: if playback isn't advancing while it should be, nudge to live, then reload.
+  setInterval(() => {
+    if (v.paused || v.readyState < 2) { lastT = v.currentTime; return; }
+    if (v.currentTime <= lastT + 0.01) {
+      if (++stalls === 2) snapToLive();
+      if (stalls >= 5) { stalls = 0; hardReload(); }
+    } else stalls = 0;
+    lastT = v.currentTime;
+  }, 5000);
+
+  // Drift control: if we fall too far behind live over a long session, snap forward.
+  setInterval(() => { if (hls && hls.latency > 30) snapToLive(); }, 15000);
+
+  window.addEventListener('online', () => { if (!hls && !v.canPlayType('application/vnd.apple.mpegurl')) attach(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) snapToLive(); });
+
+  attach();
+</script>
+</body>
+</html>

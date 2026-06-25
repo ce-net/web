@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>CE Roadmap — from a workstation to a supercomputer</title>
+<meta name="theme-color" content="#03060e" />
+<meta name="description" content="Two roadmaps: the compute we unlock as nodes join (a workstation, a rack, a datacenter, a top-500 supercomputer) and the platform we are building (one-identity signing, the authoritative game framework, slugs and the projects registry, durable database, mesh replication, custom-domain TLS, more runtimes, GPU, paid hosting, capability auth, economic security)." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%2337c6ff' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3Cpath d='M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--abyss:#03060e;--deep:#070d18;--panel:#0a1422;--panel-2:#0c1828;--line:rgba(116,176,255,.13);--line-2:rgba(116,176,255,.07);
+  --text:#e9f1fb;--muted:#92a8c6;--faint:#5e768f;--blue:#3b82ff;--cyan:#37c6ff;--surf:#7af0ff;--ok:#43e0a0;--bad:#ff5d72;--gold:#ffd166;
+  --grad:linear-gradient(118deg,#2f6bff,#37c6ff 56%,#7af0e6);--display:"Fraunces",serif;--body:"Hanken Grotesk",sans-serif;--mono:"JetBrains Mono",monospace}
+*{box-sizing:border-box}html,body{margin:0;padding:0;max-width:100%;overflow-x:clip}
+body{background:var(--abyss);color:var(--text);font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(70% 50% at 50% -10%,rgba(55,198,255,.16),transparent 60%),radial-gradient(55% 42% at 100% 108%,rgba(47,107,255,.13),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:1040px;margin:0 auto;padding:0 20px}
+a{color:inherit;text-decoration:none}
+nav{display:flex;align-items:center;gap:14px;height:60px;border-bottom:1px solid var(--line-2)}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:600;font-size:19px}
+.brand svg{width:24px;height:24px}.brand .ce{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav .sp{flex:1}nav a.lnk{color:var(--muted);font-size:14px;font-weight:500}nav a.lnk:hover{color:var(--text)}
+.btn{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:14px;border-radius:10px;padding:9px 15px;cursor:pointer;border:1px solid var(--line);color:var(--text);background:rgba(116,176,255,.05);text-decoration:none}
+.btn.primary{border:0;color:#021018;font-weight:700;background:var(--grad)}
+@media(max-width:720px){nav a.lnk{display:none}}
+
+header{padding:38px 0 8px}
+.kick{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan)}
+h1{font-family:var(--display);font-weight:600;font-size:clamp(30px,7vw,50px);letter-spacing:-.02em;line-height:1.04;margin:12px 0 0}
+h1 em{font-style:italic;background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{color:var(--muted);margin:16px 0 0;max-width:62ch}
+.lede b{color:var(--text);font-weight:600}
+
+/* live strip */
+.livestrip{display:flex;flex-wrap:wrap;align-items:center;gap:14px 26px;margin:26px 0 0;padding:16px 18px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.livestrip .live{width:10px;height:10px;border-radius:50%;background:#324b63;flex:none}
+.livestrip .live.on{background:var(--ok)}
+.livestrip .lbl{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.livestrip .lbl b{color:var(--surf);font-weight:600}
+.livestrip .sp{flex:1}
+.livestrip a.mini{font-family:var(--mono);font-size:12px;color:var(--cyan)}
+
+section{padding:14px 0 6px}
+.sectkick{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);margin-top:46px}
+h2{font-family:var(--display);font-weight:600;font-size:clamp(24px,4vw,34px);letter-spacing:-.018em;margin:12px 0 0;line-height:1.1}
+.sub{color:var(--muted);margin:12px 0 0;max-width:64ch}
+
+/* ---- compute tiers (depth ladder) ---- */
+.tiers{margin-top:30px;display:flex;flex-direction:column;gap:12px}
+.tier{display:grid;grid-template-columns:150px 1fr;gap:18px;border:1px solid var(--line);border-radius:16px;
+  background:linear-gradient(180deg,var(--panel),var(--deep));padding:20px 22px;min-width:0;position:relative;overflow:hidden}
+.tier::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--grad);opacity:.5}
+.tier .scale{min-width:0}
+.tier .nodes{font-family:var(--display);font-weight:600;font-size:30px;letter-spacing:-.02em;line-height:1}
+.tier .nodes small{font-family:var(--mono);font-weight:400;font-size:12px;color:var(--faint);display:block;letter-spacing:.06em;text-transform:uppercase;margin-top:6px}
+.tier .body{min-width:0}
+.tier .equiv{font-family:var(--display);font-weight:600;font-size:18.5px;letter-spacing:-.01em;color:var(--text)}
+.tier .equiv .pf{color:var(--cyan)}
+.tier .unlock{color:var(--muted);font-size:14px;margin-top:8px}
+.tier .unlock b{color:var(--surf);font-weight:600}
+.tier.here{border-color:rgba(67,224,160,.4)}
+.tier.here::before{background:linear-gradient(180deg,#43e0a0,#7af0e6);opacity:1}
+.tier .badge{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ok);
+  border:1px solid rgba(67,224,160,.35);border-radius:99px;padding:2px 9px;margin-top:10px}
+@media(max-width:620px){.tier{grid-template-columns:1fr;gap:10px}.tier .nodes{font-size:26px}}
+
+.approx{font-size:12.5px;color:var(--faint);margin-top:18px;max-width:66ch}
+
+/* ---- build roadmap horizons ---- */
+.horizons{margin-top:30px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media(max-width:860px){.horizons{grid-template-columns:1fr}}
+.horizon{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,var(--panel),var(--deep));padding:20px 20px 22px;min-width:0}
+.horizon .hh{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--line-2);padding-bottom:14px;margin-bottom:14px}
+.horizon .hh .when{font-family:var(--display);font-weight:600;font-size:19px;letter-spacing:-.01em}
+.horizon .hh .tag{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-left:auto}
+.horizon.near .hh .when{color:var(--surf)}
+.horizon.mid .hh .when{color:var(--cyan)}
+.horizon.far .hh .when{color:var(--blue)}
+.items{display:flex;flex-direction:column;gap:13px}
+.item{display:grid;grid-template-columns:18px 1fr;gap:11px;align-items:start}
+.item .mk{font-family:var(--mono);font-size:14px;line-height:1.5;flex:none;width:18px}
+.item .mk.done{color:var(--ok)}
+.item .mk.prog{color:var(--gold)}
+.item .mk.plan{color:var(--faint)}
+.item .it{min-width:0}
+.item .it .t{font-weight:600;font-size:14.5px;color:var(--text)}
+.item .it .d{font-size:13px;color:var(--muted);margin-top:2px;line-height:1.5}
+.statusrow{display:flex;flex-wrap:wrap;gap:16px;margin-top:24px;font-family:var(--mono);font-size:12px;color:var(--faint)}
+.statusrow span{display:inline-flex;align-items:center;gap:7px}
+.statusrow i{font-style:normal}
+.statusrow .done{color:var(--ok)}.statusrow .prog{color:var(--gold)}.statusrow .plan{color:var(--faint)}
+
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin:42px 0 0}
+
+footer{border-top:1px solid var(--line-2);padding:30px 0 64px;color:var(--faint);font-size:13px;margin-top:54px}
+footer a{color:var(--muted)}footer a:hover{color:var(--text)}
+footer .frow{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="/"><svg viewBox="0 0 32 32"><g fill="none" stroke="#37c6ff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/><path d="M4 19c3 0 3 3 6 3s3-3 6-3 3 3 6 3 3-3 6-3"/></g></svg><span class="ce">ce</span></a>
+    <div class="sp"></div>
+    <a class="lnk" href="/network">Network</a>
+    <a class="lnk" href="/deploy">Deploy an app</a>
+    <a class="lnk" href="/node">Run a node</a>
+    <a class="lnk" href="/ce-map.html">Map</a>
+    <a class="btn primary" href="/node">Run a node →</a>
+  </nav>
+
+  <header>
+    <span class="kick">Roadmap</span>
+    <h1>From a workstation to a <em>supercomputer.</em></h1>
+    <p class="lede">Two roadmaps in one. The first is set by physics and participation: <b>how much compute we unlock as nodes
+      join</b> — and what each scale makes possible. The second is set by us: <b>the platform we are building on top of the
+      mesh</b> — durable storage, replication with no single point, custom-domain TLS, more runtimes, GPU, and an economy that
+      pays the hosts. Numbers below are honest and deliberately approximate.</p>
+
+    <div class="livestrip">
+      <span class="live" id="live"></span>
+      <span class="lbl" id="livelbl">sounding the network…</span>
+      <span class="sp"></span>
+      <a class="mini" href="/network">live network &amp; capacity &rarr;</a>
+    </div>
+  </header>
+
+  <!-- ========================= COMPUTE TRACK ========================= -->
+  <section>
+    <span class="sectkick">Track 1 &middot; Compute</span>
+    <h2>What each scale unlocks.</h2>
+    <p class="sub">Every device that opens <a href="/node" style="color:var(--cyan)">/node</a> adds its cores, memory, and
+      (where present) its GPU to one pool. The aggregate climbs the ladder below. These are order-of-magnitude estimates
+      from typical consumer hardware, not benchmarks — the live figure is on the <a href="/network" style="color:var(--cyan)">network page</a>.</p>
+
+    <div class="tiers">
+      <div class="tier here" id="tier-1">
+        <div class="scale"><div class="nodes">1 &ndash; 10<small>nodes</small></div></div>
+        <div class="body">
+          <div class="equiv">A single workstation</div>
+          <div class="unlock">Tens of cores, a handful of GPUs. Enough to <b>run the demos live</b>: WASM and JavaScript
+            tasks, a hosted app with a database and realtime rooms, content-addressed blobs. This is where the mesh is today.</div>
+          <span class="badge" id="badge-here" style="display:none">&check; we are here</span>
+        </div>
+      </div>
+      <div class="tier">
+        <div class="scale"><div class="nodes">~100<small>nodes</small></div></div>
+        <div class="body">
+          <div class="equiv">A server rack</div>
+          <div class="unlock">Hundreds of cores across cities. <b>Embarrassingly-parallel batch work</b> at useful throughput:
+            sharded CI, render fan-out, parameter sweeps, bulk inference on donated GPUs — the work splits, scatters, and
+            comes back.</div>
+        </div>
+      </div>
+      <div class="tier">
+        <div class="scale"><div class="nodes">~1,000<small>nodes</small></div></div>
+        <div class="body">
+          <div class="equiv">A small datacenter</div>
+          <div class="unlock">Thousands of cores and meaningful GPU memory. <b>Distributed training and large simulation
+            ensembles</b> become practical; the credit economy starts pricing real, scarce capacity instead of demo cycles.</div>
+        </div>
+      </div>
+      <div class="tier">
+        <div class="scale"><div class="nodes">~10,000<small>nodes</small></div></div>
+        <div class="body">
+          <div class="equiv"><span class="pf">Petaflop-class</span> aggregate</div>
+          <div class="unlock">At ten thousand mixed devices the pooled floating-point throughput reaches the
+            <b>petaflop range</b> — the territory of a national research cluster, owned by no one and rented from everyone.
+            Population-scale genomics, climate ensembles, full-network LLM inference.</div>
+        </div>
+      </div>
+      <div class="tier">
+        <div class="scale"><div class="nodes">100k &ndash; 1M<small>nodes</small></div></div>
+        <div class="body">
+          <div class="equiv">Rivals a <span class="pf">top-500 supercomputer</span></div>
+          <div class="unlock">At hundreds of thousands to a million phones, laptops, and GPUs, the aggregate enters the
+            <b>regime of the world's largest machines</b> — a planetary instrument for science that anyone can join in one
+            click and anyone can point at the hardest problems.</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="approx">Approximate by design. Real throughput depends on device mix, GPU share, network latency, and how
+      parallel the workload is — a million phones is not a million server cores. We measure and publish the live aggregate on
+      the <a href="/network" style="color:var(--cyan)">network page</a> rather than promise a fixed number here.</p>
+  </section>
+
+  <!-- ========================= BUILD TRACK ========================= -->
+  <section>
+    <span class="sectkick">Track 2 &middot; Platform</span>
+    <h2>What we are building.</h2>
+    <p class="sub">CE is a global compute mesh that is also a one-command app platform: hosting, a database, realtime rooms,
+      custom domains, one-identity signing, an authoritative game framework (netgame + drift), and a public projects
+      registry, hot-reloaded on a public dev domain. Here is where that platform is going — grouped by horizon, concrete
+      but not over-promised.</p>
+
+    <div class="horizons">
+      <!-- NEAR -->
+      <div class="horizon near">
+        <div class="hh"><span class="when">Short term</span><span class="tag">shipping now</span></div>
+        <div class="items">
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">One-command app platform</div><div class="d">npm create ce-app, npx ce-app dev &rarr; live URL with hosting, KV database, realtime rooms, and hot-reload on save. Live today.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">One-identity signing, verified</div><div class="d">ce-app resolves one Ed25519 identity (the CE node key, found cross-platform) and signs every mutating write. The hub now verifies it: signed writes are attributed to an owner and earn identity-scoped quotas; unsigned stays anonymous on conservative caps.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Authoritative game framework (netgame + drift)</div><div class="d">netgame elects an authoritative host over live mesh metrics with /db-snapshot failover. drift &mdash; a wasm + wgpu open world &mdash; is live at drift.ce-net.com with region sharding and host failover; coop.ce-net.com is the worked example.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Slugs, registry &amp; feedback</div><div class="d">Claim a human slug (/apps/&lt;slug&gt;/), publish to the public projects registry (ce-net.com/projects and /apps render it), and collect feedback at feedback.ce-net.com. Signed, owner-scoped; identity-based admin moderation.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Custom production domains</div><div class="d">CNAME a domain to ce-net.com and ce-app domain add binds it to your app. Per-developer subdomains via wildcard DNS are live.</div></div></div>
+          <div class="item"><span class="mk done">&check;</span><div class="it"><div class="t">Build on the relay</div><div class="d">deploy/ce-build.sh builds ce-hub and Rust&rarr;wasm apps (drift) natively on the relay &mdash; the same target we deploy to &mdash; and PUTs assets straight to /apps/&lt;id&gt;/. No laptop cross-compile.</div></div></div>
+          <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">Database durability</div><div class="d">Persisted, content-addressed snapshots so the KV store survives restarts and grows past a single host's memory. Compare-and-set (If-Match) is live; durable backing next.</div></div></div>
+          <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">Custom-domain TLS automation</div><div class="d">Automatic certificate issuance and renewal for CNAME'd domains, so a custom domain is one command end to end.</div></div></div>
+          <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">More languages &amp; runtimes</div><div class="d">Compute tasks run WASM, JavaScript, and Python today. Broadening the sandboxed runtime set and the task SDK surface.</div></div></div>
+        </div>
+      </div>
+
+      <!-- MID -->
+      <div class="horizon mid">
+        <div class="hh"><span class="when">Medium term</span><span class="tag">in design</span></div>
+        <div class="items">
+          <div class="item"><span class="mk prog">&rarr;</span><div class="it"><div class="t">Mesh replication &amp; read-path</div><div class="d">App files, blobs, and database snapshots replicated across contributor nodes, served from the nearest replica — a real distributed read-path, not a single origin.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Scheduler-placed game hosting</div><div class="d">Today netgame elects the authoritative host from emergent mesh metrics. A future hub scheduler could place hosting on a chosen node by trust, region, or capacity and hand clients the host id directly — the wire protocol already leaves room for it.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Multi-relay, no single point</div><div class="d">More than one public relay and ingress, so no one machine is the chokepoint. The mesh stays reachable if any single relay goes down.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">GPU compute via WebGPU</div><div class="d">Browser and headless nodes that expose WebGPU run GPU tasks directly — inference and parallel kernels on donated graphics hardware, dispatched like any other task.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Capability-based auth across the platform</div><div class="d">App data, databases, and rooms gated by signed, attenuating capabilities &mdash; delegate, narrow, and revoke access without an account system.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Paid hosting via the credit economy</div><div class="d">Hosting, storage, and compute settle in credits so the nodes that hold your app and run your tasks are paid for it &mdash; the same ledger that mints uptime rewards.</div></div></div>
+        </div>
+      </div>
+
+      <!-- FAR -->
+      <div class="horizon far">
+        <div class="hh"><span class="when">Long term</span><span class="tag">direction</span></div>
+        <div class="items">
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Economic security: bonds &amp; slashing</div><div class="d">Hosts post bonds and stake reputation; misbehavior is slashed on-chain. A verification dial lets a payer trade cost for redundancy and proof.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Fully decentralized ingress</div><div class="d">Any node can serve as ingress for an app or domain, with discovery and TLS handled by the mesh &mdash; removing the last hosted dependency.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">Confidential &amp; verifiable compute</div><div class="d">Trusted-execution and proof-carrying tasks so sensitive workloads run on hardware you do not own, with guarantees you can check.</div></div></div>
+          <div class="item"><span class="mk plan">&deg;</span><div class="it"><div class="t">A self-sustaining app commons</div><div class="d">Developers ship apps in one command; users run nodes in one click; the economy keeps the lights on &mdash; a public platform that funds and hosts itself.</div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="statusrow">
+      <span><i class="done">&check;</i> shipped &amp; live</span>
+      <span><i class="prog">&rarr;</i> in progress</span>
+      <span><i class="plan">&deg;</i> planned</span>
+    </div>
+  </section>
+
+  <div class="cta">
+    <a class="btn primary" href="/deploy">Deploy an app &rarr;</a>
+    <a class="btn" href="/node">Run a node &rarr;</a>
+    <a class="btn" href="/network">See the live mesh &rarr;</a>
+    <a class="btn" href="/ce-map.html">Open the system map &rarr;</a>
+  </div>
+
+  <footer>
+    CE &mdash; pronounced "Sea." Donate compute, earn credits, spend credits on compute.
+    <div class="frow">
+      <a href="/">Home</a>
+      <a href="/network">Network</a>
+      <a href="/node">Run a node</a>
+      <a href="/deploy">Deploy</a>
+      <a href="/ce-map.html">Map</a>
+      <a href="https://github.com/ce-net/ce">GitHub</a>
+      <a href="https://docs.ce-net.com">Docs</a>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function liveTier(){
+  var live=document.getElementById('live'), lbl=document.getElementById('livelbl');
+  var badge=document.getElementById('badge-here');
+  // map a node count to the tier element to highlight
+  var tiers=[document.getElementById('tier-1')];
+  async function tick(){
+    try{
+      var r=await fetch('/hub/stats',{cache:'no-store'});
+      if(!r.ok) throw 0;
+      var s=await r.json();
+      var n=s.nodes||0, cores=s.cores||0;
+      live.className='live on';
+      lbl.innerHTML='<b>'+n.toLocaleString()+'</b> node'+(n===1?'':'s')+' live &middot; <b>'+cores.toLocaleString()+'</b> cores pooled right now';
+      if(badge) badge.style.display='inline-block';
+    }catch(e){
+      live.className='live';
+      lbl.textContent='live network figure unavailable — see the network page';
+      if(badge) badge.style.display='inline-block';
+    }
+  }
+  tick(); setInterval(tick,5000);
+})();
+</script>
+</body>
+</html>

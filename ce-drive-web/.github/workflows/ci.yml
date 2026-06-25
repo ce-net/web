@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout ce-drive-web
+        uses: actions/checkout@v4
+        with:
+          path: ce-drive-web
+
+      # ce-drive-web depends on @ce-net/sdk via `file:../ce-ts`. Check the SDK out
+      # as a sibling and build it first so its dist/ + type declarations exist for
+      # ce-drive-web's typecheck and bundle.
+      #
+      # Note: `npm run build` (tsc --noEmit && vite build) does NOT invoke
+      # `build:wasm`. The vite config tolerates a missing src/wasm artifact and
+      # falls back to the in-memory mock adapter, so CI needs neither wasm-pack nor
+      # the sibling ../ce-drive Rust crate.
+      - name: Checkout ce-ts (sibling dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: ce-net/ce-ts
+          path: ce-ts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install ce-ts
+        working-directory: ce-ts
+        run: npm install
+
+      - name: Build ce-ts
+        working-directory: ce-ts
+        run: npm run build
+
+      - name: Install ce-drive-web
+        working-directory: ce-drive-web
+        run: npm install
+
+      - name: Build ce-drive-web
+        working-directory: ce-drive-web
+        run: npm run build

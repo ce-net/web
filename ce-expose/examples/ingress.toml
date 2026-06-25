@@ -1,0 +1,67 @@
+# ce-expose relay-tier public ingress — operator-curated endpoint policy.
+#
+# DEFAULT-DENY: a public name is reachable ONLY if it has an `approved = true` route here AND passes
+# the abuse filters. An empty/missing file => zero routes. The operator owns this file; an endpoint
+# owner may *request* a route (future on-chain ExposeBond manifest) but the operator may only tighten,
+# never loosen, the limits below.
+#
+# Load with:  ce-expose ingress --listen 127.0.0.1:8855 --config /etc/ce/ingress.toml
+# Kill switch: `touch <dir>/ingress.kill` (or start with --kill-switch).
+
+[global]
+total_tunnel_ceiling = 256          # hard cap on simultaneous public tunnels across ALL endpoints
+global_rps            = 200         # whole-ingress requests/sec (token bucket)
+per_ip_rps            = 20          # per-source-IP requests/sec
+max_body_bytes        = 8388608     # 8 MiB request body ceiling (memory/slowloris bound)
+max_header_bytes      = 65536       # 64 KiB total header ceiling
+request_timeout_ms    = 30000       # hard per-request total timeout (covers header+body read+bridge)
+resolve_ttl_secs      = 30          # name -> NodeId resolution cache TTL (pinned to route owner)
+header_read_timeout_ms = 10000      # max time to receive the full request head (slowloris defense)
+max_connections       = 1024        # hard cap on concurrently-accepted TCP connections (socket pool)
+max_ip_buckets        = 100000      # max retained per-IP rate buckets (memory bound vs IP/XFF churn)
+global_response_budget = 268435456  # 256 MiB total in-flight response memory across ALL tunnels
+ipv6_rate_prefix      = 64          # aggregate IPv6 sources to /64 for per-IP rate limiting
+# X-Forwarded-For: behind nginx/Cloudflare the socket peer is always loopback, so the fronting proxy
+# MUST set an AUTHORITATIVE client IP — overwrite X-Forwarded-For (not append) with the real client,
+# or set CF-Connecting-IP. The relay honors these ONLY when the socket peer is inside trusted_proxy_cidr
+# and uses the RIGHT-MOST untrusted XFF entry (robust to an attacker prepending forged entries).
+trusted_proxy_cidr    = ["127.0.0.1/32", "::1/128"]
+# Names containing any of these substrings are refused (anti-phishing). Omit to use the built-in list.
+# blocked_substrings  = ["login", "pay", "bank", "admin", "wallet", "ce-net", ...]
+
+# A PUBLIC endpoint: open to the world, but still rate-limited, byte-capped, and the ORIGIN authorizes
+# every mesh frame independently. The relay PINS the upstream NodeId to `owner` (a name-claim hijack
+# that resolves elsewhere is refused with 502 owner_mismatch) and presents its OWN `relay_cap` to the
+# origin — never the client's X-CE-Cap header.
+[[endpoint]]
+name            = "leif"
+owner           = "25df8f15853855c4cd2c5769cbc9789bf156534356ffead3b67c2c395f6d8ac1"
+kind            = "http"
+visibility      = "public"
+approved        = true              # default-deny: false (or omitted) => this route is NOT live
+rps             = 10
+max_conns       = 16
+byte_cap        = 1073741824        # 1 GiB cumulative (up+down); 0 = unlimited
+idle_timeout_ms = 15000
+# The relay's OWN cap chain (hex) granting the relay's NodeId `expose:dial` on this origin. This is
+# the ONLY cap forwarded upstream. Inline `relay_cap = "<hex>"`, or point at an operator-only file:
+# relay_cap_file = "/etc/ce/relay-caps/leif.cap"
+# (Empty => the origin denies unless it self-issued a cap for the relay NodeId => 502 origin_refused.)
+
+# A PRIVATE endpoint: the relay runs an EARLY-REJECT check of the caller's `expose:dial` chain
+# (X-CE-Cap + X-CE-Node headers) rooted at `dial_cap_root` before bridging, and the origin
+# independently authorizes every frame against the relay's `relay_cap`. NOTE: ce-cap has no
+# proof-of-possession and X-CE-Node is client-supplied, so the relay check is a bearer-token /
+# audit gate, NOT a confidentiality boundary — see docs/security-review.md. Use a TLS-terminating
+# origin for anything truly secret.
+[[endpoint]]
+name          = "ops-dash"
+owner         = "25df8f15853855c4cd2c5769cbc9789bf156534356ffead3b67c2c395f6d8ac1"
+kind          = "http"
+visibility    = "private"
+dial_cap_root = "25df8f15853855c4cd2c5769cbc9789bf156534356ffead3b67c2c395f6d8ac1"
+approved      = true
+rps           = 5
+max_conns     = 4
+byte_cap      = 0
+# relay_cap_file = "/etc/ce/relay-caps/ops-dash.cap"

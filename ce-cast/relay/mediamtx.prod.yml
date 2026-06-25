@@ -1,0 +1,60 @@
+# MediaMTX — production config for the ce-net relay (178.105.145.170 / cast.ce-net.com).
+# WHIP/WHEP signaling is bound to localhost (nginx reverse-proxies it behind Cloudflare TLS);
+# WebRTC MEDIA is direct UDP to the public IP (Cloudflare can't carry UDP).
+#
+# Topology (phone composites; relay fans out):
+#   Mac  -> WHIP publish  cam (camera+mic) + screen
+#   Phone-> WHEP pull cam + screen, composite, WHIP publish  program
+#   Relay-> program is fanned out to every platform by fanout.sh (runOnReady below).
+
+logLevel: info
+
+# --- Auth ------------------------------------------------------------------
+# Remote devices (Mac, phone) MUST present the publish key to publish OR read.
+# Pulling cam/screen is therefore key-gated too: nobody on the internet can siphon
+# your camera/screen/program. Localhost (the fanout ffmpeg + API) reads freely.
+# The real key is injected on the relay at deploy time (deploy.sh) — never committed.
+authInternalUsers:
+  - user: any
+    ips: ['127.0.0.1', '::1']        # localhost-only anonymous read (fanout.sh, API)
+    permissions:
+      - action: read
+      - action: playback
+      - action: api
+  - user: leif                        # remote devices: key required to publish AND read
+    pass: REPLACE_WITH_PUBLISH_KEY
+    permissions:
+      - action: publish
+      - action: read
+
+# readiness/observability API — localhost only
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# WHIP/WHEP — signaling on localhost (nginx fronts it); media advertised on the public IP
+webrtc: yes
+webrtcAddress: 127.0.0.1:8889
+webrtcAdditionalHosts: [178.105.145.170]
+webrtcLocalUDPAddress: :8189          # open 8189/udp in UFW — this is the media path
+
+# RTSP (fanout.sh pulls the program locally; carries H.264 + Opus losslessly) — localhost only
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
+
+# RTMP ingest (optional ffmpeg screen-send.sh fallback) — localhost only
+rtmp: yes
+rtmpAddress: 127.0.0.1:1935
+
+# No MediaMTX HLS: the platforms are the viewers; fan-out is RTMP.
+hls: no
+
+paths:
+  # Mac contribution feeds (key-gated publish + read).
+  cam:
+  screen:
+
+  # The phone's composited program. The instant it goes live, fan it out to every
+  # platform with a key set. runOnReadyRestart relaunches ffmpeg if a platform drops.
+  program:
+    runOnReady: /opt/ce-cast/relay/fanout.sh
+    runOnReadyRestart: yes

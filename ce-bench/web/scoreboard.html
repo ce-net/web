@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CE Fabric Scoreboard</title>
+<style>
+  /* ---- dark technical theme ---------------------------------------------- */
+  :root {
+    --bg:        #0b0e12;
+    --panel:     #121821;
+    --panel-2:   #0e141c;
+    --line:      #1e2733;
+    --line-2:    #2a3645;
+    --fg:        #d7dee7;
+    --fg-dim:    #7f8c9b;
+    --fg-faint:  #56616f;
+    --accent:    #4fd1c5;   /* teal */
+    --accent-2:  #6aa6ff;   /* blue */
+    --warn:      #e0a23c;
+    --bad:       #e0566b;
+    --good:      #4fd1c5;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 22px 60px; }
+
+  /* ---- header ------------------------------------------------------------ */
+  header.top {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 22px;
+  }
+  header.top h1 {
+    font-size: 16px; font-weight: 600; letter-spacing: 0.5px; margin: 0;
+    color: var(--fg);
+  }
+  header.top h1 .c { color: var(--accent); }
+  .sub { color: var(--fg-dim); font-size: 12px; }
+  .spacer { flex: 1 1 auto; }
+
+  .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .controls label { color: var(--fg-dim); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .controls input[type="text"] {
+    background: var(--panel-2); border: 1px solid var(--line-2); color: var(--fg);
+    font-family: var(--mono); font-size: 12px; padding: 4px 8px; border-radius: 4px; width: 230px;
+  }
+  .controls input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .btn {
+    background: var(--panel); border: 1px solid var(--line-2); color: var(--fg);
+    font-family: var(--mono); font-size: 12px; padding: 5px 12px; border-radius: 4px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); color: #fff; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* status dot */
+  .status { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--fg-dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
+  .dot.live { background: var(--good); box-shadow: 0 0 7px var(--good); }
+  .dot.err  { background: var(--bad);  box-shadow: 0 0 7px var(--bad); }
+  .dot.load { background: var(--warn); box-shadow: 0 0 7px var(--warn); }
+
+  /* ---- KPI strip --------------------------------------------------------- */
+  .kpis {
+    display: grid; gap: 12px; margin-bottom: 26px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .kpi {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    padding: 14px 15px; position: relative; overflow: hidden;
+  }
+  .kpi::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent);
+    opacity: 0.55;
+  }
+  .kpi.k-blue::before { background: var(--accent-2); }
+  .kpi.k-warn::before { background: var(--warn); }
+  .kpi .label { color: var(--fg-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .kpi .val {
+    font-size: 26px; font-weight: 600; margin-top: 5px; color: #fff; letter-spacing: -0.5px;
+    line-height: 1.05;
+  }
+  .kpi .val .unit { font-size: 13px; color: var(--fg-dim); font-weight: 400; margin-left: 4px; }
+  .kpi .note { color: var(--fg-faint); font-size: 11px; margin-top: 4px; min-height: 14px; }
+  .kpi .note .vfd { color: var(--accent); }
+
+  /* ---- section headers --------------------------------------------------- */
+  .sec-h {
+    display: flex; align-items: baseline; gap: 10px; margin: 30px 0 12px;
+    border-bottom: 1px solid var(--line); padding-bottom: 7px;
+  }
+  .sec-h h2 { font-size: 13px; font-weight: 600; margin: 0; letter-spacing: 0.4px; color: var(--fg); }
+  .sec-h .h-meta { color: var(--fg-faint); font-size: 11px; }
+
+  /* ---- table ------------------------------------------------------------- */
+  .tbl-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  thead th {
+    text-align: right; padding: 9px 12px; color: var(--fg-dim); font-weight: 500;
+    border-bottom: 1px solid var(--line-2); white-space: nowrap; user-select: none; cursor: pointer;
+    position: sticky; top: 0; background: var(--panel-2);
+  }
+  thead th:first-child, tbody td:first-child { text-align: left; }
+  thead th.nosort { cursor: default; }
+  thead th .arr { color: var(--accent); margin-left: 3px; font-size: 10px; }
+  tbody td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #161e29; }
+  .nid { font-size: 11px; color: var(--accent-2); }
+  .tags { color: var(--fg-faint); font-size: 11px; }
+  .pill {
+    display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 6px;
+    border: 1px solid var(--line-2); color: var(--fg-dim); vertical-align: middle;
+  }
+  .pill.native    { color: var(--good);    border-color: #244; }
+  .pill.container { color: var(--accent-2); border-color: #245; }
+  .pill.browser   { color: var(--warn);    border-color: #443; }
+  .pill.atlas     { color: var(--fg-faint); }
+  .num-zero { color: var(--fg-faint); }
+  .num-good { color: var(--fg); }
+
+  /* ---- region / latency map --------------------------------------------- */
+  .map-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; }
+  @media (max-width: 880px) { .map-grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 14px;
+  }
+  .panel h3 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--fg-dim);
+    text-transform: uppercase; letter-spacing: 0.5px; }
+  svg.map { display: block; width: 100%; height: 360px; background: var(--panel-2); border-radius: 6px; }
+  .map .edge { stroke-width: 1; }
+  .map .node-self { fill: var(--accent); }
+  .map .node-peer { fill: var(--accent-2); }
+  .map .node-far  { fill: var(--bad); }
+  .map .node-lbl  { fill: var(--fg-faint); font-size: 9px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; color: var(--fg-dim); font-size: 11px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+  /* region list */
+  .region { border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; margin-bottom: 9px; background: var(--panel-2); }
+  .region:last-child { margin-bottom: 0; }
+  .region .rh { display: flex; justify-content: space-between; color: var(--fg-dim); font-size: 11px; margin-bottom: 5px; }
+  .region .rh b { color: var(--accent); }
+  .region .members { display: flex; flex-wrap: wrap; gap: 5px; }
+  .region .m { font-size: 10px; color: var(--accent-2); background: var(--panel); border: 1px solid var(--line-2);
+    padding: 1px 6px; border-radius: 3px; }
+
+  .empty { color: var(--fg-faint); font-size: 12px; padding: 22px; text-align: center; }
+  footer.foot { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line);
+    color: var(--fg-faint); font-size: 11px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .err-bar {
+    display: none; background: #2a1418; border: 1px solid #5a2730; color: #f0a8b2;
+    padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 16px;
+  }
+  .err-bar.show { display: block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1><span class="c">CE</span> Fabric Scoreboard</h1>
+    <span class="sub">live compute &middot; capacity &middot; latency</span>
+    <div class="spacer"></div>
+    <div class="controls">
+      <span class="status"><span id="dot" class="dot"></span><span id="statusTxt">starting</span></span>
+      <label>node
+        <input id="baseUrl" type="text" value="http://localhost:8844" spellcheck="false" />
+      </label>
+      <label>auto
+        <input id="auto" type="checkbox" checked />
+      </label>
+      <button id="refresh" class="btn">refresh</button>
+    </div>
+  </header>
+
+  <div id="errBar" class="err-bar"></div>
+
+  <!-- ============ network-wide totals ============ -->
+  <div class="kpis" id="kpis"></div>
+
+  <!-- ============ region / latency map ============ -->
+  <div class="sec-h">
+    <h2>Latency Topology</h2>
+    <span class="h-meta" id="mapMeta">&mdash;</span>
+  </div>
+  <div class="map-grid">
+    <div class="panel">
+      <h3>RTT map (local vantage)</h3>
+      <svg class="map" id="map" viewBox="0 0 600 360" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--accent)"></span>this node</span>
+        <span><span class="sw" style="background:var(--accent-2)"></span>&le; region threshold</span>
+        <span><span class="sw" style="background:var(--bad)"></span>&gt; threshold (far)</span>
+        <span id="legThresh"></span>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Regions (&le; <span id="regThreshTxt">30</span>ms components)</h3>
+      <div id="regions"><div class="empty">no edges yet</div></div>
+    </div>
+  </div>
+
+  <!-- ============ per-node table ============ -->
+  <div class="sec-h">
+    <h2>Nodes</h2>
+    <span class="h-meta" id="tblMeta">&mdash;</span>
+  </div>
+  <div class="tbl-scroll">
+    <table id="tbl">
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <footer class="foot">
+    <span>@ce-net/bench &middot; scoreboard</span>
+    <span>profiles via /profiles or CEP-1 signal stopgap</span>
+    <span>capacity via /atlas &middot; RTT via /netgraph</span>
+    <span id="lastTick">&mdash;</span>
+  </footer>
+
+</div>
+
+<script type="module">
+import { CeClient } from "../src/ce.js";
+import {
+  computeVerifiedStats,
+  collectProfiles,
+  dedupeLatest,
+  fuseEdges,
+  DEFAULT_REGION_THRESHOLD_MS,
+} from "../src/fabricstats.js";
+
+/* ------------------------------------------------------------------ *
+ * formatting helpers (display only — never money)
+ * ------------------------------------------------------------------ */
+const REGION_THRESHOLD_MS = DEFAULT_REGION_THRESHOLD_MS;
+
+function shortId(id) {
+  if (typeof id !== "string" || id.length <= 12) return id ?? "?";
+  return id.slice(0, 6) + "…" + id.slice(-4);
+}
+
+/** Compact SI-ish number. Returns {v, unit-suffix} so the unit can be styled separately. */
+function si(n) {
+  if (!Number.isFinite(n)) return { v: "0", suf: "" };
+  const abs = Math.abs(n);
+  if (abs === 0) return { v: "0", suf: "" };
+  if (abs >= 1e12) return { v: (n / 1e12).toFixed(2), suf: "T" };
+  if (abs >= 1e9)  return { v: (n / 1e9).toFixed(2),  suf: "G" };
+  if (abs >= 1e6)  return { v: (n / 1e6).toFixed(2),  suf: "M" };
+  if (abs >= 1e3)  return { v: (n / 1e3).toFixed(2),  suf: "k" };
+  if (abs >= 100)  return { v: n.toFixed(0), suf: "" };
+  if (abs >= 10)   return { v: n.toFixed(1), suf: "" };
+  return { v: n.toFixed(2), suf: "" };
+}
+
+/** GFLOPS total -> headline in TFLOPS if large, else GFLOPS. */
+function flopsCard(gflops) {
+  if (!Number.isFinite(gflops) || gflops <= 0) return { v: "0", unit: "GFLOPS" };
+  if (gflops >= 1000) {
+    const t = gflops / 1000;
+    return { v: t >= 100 ? t.toFixed(0) : t.toFixed(2), unit: "TFLOPS" };
+  }
+  return { v: gflops >= 100 ? gflops.toFixed(0) : gflops.toFixed(1), unit: "GFLOPS" };
+}
+
+function num(n, digits = 0) {
+  if (!Number.isFinite(n)) return "0";
+  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function gbFromMb(mb) {
+  return Number.isFinite(mb) ? mb / 1024 : 0;
+}
+
+function el(tag, attrs, children) {
+  const e = document.createElementNS(
+    tag === "svg" || tag === "g" || tag === "line" || tag === "circle" || tag === "text"
+      ? "http://www.w3.org/2000/svg"
+      : "http://www.w3.org/1999/xhtml",
+    tag,
+  );
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null) continue;
+    if (k === "class") e.setAttribute("class", v);
+    else e.setAttribute(k, String(v));
+  }
+  if (children != null) {
+    for (const c of [].concat(children)) {
+      if (c == null) continue;
+      e.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    }
+  }
+  return e;
+}
+
+/* ------------------------------------------------------------------ *
+ * DOM refs
+ * ------------------------------------------------------------------ */
+const $ = (id) => document.getElementById(id);
+const dot = $("dot"), statusTxt = $("statusTxt"), errBar = $("errBar");
+const baseUrlIn = $("baseUrl"), autoIn = $("auto"), refreshBtn = $("refresh");
+const kpisEl = $("kpis"), mapEl = $("map"), regionsEl = $("regions");
+const theadEl = $("thead"), tbodyEl = $("tbody");
+const tblMeta = $("tblMeta"), mapMeta = $("mapMeta"), lastTick = $("lastTick");
+$("regThreshTxt").textContent = String(REGION_THRESHOLD_MS);
+$("legThresh").textContent = "threshold " + REGION_THRESHOLD_MS + "ms";
+
+function setStatus(state, text) {
+  dot.className = "dot" + (state ? " " + state : "");
+  statusTxt.textContent = text;
+}
+function showErr(msg) {
+  if (!msg) { errBar.className = "err-bar"; return; }
+  errBar.textContent = msg;
+  errBar.className = "err-bar show";
+}
+
+/* ------------------------------------------------------------------ *
+ * state
+ * ------------------------------------------------------------------ */
+let ce = new CeClient({ baseUrl: baseUrlIn.value.trim() });
+let timer = null;
+let sortKey = "score";
+let sortDir = -1;           // -1 desc, 1 asc
+let lastRows = [];          // merged per-node rows for re-sorting without refetch
+
+/* ------------------------------------------------------------------ *
+ * fetch + merge
+ * ------------------------------------------------------------------ */
+async function tick() {
+  setStatus("load", "fetching");
+  showErr("");
+  let stats, profiles, atlas, netgraph;
+  let hadError = false;
+  try {
+    // verified stats does its own collect+dedupe+mesh; we also collect raw for the table/map so we
+    // get the full per-node vectors and the fused edges in one place.
+    [stats, profiles, atlas, netgraph] = await Promise.all([
+      computeVerifiedStats(ce, { regionThresholdMs: REGION_THRESHOLD_MS }).catch((e) => { throw e; }),
+      collectProfiles(ce).then((p) => dedupeLatest(p)).catch(() => []),
+      ce.atlas().catch(() => []),
+      ce.netgraph().catch(() => []),
+    ]);
+  } catch (e) {
+    hadError = true;
+    setStatus("err", "error");
+    showErr("Cannot reach CE node at " + ce.baseUrl + " — " + (e && e.message ? e.message : e));
+    // still try to render whatever partial we have
+    profiles = profiles ?? [];
+    atlas = atlas ?? [];
+    netgraph = netgraph ?? [];
+  }
+
+  const rows = mergeRows(profiles || [], atlas || []);
+  lastRows = rows;
+
+  renderKpis(stats, rows, atlas || []);
+  renderTable(rows);
+  renderMap(netgraph || [], stats);
+  renderRegions(netgraph || [], profiles || []);
+
+  const now = new Date();
+  lastTick.textContent = "last: " + now.toLocaleTimeString();
+  tblMeta.textContent = rows.length + " node" + (rows.length === 1 ? "" : "s")
+    + " · " + (profiles || []).length + " profiled · " + (atlas || []).length + " in atlas";
+  if (!hadError) setStatus("live", "live");
+}
+
+/** Merge signed profiles (rich: gflops/tflops/tokens) with the atlas (cheap: cores/jobs/tags/seen). */
+function mergeRows(profiles, atlas) {
+  /** @type {Map<string, any>} */
+  const m = new Map();
+
+  for (const p of profiles) {
+    let tflops = 0, vram = 0, gpus = 0, gpuModel = "";
+    for (const g of p.gpus || []) {
+      gpus += 1;
+      vram += Number.isFinite(g.vram_mb) ? g.vram_mb : 0;
+      tflops += Number.isFinite(g.fp16_tflops) ? g.fp16_tflops : 0;
+      if (!gpuModel && g.model) gpuModel = g.model;
+    }
+    const cpu_gflops = p.cpu && Number.isFinite(p.cpu.gflops_fp32) ? p.cpu.gflops_fp32 : 0;
+    const tps = p.llm && Number.isFinite(p.llm.tokens_per_sec) ? p.llm.tokens_per_sec : 0;
+    m.set(p.node_id, {
+      node_id: p.node_id,
+      kind: (p.runtime && p.runtime.kind) || null,
+      cores: p.cpu && Number.isFinite(p.cpu.cores) ? p.cpu.cores : 0,
+      cpu_gflops,
+      gpus, gpu_tflops: tflops, gpu_vram_mb: vram, gpu_model: gpuModel,
+      mem_mb: p.memory && Number.isFinite(p.memory.total_mb) ? p.memory.total_mb : 0,
+      tps,
+      arch: p.runtime ? p.runtime.arch : "",
+      os: p.runtime ? p.runtime.os : "",
+      running_jobs: null,
+      last_seen: p.measured_at || 0,
+      tags: [],
+      profiled: true,
+      // display score = perfScore weights (cpu_gflops + gpu_tflops*1000 + 0.5*tps)
+      score: cpu_gflops + tflops * 1000 + 0.5 * tps,
+    });
+  }
+
+  for (const a of atlas) {
+    const id = a.node_id;
+    if (!id) continue;
+    let r = m.get(id);
+    if (!r) {
+      r = {
+        node_id: id, kind: null, cores: 0, cpu_gflops: 0, gpus: 0, gpu_tflops: 0,
+        gpu_vram_mb: 0, gpu_model: "", mem_mb: 0, tps: 0, arch: "", os: "",
+        running_jobs: null, last_seen: 0, tags: [], profiled: false, score: 0,
+      };
+      m.set(id, r);
+    }
+    // atlas fills capacity/liveness fields a profile-only row lacks
+    if (!r.cores && Number.isFinite(a.cpu_cores)) r.cores = a.cpu_cores;
+    if (!r.mem_mb && Number.isFinite(a.mem_mb)) r.mem_mb = a.mem_mb;
+    if (Number.isFinite(a.running_jobs)) r.running_jobs = a.running_jobs;
+    if (Number.isFinite(a.last_seen_secs)) r.last_seen = Math.max(r.last_seen, a.last_seen_secs);
+    if (Array.isArray(a.tags) && a.tags.length) r.tags = a.tags;
+  }
+
+  return [...m.values()];
+}
+
+/* ------------------------------------------------------------------ *
+ * KPI strip
+ * ------------------------------------------------------------------ */
+function renderKpis(stats, rows, atlas) {
+  // Prefer fabric stats; degrade gracefully to row-derived totals if stats failed.
+  const s = stats || {};
+  const v = s.verified || {};
+
+  const cpuGflops = Number.isFinite(s.cpu_gflops) ? s.cpu_gflops : rows.reduce((t, r) => t + (r.cpu_gflops || 0), 0);
+  const gpuTflops = Number.isFinite(s.gpu_tflops) ? s.gpu_tflops : rows.reduce((t, r) => t + (r.gpu_tflops || 0), 0);
+  const tps = Number.isFinite(s.tokens_per_sec) ? s.tokens_per_sec : rows.reduce((t, r) => t + (r.tps || 0), 0);
+  const cores = Number.isFinite(s.cpu_cores) ? s.cpu_cores : rows.reduce((t, r) => t + (r.cores || 0), 0);
+  const nodeCount = rows.length || (Number.isFinite(s.nodes) ? s.nodes : 0);
+  const mesh = s.mesh || { median_rtt_ms: 0, regions: 0, reachable_frac: 0 };
+
+  const flops = flopsCard(cpuGflops);
+  const gpu = si(gpuTflops);
+  const tok = si(tps);
+
+  const cards = [
+    {
+      cls: "", label: "CPU compute", val: flops.v, unit: flops.unit,
+      note: vNote(v.cpu_gflops_verified, "GFLOPS verified", cpuGflops),
+    },
+    {
+      cls: "k-blue", label: "GPU compute", val: gpuTflops > 0 ? gpu.v : "0",
+      unit: (gpu.suf || "") + "TFLOPS",
+      note: vNote(v.gpu_tflops_verified, "TFLOPS verified", gpuTflops, "T"),
+    },
+    {
+      cls: "k-blue", label: "LLM throughput", val: tps > 0 ? tok.v : "0",
+      unit: (tok.suf || "") + "tok/s",
+      note: vNote(v.tokens_per_sec_verified, "tok/s verified", tps, tok.suf),
+    },
+    {
+      cls: "", label: "Nodes", val: num(nodeCount),
+      unit: "online",
+      note: kindNote(s.by_kind, v.nodes_verified),
+    },
+    {
+      cls: "", label: "CPU cores", val: num(cores), unit: "",
+      note: gpuNote(s.gpus, s.gpu_vram_mb),
+    },
+    {
+      cls: "k-warn", label: "Median RTT", val: mesh.median_rtt_ms > 0 ? mesh.median_rtt_ms.toFixed(1) : "–",
+      unit: "ms",
+      note: "reach " + Math.round((mesh.reachable_frac || 0) * 100) + "%",
+    },
+    {
+      cls: "k-warn", label: "Regions", val: num(mesh.regions || 0), unit: "",
+      note: "≤ " + REGION_THRESHOLD_MS + "ms clusters",
+    },
+    {
+      cls: "", label: "Storage free", val: si(s.storage_free_gb || 0).v,
+      unit: (si(s.storage_free_gb || 0).suf || "") + "GB",
+      note: "across fabric",
+    },
+  ];
+
+  kpisEl.replaceChildren(...cards.map((c) => {
+    const valNode = el("div", { class: "val" }, [
+      c.val,
+      c.unit ? el("span", { class: "unit" }, c.unit) : null,
+    ]);
+    return el("div", { class: "kpi " + c.cls }, [
+      el("div", { class: "label" }, c.label),
+      valNode,
+      el("div", { class: "note" }, c.note),
+    ]);
+  }));
+}
+
+/** A "(X verified)" note node — green for the verified portion. */
+function vNote(verifiedVal, label, displayTotal, scale) {
+  if (!Number.isFinite(verifiedVal) || verifiedVal <= 0) {
+    return el("span", null, "—");
+  }
+  let shown = verifiedVal;
+  if (scale === "T") shown = verifiedVal / 1000; // gpu_tflops verified already in TFLOPS; guard noop
+  const fmt = scale && scale !== "T"
+    ? si(verifiedVal)
+    : { v: shown >= 1000 ? (shown / 1000).toFixed(1) : shown.toFixed(shown < 10 ? 1 : 0), suf: "" };
+  return el("span", null, [
+    el("span", { class: "vfd" }, fmt.v + (fmt.suf || "")),
+    " " + label,
+  ]);
+}
+
+function kindNote(byKind, verified) {
+  const k = byKind || { native: 0, container: 0, browser: 0 };
+  const parts = [];
+  if (k.native) parts.push(k.native + " native");
+  if (k.container) parts.push(k.container + " ctr");
+  if (k.browser) parts.push(k.browser + " browser");
+  const base = parts.length ? parts.join(" · ") : "—";
+  if (Number.isFinite(verified) && verified > 0) {
+    return el("span", null, [base + " · ", el("span", { class: "vfd" }, verified + " trusted")]);
+  }
+  return el("span", null, base);
+}
+
+function gpuNote(gpus, vramMb) {
+  if (!gpus) return el("span", null, "no GPUs reported");
+  const vram = si(gbFromMb(vramMb));
+  return el("span", null, gpus + " GPU" + (gpus === 1 ? "" : "s") + " · " + vram.v + (vram.suf || "") + "GB VRAM");
+}
+
+/* ------------------------------------------------------------------ *
+ * per-node table
+ * ------------------------------------------------------------------ */
+const COLUMNS = [
+  { key: "node_id",    label: "node",     sort: false, cell: cellNode },
+  { key: "cores",      label: "cores",    sort: true,  cell: (r) => numCell(r.cores) },
+  { key: "cpu_gflops", label: "GFLOPS",   sort: true,  cell: (r) => numCell(r.cpu_gflops, 1) },
+  { key: "gpus",       label: "GPU",      sort: true,  cell: cellGpu },
+  { key: "gpu_tflops", label: "TFLOPS",   sort: true,  cell: (r) => numCell(r.gpu_tflops, 1) },
+  { key: "tps",        label: "tok/s",    sort: true,  cell: (r) => numCell(r.tps, 1) },
+  { key: "mem_mb",     label: "mem GB",   sort: true,  cell: (r) => numCell(gbFromMb(r.mem_mb), 1) },
+  { key: "running_jobs", label: "jobs",   sort: true,  cell: (r) => r.running_jobs == null ? dim("–") : numCell(r.running_jobs) },
+  { key: "score",      label: "score",    sort: true,  cell: (r) => numCell(r.score, 0) },
+  { key: "last_seen",  label: "seen",     sort: true,  cell: cellSeen },
+];
+
+function dim(t) { return el("span", { class: "num-zero" }, t); }
+function numCell(n, digits = 0) {
+  if (!Number.isFinite(n) || n === 0) return dim("0");
+  return el("span", { class: "num-good" }, num(n, digits));
+}
+function cellNode(r) {
+  const kind = r.kind ? r.kind.toLowerCase() : (r.profiled ? "native" : "atlas");
+  const pillCls = ["native", "container", "browser"].includes(kind) ? kind : "atlas";
+  const pillTxt = r.profiled ? (r.kind || "node") : "atlas";
+  return el("span", null, [
+    el("span", { class: "nid", title: r.node_id }, shortId(r.node_id)),
+    el("span", { class: "pill " + pillCls }, pillTxt),
+    r.tags && r.tags.length ? el("span", { class: "tags" }, " " + r.tags.slice(0, 4).join(" ")) : null,
+  ]);
+}
+function cellGpu(r) {
+  if (!r.gpus) return dim("–");
+  const title = (r.gpu_model || "") + (r.gpu_vram_mb ? " " + Math.round(r.gpu_vram_mb / 1024) + "GB" : "");
+  return el("span", { class: "num-good", title }, String(r.gpus));
+}
+function cellSeen(r) {
+  if (!r.last_seen) return dim("–");
+  const age = Math.floor(Date.now() / 1000) - r.last_seen;
+  let txt;
+  if (age < 0) txt = "now";
+  else if (age < 90) txt = age + "s";
+  else if (age < 5400) txt = Math.round(age / 60) + "m";
+  else if (age < 172800) txt = Math.round(age / 3600) + "h";
+  else txt = Math.round(age / 86400) + "d";
+  const cls = age > 600 ? "num-zero" : "num-good";
+  return el("span", { class: cls }, txt);
+}
+
+function renderHead() {
+  theadEl.replaceChildren(...COLUMNS.map((c) => {
+    const arr = sortKey === c.key ? el("span", { class: "arr" }, sortDir < 0 ? "▼" : "▲") : null;
+    const th = el("th", { class: c.sort ? "" : "nosort" }, [c.label, arr]);
+    if (c.sort) th.addEventListener("click", () => {
+      if (sortKey === c.key) sortDir = -sortDir;
+      else { sortKey = c.key; sortDir = c.key === "node_id" ? 1 : -1; }
+      renderTable(lastRows);
+    });
+    return th;
+  }));
+}
+
+function renderTable(rows) {
+  renderHead();
+  const sorted = rows.slice().sort((a, b) => {
+    const va = a[sortKey], vb = b[sortKey];
+    if (typeof va === "string" || typeof vb === "string") {
+      return sortDir * String(va).localeCompare(String(vb));
+    }
+    return sortDir * ((va || 0) - (vb || 0));
+  });
+  if (!sorted.length) {
+    tbodyEl.replaceChildren(el("tr", null, el("td", { class: "empty", colspan: String(COLUMNS.length) },
+      "no nodes yet — waiting for profiles / atlas")));
+    return;
+  }
+  tbodyEl.replaceChildren(...sorted.map((r) =>
+    el("tr", null, COLUMNS.map((c) => el("td", null, c.cell(r))))));
+}
+
+/* ------------------------------------------------------------------ *
+ * RTT map (local vantage, radial)
+ * ------------------------------------------------------------------ */
+function renderMap(netgraph, stats) {
+  const W = 600, H = 360, cx = W / 2, cy = H / 2;
+  // fuse into undirected edges from the local star vantage ("self")
+  const { edges } = fuseEdges(netgraph, { selfId: "self" });
+  const peers = edges.filter((e) => e.a === "self" || e.b === "self")
+    .map((e) => ({ id: e.a === "self" ? e.b : e.a, rtt: e.rttMs }));
+
+  // edges that are not from self (peer-to-peer observations) are rare from one vantage; skip drawing
+  // them to keep the radial layout legible.
+  mapMeta.textContent = peers.length + " measured peer" + (peers.length === 1 ? "" : "s")
+    + (stats && stats.mesh ? " · median " + (stats.mesh.median_rtt_ms || 0).toFixed(1) + "ms" : "");
+
+  if (!peers.length) {
+    mapEl.replaceChildren(el("text", {
+      x: cx, y: cy, "text-anchor": "middle", fill: "var(--fg-faint)", "font-size": 12,
+    }, "no measured RTT edges"));
+    return;
+  }
+
+  // radius scaled by RTT (log-ish), clamped to the panel
+  const maxRtt = Math.max(...peers.map((p) => p.rtt), REGION_THRESHOLD_MS);
+  const rMax = Math.min(W, H) / 2 - 34;
+  const rMin = 36;
+  const radiusFor = (rtt) => {
+    const t = Math.min(1, Math.log10(1 + rtt) / Math.log10(1 + maxRtt));
+    return rMin + t * (rMax - rMin);
+  };
+
+  const kids = [];
+  // concentric guide ring at the region threshold
+  kids.push(el("circle", {
+    cx, cy, r: radiusFor(REGION_THRESHOLD_MS), fill: "none",
+    stroke: "var(--line-2)", "stroke-dasharray": "3 4", "stroke-width": 1,
+  }));
+
+  const n = peers.length;
+  peers.forEach((p, i) => {
+    const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const r = radiusFor(p.rtt);
+    const px = cx + Math.cos(ang) * r;
+    const py = cy + Math.sin(ang) * r;
+    const far = p.rtt > REGION_THRESHOLD_MS;
+    const stroke = far ? "var(--bad)" : "var(--accent-2)";
+    kids.push(el("line", {
+      x1: cx, y1: cy, x2: px, y2: py, class: "edge",
+      stroke, "stroke-opacity": far ? 0.35 : 0.55,
+    }));
+    kids.push(el("circle", {
+      cx: px, cy: py, r: 5, class: far ? "node-far" : "node-peer",
+    }, el("title", null, shortId(p.id) + " · " + p.rtt.toFixed(1) + "ms")));
+    // label
+    const lx = cx + Math.cos(ang) * (r + 13);
+    const ly = cy + Math.sin(ang) * (r + 13);
+    kids.push(el("text", {
+      x: lx, y: ly, class: "node-lbl",
+      "text-anchor": lx < cx - 5 ? "end" : lx > cx + 5 ? "start" : "middle",
+      "dominant-baseline": "middle",
+    }, p.rtt.toFixed(0) + "ms"));
+  });
+
+  // self node on top
+  kids.push(el("circle", { cx, cy, r: 7, class: "node-self" },
+    el("title", null, "this node")));
+
+  mapEl.setAttribute("viewBox", "0 0 " + W + " " + H);
+  mapEl.replaceChildren(...kids);
+}
+
+/* ------------------------------------------------------------------ *
+ * regions list (connected components <= threshold)
+ * ------------------------------------------------------------------ */
+function renderRegions(netgraph, profiles) {
+  const { nodes, edges } = fuseEdges(netgraph, { selfId: "self" });
+  for (const p of profiles) nodes.add(p.node_id);
+
+  // union-find over edges <= threshold (mirrors fabricstats.meshHealth region logic)
+  const parent = new Map();
+  for (const nd of nodes) parent.set(nd, nd);
+  const find = (x) => { let r = x; while (parent.get(r) !== r) r = parent.get(r);
+    let c = x; while (parent.get(c) !== r) { const nx = parent.get(c); parent.set(c, r); c = nx; } return r; };
+  const union = (x, y) => { const rx = find(x), ry = find(y); if (rx !== ry) parent.set(rx, ry); };
+  const edgeRtt = new Map(); // representative rtt per pair for averaging within region
+  for (const e of edges) {
+    if (e.rttMs <= REGION_THRESHOLD_MS) union(e.a, e.b);
+  }
+  // group members + collect intra-region rtts
+  const groups = new Map();
+  for (const nd of nodes) {
+    const root = find(nd);
+    if (!groups.has(root)) groups.set(root, { members: [], rtts: [] });
+    groups.get(root).members.push(nd);
+  }
+  for (const e of edges) {
+    if (e.rttMs <= REGION_THRESHOLD_MS) {
+      const g = groups.get(find(e.a));
+      if (g) g.rtts.push(e.rttMs);
+    }
+  }
+
+  const list = [...groups.values()].sort((a, b) => b.members.length - a.members.length);
+  if (!list.length || (list.length === 1 && list[0].members.length <= 1 && nodes.size <= 1)) {
+    regionsEl.replaceChildren(el("div", { class: "empty" }, "no edges yet"));
+    return;
+  }
+
+  regionsEl.replaceChildren(...list.map((g, i) => {
+    const avg = g.rtts.length ? (g.rtts.reduce((a, b) => a + b, 0) / g.rtts.length) : null;
+    const labels = g.members.map((m) =>
+      el("span", { class: "m", title: m }, m === "self" ? "this node" : shortId(m)));
+    return el("div", { class: "region" }, [
+      el("div", { class: "rh" }, [
+        el("span", null, [el("b", null, "R" + (i + 1)), " · " + g.members.length + " node" + (g.members.length === 1 ? "" : "s")]),
+        el("span", null, avg != null ? "~" + avg.toFixed(1) + "ms" : "isolated"),
+      ]),
+      el("div", { class: "members" }, labels),
+    ]);
+  }));
+}
+
+/* ------------------------------------------------------------------ *
+ * controls + loop
+ * ------------------------------------------------------------------ */
+const POLL_MS = 5000;
+function startLoop() {
+  stopLoop();
+  if (autoIn.checked) timer = setInterval(tick, POLL_MS);
+}
+function stopLoop() { if (timer) { clearInterval(timer); timer = null; } }
+
+refreshBtn.addEventListener("click", () => tick());
+autoIn.addEventListener("change", () => { startLoop(); });
+baseUrlIn.addEventListener("change", () => {
+  ce = new CeClient({ baseUrl: baseUrlIn.value.trim() || "http://localhost:8844" });
+  tick();
+});
+
+renderHead();
+tick();
+startLoop();
+</script>
+</body>
+</html>

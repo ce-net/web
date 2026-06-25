@@ -1,0 +1,826 @@
+/*
+ * ce-board — "bathymetric chart" visual identity.
+ *
+ * The board is a nautical depth chart of the seafloor: columns are depth zones, cards
+ * are sounding markers, peers are vessels on the surface. The one signature flourish is
+ * the sonar pulse that ripples from a card when a remote peer's op lands on it, so mesh
+ * convergence is something you can *see*. Everything else is kept quiet and disciplined.
+ */
+
+:root {
+  --abyss: #0b1f2a;
+  --abyss-2: #0e2731;
+  --hull: #12303d;
+  --hull-2: #16394a;
+  --foam: #e8f1f2;
+  --mist: #9bb4bd;
+  --mute: #6b8893;
+  --current: #3db8b0;
+  --current-dim: #2a8f88;
+  --buoy: #f4a259;
+  --danger: #e0746a;
+  --depth-line: rgba(61, 184, 176, 0.14);
+  --edge: rgba(155, 180, 189, 0.16);
+  --edge-strong: rgba(155, 180, 189, 0.28);
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03), 0 6px 18px rgba(0, 0, 0, 0.32);
+  --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.5);
+
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background-color: var(--abyss);
+  /* Faint isobath (depth-contour) field — the chart the board sits on. */
+  background-image: radial-gradient(
+      1200px 800px at 12% -10%,
+      rgba(61, 184, 176, 0.08),
+      transparent 60%
+    ),
+    radial-gradient(900px 700px at 100% 110%, rgba(244, 162, 89, 0.05), transparent 55%),
+    repeating-radial-gradient(
+      circle at 30% 20%,
+      transparent 0,
+      transparent 58px,
+      var(--depth-line) 59px,
+      transparent 60px
+    );
+  color: var(--foam);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+::selection {
+  background: rgba(61, 184, 176, 0.32);
+}
+
+/* ---- Bridge (top bar) ------------------------------------------------------- */
+
+.bridge {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--edge);
+  background: linear-gradient(180deg, rgba(18, 48, 61, 0.92), rgba(11, 31, 42, 0.7));
+  backdrop-filter: blur(8px);
+  z-index: 5;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.brand .mark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: -0.02em;
+  color: var(--foam);
+}
+
+.brand .mark b {
+  color: var(--current);
+  font-weight: 700;
+}
+
+.brand .tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--mute);
+}
+
+.board-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+}
+
+.board-switch label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+.board-name-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--abyss-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  padding: 5px 10px;
+}
+
+.board-name-field input {
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--foam);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  width: 14ch;
+}
+
+.board-name-field:focus-within {
+  border-color: var(--current-dim);
+  box-shadow: 0 0 0 3px rgba(61, 184, 176, 0.12);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* Peer "vessels" surfaced on the bridge */
+.fleet {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fleet-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mute);
+  margin-right: 2px;
+}
+
+.vessel {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--abyss);
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
+}
+
+.vessel.pulse {
+  animation: vessel-ping 0.7s ease-out;
+}
+
+@keyframes vessel-ping {
+  0% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 0 rgba(244, 162, 89, 0.5);
+  }
+  50% {
+    transform: translateY(-3px) scale(1.08);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 8px rgba(244, 162, 89, 0);
+  }
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  border-left: 1px solid var(--edge);
+  padding-left: 16px;
+}
+
+.identity .who {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mist);
+}
+
+.identity .readout {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--mute);
+  letter-spacing: 0.02em;
+}
+
+.identity .readout .live {
+  color: var(--current);
+}
+
+/* ---- Connection banner ------------------------------------------------------ */
+
+.banner {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 20px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--edge);
+}
+
+.banner.show {
+  display: flex;
+}
+
+.banner.offline {
+  background: rgba(224, 116, 106, 0.12);
+  color: #f3b3ac;
+}
+
+.banner.warn {
+  background: rgba(244, 162, 89, 0.12);
+  color: #f6c08a;
+}
+
+.banner .hint {
+  color: var(--mist);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.banner button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  border-radius: var(--r-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+/* ---- Chart (column scroller) ------------------------------------------------ */
+
+.chart {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  padding: 20px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: flex-start;
+  scrollbar-color: var(--edge-strong) transparent;
+}
+
+.chart::-webkit-scrollbar {
+  height: 10px;
+}
+.chart::-webkit-scrollbar-thumb {
+  background: var(--edge-strong);
+  border-radius: 99px;
+}
+
+/* ---- Depth zone (column) ---------------------------------------------------- */
+
+.zone {
+  flex: 0 0 290px;
+  width: 290px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--hull), var(--abyss-2));
+  border: 1px solid var(--edge);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.zone.drop-target {
+  border-color: var(--current-dim);
+  box-shadow: 0 0 0 2px rgba(61, 184, 176, 0.25), var(--shadow-card);
+}
+
+.zone-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 10px;
+}
+
+.zone-depth {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--mute);
+  letter-spacing: 0.06em;
+}
+
+.zone-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--foam);
+  background: transparent;
+  border: 0;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--r-sm);
+  padding: 2px 4px;
+}
+
+.zone-title:focus {
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: 0 0 0 2px rgba(61, 184, 176, 0.2);
+}
+
+.zone-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mute);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 99px;
+  padding: 1px 8px;
+}
+
+.zone-kill {
+  background: transparent;
+  border: 0;
+  color: var(--mute);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.zone:hover .zone-kill,
+.zone-kill:focus-visible {
+  opacity: 1;
+}
+
+.zone-kill:hover {
+  color: var(--danger);
+}
+
+.zone-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  scrollbar-color: var(--edge-strong) transparent;
+}
+
+.zone-list::-webkit-scrollbar {
+  width: 8px;
+}
+.zone-list::-webkit-scrollbar-thumb {
+  background: var(--edge);
+  border-radius: 99px;
+}
+
+.zone-add {
+  margin: 4px 10px 12px;
+  background: transparent;
+  border: 1px dashed var(--edge-strong);
+  color: var(--mist);
+  border-radius: var(--r-md);
+  padding: 9px;
+  font-size: 13px;
+  text-align: left;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.zone-add:hover {
+  border-color: var(--current-dim);
+  color: var(--foam);
+  background: rgba(61, 184, 176, 0.06);
+}
+
+.zone-empty {
+  padding: 18px 6px;
+  text-align: center;
+  color: var(--mute);
+  font-size: 12.5px;
+  border: 1px dashed var(--edge);
+  border-radius: var(--r-md);
+}
+
+/* ---- Sounding (card) -------------------------------------------------------- */
+
+.sounding {
+  position: relative;
+  background: var(--hull-2);
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--current-dim);
+  border-radius: var(--r-md);
+  padding: 10px 11px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  cursor: grab;
+  transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sounding:hover {
+  border-color: var(--edge-strong);
+  transform: translateY(-1px);
+}
+
+.sounding:focus-visible {
+  outline: none;
+  border-color: var(--current);
+  box-shadow: 0 0 0 3px rgba(61, 184, 176, 0.22);
+}
+
+.sounding.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.sounding .s-title {
+  font-size: 13.5px;
+  color: var(--foam);
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.sounding .s-body {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--mist);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sounding .s-foot {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sounding .s-depth {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--mute);
+  letter-spacing: 0.03em;
+}
+
+.sounding .s-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.sounding:hover .s-actions,
+.sounding:focus-within .s-actions {
+  opacity: 1;
+}
+
+.sounding .s-actions button {
+  background: transparent;
+  border: 0;
+  color: var(--mute);
+  font-size: 12px;
+  padding: 2px 5px;
+  border-radius: var(--r-sm);
+}
+
+.sounding .s-actions button:hover {
+  color: var(--foam);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.sounding .s-actions .del:hover {
+  color: var(--danger);
+}
+
+/* Signature: a sonar ring pulses out when a remote peer's op touches this card. */
+.sounding.sonar::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 2px solid var(--buoy);
+  opacity: 0;
+  pointer-events: none;
+  animation: sonar 0.9s ease-out;
+}
+
+@keyframes sonar {
+  0% {
+    opacity: 0.85;
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+}
+
+/* inline editor inside a card */
+.s-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.s-edit textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--abyss-2);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--r-sm);
+  color: var(--foam);
+  font: inherit;
+  padding: 7px 8px;
+  outline: none;
+}
+
+.s-edit textarea:focus {
+  border-color: var(--current-dim);
+  box-shadow: 0 0 0 2px rgba(61, 184, 176, 0.16);
+}
+
+.s-edit .title-in {
+  font-weight: 500;
+}
+
+.s-edit .body-in {
+  font-size: 12px;
+  color: var(--mist);
+  min-height: 48px;
+}
+
+.s-edit-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---- Buttons ---------------------------------------------------------------- */
+
+.btn {
+  border: 1px solid var(--edge-strong);
+  background: var(--hull-2);
+  color: var(--foam);
+  border-radius: var(--r-sm);
+  padding: 6px 13px;
+  font-size: 13px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.btn:hover {
+  border-color: var(--current-dim);
+}
+
+.btn.primary {
+  background: var(--current);
+  border-color: var(--current);
+  color: var(--abyss);
+  font-weight: 600;
+}
+
+.btn.primary:hover {
+  background: #4ccabf;
+}
+
+.btn.ghost {
+  background: transparent;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(61, 184, 176, 0.25);
+}
+
+/* The "add depth zone" affordance at the end of the chart */
+.add-zone {
+  flex: 0 0 220px;
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--edge-strong);
+  color: var(--mist);
+  border-radius: var(--r-lg);
+  padding: 16px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  text-align: left;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.add-zone:hover {
+  border-color: var(--current-dim);
+  color: var(--foam);
+  background: rgba(61, 184, 176, 0.05);
+}
+
+/* ---- Empty / loading states ------------------------------------------------- */
+
+.curtain {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+}
+
+.curtain-inner {
+  max-width: 460px;
+  text-align: center;
+}
+
+.curtain h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+
+.curtain p {
+  color: var(--mist);
+  margin: 0 0 6px;
+}
+
+.curtain .mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--mute);
+  background: var(--abyss-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  display: inline-block;
+  margin-top: 12px;
+}
+
+.sonar-loader {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 22px;
+  border-radius: 50%;
+  border: 2px solid var(--current-dim);
+  position: relative;
+}
+
+.sonar-loader::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 2px solid var(--current);
+  animation: sonar 1.6s ease-out infinite;
+}
+
+/* ---- Footer status ledger --------------------------------------------------- */
+
+.ledger {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 7px 20px;
+  border-top: 1px solid var(--edge);
+  background: rgba(11, 31, 42, 0.85);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--mute);
+  letter-spacing: 0.03em;
+}
+
+.ledger .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mute);
+}
+
+.ledger .dot.up {
+  background: var(--current);
+  box-shadow: 0 0 8px rgba(61, 184, 176, 0.6);
+}
+
+.ledger .k {
+  color: var(--mist);
+}
+
+.ledger .grow {
+  flex: 1;
+}
+
+/* ---- Toast ------------------------------------------------------------------ */
+
+.toast-stack {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--hull-2);
+  border: 1px solid var(--edge-strong);
+  border-left: 3px solid var(--buoy);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  box-shadow: var(--shadow-pop);
+  max-width: 380px;
+  animation: rise 0.2s ease;
+}
+
+.toast.err {
+  border-left-color: var(--danger);
+}
+
+.toast .t-msg {
+  font-size: 13px;
+  color: var(--foam);
+}
+
+.toast .t-hint {
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--mist);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Responsive ------------------------------------------------------------- */
+
+@media (max-width: 720px) {
+  .bridge {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+  }
+  .identity {
+    border-left: 0;
+    padding-left: 0;
+    align-items: flex-start;
+  }
+  .chart {
+    padding: 14px;
+    gap: 12px;
+  }
+  .zone,
+  .add-zone {
+    flex-basis: 84vw;
+    width: 84vw;
+  }
+}
+
+/* ---- Reduced motion: the chart should be calm, not animated ----------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,59 @@
+[package]
+name = "ce-expose"
+version = "0.1.0"
+edition = "2024"
+description = "ngrok-style tunnel app on CE — expose a local service to mesh peers over the CE tunnel/stream primitive, capability-gated. An application built ON CE primitives, not part of the node."
+license = "MIT"
+repository = "https://github.com/ce-net/ce-expose"
+keywords = ["ce", "tunnel", "ngrok", "reverse-proxy", "p2p"]
+categories = ["command-line-utilities", "network-programming"]
+authors = ["Leif Rydenfalk <ledamecrydenfalk@gmail.com>"]
+
+# ce-expose is both a small reusable library (the tunnel-session pump, wire protocol, capability
+# gate) and the `ce-expose` binary. The library is unit-tested; the binary is the CLI over it.
+[lib]
+name = "ce_expose"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ce-expose"
+path = "src/main.rs"
+
+[dependencies]
+# The CE SDK: mesh request/reply/messages, discovery, status. Depended on by path for the MVP.
+ce-rs = { path = "../ce-rs" }
+# The capability verifier primitive — the agent authorizes a signed attenuating chain before
+# letting a peer reach the local port. This is the ONE trust primitive.
+ce-cap = { path = "../ce/crates/ce-cap" }
+
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync", "signal"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "5"
+
+# --- relay-tier public ingress (feature = "ingress") only ---
+# axum is the HTTP server for the relay's public front door. Optional so a normal node never pulls it
+# (the default build stays lean: nodes are mesh-only). The token-bucket rate limiter, byte caps, and
+# kill switch are hand-rolled over std/tokio — no heavy middleware crate.
+axum = { version = "0.7", optional = true }
+tower = { version = "0.5", optional = true }
+toml = { version = "0.8", optional = true }
+# Direct hyper/hyper-util so the relay can enforce a header-read timeout (the primary slowloris
+# defense — stock `axum::serve` has none) via a manual accept loop with a bounded connection cap.
+hyper = { version = "1", optional = true, features = ["server", "http1"] }
+hyper-util = { version = "0.1", optional = true, features = ["server", "http1", "tokio", "service"] }
+
+[features]
+# Default build: the private mesh tunnel (origin agent + consumer). No public ingress, no axum.
+default = []
+# The relay-tier public HTTP ingress subcommand. Opt-in; built only on the hardened relay.
+ingress = ["dep:axum", "dep:tower", "dep:toml", "dep:hyper", "dep:hyper-util"]
+
+[dev-dependencies]
+# Identity is only needed by tests, to forge capability chains for the gate tests.
+ce-identity = { path = "../ce/crates/ce-identity" }

@@ -1,0 +1,24 @@
+{
+  "name": "ce-board",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time collaborative kanban over the CE mesh — columns and cards synced as a last-writer-wins op-log. A tiny Trello on the Sea.",
+  "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@ce-net/sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,25 @@
+# Example ce-ci.toml — a distributed sharded test run on the CE mesh.
+#
+# Run with:  ce-ci run ce-ci.toml --hosts 8 --verify 0.1 --cap <token>
+# Dry run:   ce-ci plan ce-ci.toml
+
+# Pinned, content-addressed toolchain image (determinism is load-bearing for cache + verification).
+image = "ce-net/rust:1.x"
+
+# Per-shard command template. {shard}/{total} are substituted per shard; the in-container runner
+# (cargo-nextest / pytest-shard / jest --shard) partitions the suite by index.
+command = "cargo nextest run --partition count:{shard}/{total}"
+
+# A host must advertise this atlas self-tag (plus 'docker', always required) to take a shard.
+select = "docker"
+
+[shard]
+# Split into 8 index slices. Alternatively, strategy = "list" with units = [...] for one shard
+# per test file / package (with {unit} substituted into the command).
+strategy = "count"
+total = 8
+
+# Optional build matrix: each leg fans the whole shard set out again with its own env overlay.
+[[matrix]]
+name = "linux-stable"
+env = { TOOLCHAIN = "stable", OS = "linux" }

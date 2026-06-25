@@ -1,0 +1,11 @@
+{
+  "name": "ce-cast",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ce-cast studio — phone composites Mac feeds and fans out to streaming platforms. A static CE app (npm run deploy → ce-net.com/apps/cast-<id>/).",
+  "author": "Leif Rydenfalk <ledamecrydenfalk@gmail.com>",
+  "scripts": {
+    "dev": "node ../../web/ce-app/bin/ce-app.mjs dev --project cast",
+    "deploy": "node ../../web/ce-app/bin/ce-app.mjs deploy --project cast"
+  }
+}
