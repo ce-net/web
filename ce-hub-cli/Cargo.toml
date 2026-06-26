@@ -3,7 +3,7 @@ name = "ce-hub"
 version = "0.1.0"
 edition = "2021"
 description = "Thin CLI for hub.ce-net.com — GitHub for ce-net. Wraps the system git binary and the hub HTTP API with CE-identity signed requests."
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 [[bin]]
 name = "ce-hub"

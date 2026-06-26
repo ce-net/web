@@ -3,7 +3,7 @@ name = "rust-game"
 version = "0.1.0"
 edition = "2021"
 description = "A runnable Rust->wasm multiplayer starter: authoritative backend + wgpu/canvas frontend on CE"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 # cdylib -> the browser instantiates the .wasm directly (raw ABI, no wasm-bindgen).
 # rlib   -> a native host can link the same authoritative logic.

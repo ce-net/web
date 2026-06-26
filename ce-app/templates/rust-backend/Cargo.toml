@@ -3,7 +3,7 @@ name = "rust-backend"
 version = "0.1.0"
 edition = "2021"
 description = "Authoritative game-state crate (init/tick/snapshot/restore) compiled to wasm"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 # cdylib -> a .wasm with a stable C ABI the browser can instantiate directly.
 # rlib   -> lets a native host (server / drift-sim style) link the same logic.

@@ -3,7 +3,7 @@ name = "drift-client"
 version = "0.1.0"
 edition = "2021"
 description = "wgpu (WebGPU-first, WebGL2 fallback) wasm frontend for drift: renders authoritative state from drift-sim, interpolates remotes, and runs local prediction + reconciliation by stepping the same deterministic World."
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 # cdylib  -> the browser instantiates the wasm-bindgen module.
 # rlib    -> lets native tooling / benchmarks link the render+predict logic.

@@ -3,7 +3,7 @@ name = "drift-sim"
 version = "0.1.0"
 edition = "2021"
 description = "Deterministic shared 2D ship-arena simulation: single source of truth for the authoritative host and client-side prediction."
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
