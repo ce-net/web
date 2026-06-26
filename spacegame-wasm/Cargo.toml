@@ -1,0 +1,39 @@
+[package]
+name = "spacegame-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Browser frontend for CE Spacegame — Rust → WASM + wgpu, embedding the pure spacegame SDK. Talks to the game only over the CE mesh (same-origin node bridge), predicts locally for zero delay, renders with wgpu."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# THE SDK: the pure, deterministic game crate with the mesh I/O compiled out (wasm-clean). We reuse its
+# wire types, deterministic Sim (for local prediction), client profiles, sector math, and GPU meshes.
+spacegame = { path = "../../spacegame", default-features = false }
+
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+wgpu = { version = "22", default-features = false, features = ["webgl"] }
+bytemuck = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+glam = "0.29"
+log = "0.4"
+console_log = "1"
+console_error_panic_hook = "0.1"
+
+[dependencies.web-sys]
+version = "0.3"
+features = [
+  "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Navigator", "Performance",
+  "Location", "console", "EventTarget", "Event", "KeyboardEvent", "MouseEvent", "PointerEvent",
+  "Request", "RequestInit", "RequestMode", "Response", "Headers", "ReadableStream",
+  "ReadableStreamDefaultReader", "ReadableStreamReadResult", "CssStyleDeclaration", "DomRect",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
