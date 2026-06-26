@@ -223,7 +223,7 @@ canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
    contacts ce-net.com, /rt, /db, or any remote origin — the CSP connect-src 'self' enforces
    that at the browser. (Shared contract: web/ce-app/client/index.js and web/demos/arena.)
 
-   Model (matches game-spacegame/src):
+   Model (matches spacegame/src):
      - identity is this node's authenticated NodeId (GET /status); the server trusts it as
        the player id, so we never send our own id and nobody can impersonate us.
      - the galaxy is a grid of SECTORS (SECTOR_SIZE wide). The sector our ship is in is the
@@ -242,7 +242,7 @@ const GAME = "spacegame";
 const GALAXY = "main";
 const SEAL_TOPIC = `ce-game/${GAME}/${GALAXY}/seal`;
 
-/* ---------- world constants — MUST match game-spacegame/src/sim.rs ---------- */
+/* ---------- world constants — MUST match spacegame/src/sim.rs ---------- */
 const SECTOR_SIZE = 3000, ROCK_CELL = 300, SHIP_R = 18, BASE_HP = 100;
 const ROCK_MIN_VAL = 5, ROCK_MAX_VAL = 30;
 
@@ -357,7 +357,7 @@ function startInbox() {
   }, () => {});
 }
 
-/* ---------- sector helpers — MUST match game-spacegame/src/shard.rs ---------- */
+/* ---------- sector helpers — MUST match spacegame/src/shard.rs ---------- */
 function sectorContaining(wx, wy) { return { sx: Math.floor(wx / SECTOR_SIZE), sy: Math.floor(wy / SECTOR_SIZE) }; }
 function sectorToken(s) { const p = v => (v < 0 ? "n" + (-v) : "" + v); return p(s.sx) + "_" + p(s.sy); }
 function sectorNeighbors(s) { const out = []; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) out.push({ sx: s.sx + dx, sy: s.sy + dy }); return out; }
@@ -378,7 +378,7 @@ function randomHandle() { return HANDLE_A[Math.random()*HANDLE_A.length|0] + HAN
 let myName = (localStorage.getItem("spa_name") || randomHandle()).slice(0, 16);
 function displayName() { return (myName && myName.trim()) ? myName.trim() : "pilot"; }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
-/* hue MUST match game-spacegame room::hue_for (FNV-1a/32 over the NodeId) so our self-color agrees */
+/* hue MUST match spacegame room::hue_for (FNV-1a/32 over the NodeId) so our self-color agrees */
 function fnv1a(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 function hueForId(id) { return fnv1a(id) % 360; }
 function hsl(h, s, l, a) { return `hsla(${h},${s}%,${l}%,${a == null ? 1 : a})`; }
