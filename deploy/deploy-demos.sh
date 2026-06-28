@@ -8,8 +8,11 @@ set -euo pipefail
 HUB="${CE_HUB:-https://ce-net.com}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# dir:appid  (spacegame is served as app "spa" so it lives at spa.ce-net.com/game)
-PAIRS="arena:arena place:place cursors:cursors draw:draw poll:poll wall:wall spacegame:spa coop:coop"
+# dir:appid
+# NOTE: spacegame is no longer a demo. It is a first-class app with its own backend + browser client,
+# deployed from the spacegame repo (`spacegame/deploy/deploy.sh`) and served at spacegame.ce-net.com.
+# Do not re-add it here.
+PAIRS="arena:arena place:place cursors:cursors draw:draw poll:poll wall:wall coop:coop"
 
 ctype() {
   case "$1" in
