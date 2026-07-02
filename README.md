@@ -7,6 +7,15 @@ Everything behind ce-net.com that isn't the node (`ce`) or an SDK (`ce-rs`, `ce-
 - **ce-hub/** — Rust/axum sidecar: browser-node rendezvous (WS), task dispatch, live stats; plus `demo-wasm/`
 - **deploy/** — nginx config, systemd unit, and deploy scripts for the relay
 
+
+The CE Spacegame **frontends** (the shared renderer, native desktop app, and browser WASM/wgpu client)
+no longer live here — they were moved out to siblings of the game backend so the whole game lives
+together: `~/ce-net/spacegame` (SDK + mesh backend), `~/ce-net/spacegame-render`,
+`~/ce-net/spacegame-wasm`, `~/ce-net/spacegame-native`. To play over the real mesh, run
+`~/ce-net/spacegame/play.sh` — see [`spacegame/SPACEGAME-PLAY.md`](../spacegame/SPACEGAME-PLAY.md).
+(The deployed browser arena page at `spa.ce-net.com` is still `demos/spacegame/`, wired into
+`deploy/deploy-demos.sh`.)
+
 ## Live
 | URL | What |
 |---|---|
